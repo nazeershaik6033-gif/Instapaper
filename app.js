@@ -125,8 +125,8 @@ async function fetchOpenRouterModels(){
     id:m.id,
     name:m.name||m.id,
     free:/:free$/.test(m.id)||!!(m.pricing&&m.pricing.prompt==='0'&&m.pricing.completion==='0')
-  }));
-  list.sort((a,b)=>(b.free?1:0)-(a.free?1:0)||a.name.localeCompare(b.name));
+  })).filter(m=>m.free); // free models only
+  list.sort((a,b)=>a.name.localeCompare(b.name));
   if(!list.length)throw new Error('empty model list');
   return list;
 }
@@ -1462,16 +1462,16 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
             let opts=live?live.filter(m=>!ql||(m.id+' '+m.name).toLowerCase().includes(ql)).slice(0,200):null;
             if(opts&&!opts.some(m=>m.id===S.aiModel))opts=[{id:S.aiModel,name:S.aiModel,free:/:free$/.test(S.aiModel)}].concat(opts);
             return h(Fragment,null,
-              live?h('input',{value:mq,onChange:e=>setMq(e.target.value),placeholder:'Search '+live.length+' models… (e.g. llama)',autoCapitalize:'none',spellCheck:false,
+              live?h('input',{value:mq,onChange:e=>setMq(e.target.value),placeholder:'Search '+live.length+' free models… (e.g. llama)',autoCapitalize:'none',spellCheck:false,
                 style:{width:'100%',marginTop:10,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5}}):null,
               h('select',{value:opts?S.aiModel:(AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom'),onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
                 style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
-                opts?opts.map(m=>h('option',{key:m.id,value:m.id},(m.free?'FREE · ':'')+m.name))
+                opts?opts.map(m=>h('option',{key:m.id,value:m.id},m.name))
                     :AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
                 opts?null:h('option',{value:'custom'},'Custom model…')),
               h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}},
-                h('button',{onClick:loadOr,disabled:orLoading,className:'act95',style:{fontSize:12.5,color:T.accent,fontWeight:500,display:'flex',alignItems:'center',gap:6}},orLoading?h(Spinner,{T,size:12}):null,orLoading?'Loading…':(live?'Refresh model list':'Load all OpenRouter models')),
-                h('span',{style:{fontSize:11.5,color:orErr?T.danger:T.sub}},orErr||(live?live.length+' chat models, live from openrouter.ai':''))),
+                h('button',{onClick:loadOr,disabled:orLoading,className:'act95',style:{fontSize:12.5,color:T.accent,fontWeight:500,display:'flex',alignItems:'center',gap:6}},orLoading?h(Spinner,{T,size:12}):null,orLoading?'Loading…':(live?'Refresh model list':'Load free OpenRouter models')),
+                h('span',{style:{fontSize:11.5,color:orErr?T.danger:T.sub}},orErr||(live?live.length+' free chat models, live from openrouter.ai':''))),
               h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-r1-0528:free',autoCapitalize:'none',spellCheck:false,
                 style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}));
           })())),
