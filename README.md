@@ -14,11 +14,23 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 **Premium (all unlocked)**
 - 🔎 **Full-text search** across everything you've ever saved
 - ✏️ **Unlimited highlights & notes** — select any text in an article
-- 🎧 **Text-to-speech** with adjustable speed and voice, plus **Playlists** to listen to multiple articles seamlessly
+- 🎧 **Text-to-speech** with adjustable speed and voice, plus **Playlists** to listen to multiple articles seamlessly — auto-detects Telugu / Hindi / other Indic text and speaks it with a matching voice
 - ⚡ **Speed reading** — words flashed one at a time at up to 700 wpm, with smart pacing
 - 📁 Folders, tags, and sorting by date / length / popularity
-- 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black)
+- 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import
+
+**Content editing**
+- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
+- 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
+
+**AI assistant (✦ icon in the header, on any page)**
+- Powered by **your own OpenRouter API key** (free at [openrouter.ai/keys](https://openrouter.ai/keys)) — DeepSeek, Llama, Qwen, Gemini, Mistral free tiers plus paid models, or any custom model id
+- **Summarize** any article into key points + takeaway
+- **Translate** into Telugu, Hindi, Tamil, Kannada, and many more — read the result, listen to it spoken aloud (తెలుగు / हिन्दी voices), or save it as a new article
+- **Rewrite** — simplify, shorten, expand, change tone, or convert to bullet points
+- **Ask** questions about any article (or chat freely without one)
+- AI results can be copied, shared, spoken aloud, or saved to Notes
 
 ## How to install on your iPhone
 

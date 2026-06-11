@@ -25,11 +25,72 @@ const FONTS=[
   {id:'Inter',label:'Inter',css:"'Inter',-apple-system,system-ui,sans-serif"},
   {id:'System',label:'San Francisco',css:"-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif"}
 ];
-const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return f?f.css:FONTS[0].css};
+/* Indic fallbacks keep Telugu / Hindi text rendering beautifully in every font */
+const INDIC_FALLBACK=",'Noto Serif Telugu','Noto Serif Devanagari'";
+const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)+INDIC_FALLBACK};
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-chat-v3-0324:free',aiLang:'English'};
+
+/* ============================== AI (OpenRouter) ============================== */
+const AI_MODELS=[
+  ['deepseek/deepseek-chat-v3-0324:free','DeepSeek V3 (free)'],
+  ['deepseek/deepseek-r1:free','DeepSeek R1 (free)'],
+  ['meta-llama/llama-3.3-70b-instruct:free','Llama 3.3 70B (free)'],
+  ['qwen/qwen-2.5-72b-instruct:free','Qwen 2.5 72B (free)'],
+  ['google/gemini-2.0-flash-exp:free','Gemini 2.0 Flash (free)'],
+  ['mistralai/mistral-small-3.1-24b-instruct:free','Mistral Small 3.1 (free)'],
+  ['openai/gpt-4o-mini','GPT-4o mini (paid)'],
+  ['anthropic/claude-3.5-haiku','Claude 3.5 Haiku (paid)'],
+  ['google/gemini-2.5-flash','Gemini 2.5 Flash (paid)']
+];
+const AI_LANGS=['Telugu','Hindi','English','Tamil','Kannada','Malayalam','Marathi','Bengali','Urdu','Spanish','French','German','Japanese','Chinese'];
+const LANG_CODES={Telugu:'te',Hindi:'hi',English:'en',Tamil:'ta',Kannada:'kn',Malayalam:'ml',Marathi:'mr',Bengali:'bn',Urdu:'ur',Spanish:'es',French:'fr',German:'de',Japanese:'ja',Chinese:'zh'};
+const REWRITE_STYLES=[['Simplify','Rewrite it in plain, simple language that anyone can understand'],['Shorten','Rewrite it at half the length, keeping every key idea'],['Expand','Rewrite it with richer detail and explanation'],['Make formal','Rewrite it in a formal, professional tone'],['Make casual','Rewrite it in a friendly, conversational tone'],['Bullet points','Rewrite it as well-organized bullet points']];
+
+async function openRouterChat(key,model,messages,maxTokens){
+  const res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
+    method:'POST',
+    headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
+    body:JSON.stringify({model,messages,max_tokens:maxTokens||2048,temperature:0.4})
+  },120000);
+  if(!res.ok){
+    let msg='AI request failed ('+res.status+')';
+    try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
+    if(res.status===401)msg='Invalid OpenRouter API key — check it in the AI settings.';
+    else if(res.status===402)msg='Out of OpenRouter credits — switch to a (free) model or top up.';
+    else if(res.status===429)msg='Rate limited by OpenRouter — wait a moment and try again.';
+    throw new Error(msg);
+  }
+  const j=await res.json();
+  const out=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
+  if(!out||!String(out).trim())throw new Error('Empty AI response — try another model.');
+  return String(out).trim();
+}
+
+/* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
+function detectSpeechLang(s){
+  if(/[ఀ-౿]/.test(s))return'te-IN';
+  if(/[ऀ-ॿ]/.test(s))return'hi-IN';
+  if(/[஀-௿]/.test(s))return'ta-IN';
+  if(/[ಀ-೿]/.test(s))return'kn-IN';
+  if(/[ഀ-ൿ]/.test(s))return'ml-IN';
+  if(/[ঀ-৿]/.test(s))return'bn-IN';
+  if(/[؀-ۿ]/.test(s))return'ur-IN';
+  return'';
+}
+function pickVoiceFor(lang,preferredName){
+  try{
+    const voices=speechSynthesis.getVoices();
+    if(lang){
+      const base=lang.split('-')[0].toLowerCase();
+      return voices.find(v=>v.lang&&v.lang.toLowerCase()===lang.toLowerCase())||voices.find(v=>v.lang&&v.lang.toLowerCase().indexOf(base)===0)||null;
+    }
+    if(preferredName)return voices.find(v=>v.name===preferredName)||null;
+  }catch(e){}
+  return null;
+}
 
 /* ============================== tiny utils ============================== */
 const uid=()=>Date.now().toString(36)+Math.random().toString(36).slice(2,8);
@@ -84,6 +145,76 @@ function mdToHtml(md){
   if(code!==null)out.push('<pre>'+code.join('\n')+'</pre>');
   flushAll();
   return out.join('\n');
+}
+
+/* ============================== HTML -> markdown (for the content editor) ============================== */
+function htmlToMd(html){
+  const doc=new DOMParser().parseFromString('<div>'+html+'</div>','text/html');
+  const root=doc.body.firstChild;
+  if(!root)return'';
+  const inline=node=>{
+    let s='';
+    for(const c of node.childNodes){
+      if(c.nodeType===3)s+=c.nodeValue;
+      else if(c.nodeType===1){
+        const t=c.tagName;
+        if(t==='STRONG'||t==='B')s+='**'+inline(c)+'**';
+        else if(t==='EM'||t==='I')s+='*'+inline(c)+'*';
+        else if(t==='CODE')s+='`'+inline(c)+'`';
+        else if(t==='A')s+='['+(inline(c)||'link')+']('+(c.getAttribute('href')||'')+')';
+        else if(t==='IMG')s+='!['+(c.getAttribute('alt')||'')+']('+(c.getAttribute('src')||'')+')';
+        else if(t==='BR')s+='\n';
+        else s+=inline(c);
+      }
+    }
+    return s;
+  };
+  const out=[];
+  const walk=node=>{
+    for(const c of Array.from(node.children||[])){
+      const t=c.tagName;let m;
+      if((m=/^H([1-6])$/.exec(t)))out.push('#'.repeat(Math.max(1,+m[1]-1))+' '+inline(c).replace(/\s+/g,' ').trim());
+      else if(t==='P'){const s=inline(c).trim();if(s)out.push(s)}
+      else if(t==='BLOCKQUOTE')out.push(inline(c).trim().split('\n').map(l=>'> '+l.trim()).filter(l=>l!=='>').join('\n'));
+      else if(t==='UL')out.push(Array.from(c.children).map(li=>'- '+inline(li).replace(/\s+/g,' ').trim()).join('\n'));
+      else if(t==='OL')out.push(Array.from(c.children).map((li,i)=>(i+1)+'. '+inline(li).replace(/\s+/g,' ').trim()).join('\n'));
+      else if(t==='PRE')out.push('```\n'+c.textContent.replace(/\n*$/,'')+'\n```');
+      else if(t==='HR')out.push('---');
+      else if(t==='IMG')out.push('!['+(c.getAttribute('alt')||'')+']('+(c.getAttribute('src')||'')+')');
+      else if(t==='FIGURE'||t==='DIV'||t==='SECTION'||t==='ARTICLE')walk(c);
+      else{const s=inline(c).trim();if(s)out.push(s)}
+    }
+  };
+  walk(root);
+  return out.join('\n\n');
+}
+
+/* plain-text paragraphs of an article (used for chunked AI translation) */
+function blockTexts(html){
+  try{
+    const doc=new DOMParser().parseFromString('<div>'+html+'</div>','text/html');
+    const out=[];
+    doc.body.firstChild.querySelectorAll('p,h2,h3,h4,h5,h6,li,blockquote,figcaption').forEach(n=>{
+      if(n.tagName==='P'&&n.parentElement&&n.parentElement.closest('blockquote,li'))return;
+      const t=(n.textContent||'').replace(/\s+/g,' ').trim();
+      if(t)out.push(t);
+    });
+    if(out.length)return out;
+  }catch(e){}
+  const flat=htmlToText(html);
+  return flat?[flat]:[];
+}
+function chunkParas(paras,max){
+  max=max||2400;
+  const chunks=[];let cur=[];let len=0;
+  const flush=()=>{if(cur.length){chunks.push(cur.join('\n\n'));cur=[];len=0}};
+  for(let p of paras){
+    if(p.length>max){flush();while(p.length>max){chunks.push(p.slice(0,max));p=p.slice(max)}}
+    if(len+p.length>max)flush();
+    if(p)cur.push(p);len+=p.length+2;
+  }
+  flush();
+  return chunks;
 }
 
 /* ============================== sentence + word tooling ============================== */
@@ -261,7 +392,9 @@ async function fetchArticleData(url){
 const WELCOME_HTML=[
 '<p><em>Welcome! This is your own premium reading app — every feature unlocked, no subscription, forever free.</em></p>',
 '<h2>Save anything</h2>',
-'<p>Tap the <strong>+</strong> button in the sidebar (or the search bar’s add icon) and paste any link. The article is downloaded, stripped of clutter, and stored on your device so you can read it <strong>offline</strong> — on airplanes, subways, elevators, anywhere.</p>',
+'<p>Tap the round <strong>+</strong> button on the home screen and paste any link. The article is downloaded, stripped of clutter, and stored on your device so you can read it <strong>offline</strong> — on airplanes, subways, elevators, anywhere. If a page still has unwanted bits, long-press it and choose <strong>Edit content</strong> to remove blocks or edit the text.</p>',
+'<h2>AI superpowers</h2>',
+'<p>Tap the <strong>✦ AI</strong> icon in the header (or inside any article) to <strong>summarize</strong>, <strong>translate</strong> into Telugu, Hindi and many other languages, <strong>rewrite</strong>, or <strong>ask questions</strong> about an article — powered by your own free OpenRouter API key (DeepSeek, Llama, and more). Translations can be saved as new articles and even read aloud in తెలుగు or हिन्दी.</p>',
 '<p>YouTube links are saved as <strong>Videos</strong> with their thumbnail, ready to watch from the Videos folder.</p>',
 '<h2>A reading experience you control</h2>',
 '<p>Inside any article tap <strong>Aa</strong> to choose fonts, text size, line spacing, and four color themes — Light, Sepia, Dark, and Black.</p>',
@@ -342,7 +475,10 @@ const Icons={
   moon:s=>Svg({size:s},P('M19.5 14.2A8 8 0 0 1 9.8 4.5a8 8 0 1 0 9.7 9.7Z')),
   globe:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 12h17M12 3.5c2.4 2.3 3.6 5.2 3.6 8.5s-1.2 6.2-3.6 8.5c-2.4-2.3-3.6-5.2-3.6-8.5s1.2-6.2 3.6-8.5Z')),
   download:s=>Svg({size:s},P('M12 4v11M8 11.2 12 15.2 16 11.2'),P('M4.5 16.5v2c0 1 .8 1.8 1.8 1.8h11.4c1 0 1.8-.8 1.8-1.8v-2')),
-  upload:s=>Svg({size:s},P('M12 15V4M8 7.8 12 3.8 16 7.8'),P('M4.5 16.5v2c0 1 .8 1.8 1.8 1.8h11.4c1 0 1.8-.8 1.8-1.8v-2'))
+  upload:s=>Svg({size:s},P('M12 15V4M8 7.8 12 3.8 16 7.8'),P('M4.5 16.5v2c0 1 .8 1.8 1.8 1.8h11.4c1 0 1.8-.8 1.8-1.8v-2')),
+  ai:s=>Svg({size:s},P('M11 3.8 12.7 8.6 17.5 10.3 12.7 12 11 16.8 9.3 12 4.5 10.3 9.3 8.6 11 3.8Z'),P('M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z',{strokeWidth:1.4})),
+  contrast:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M12 3.5a8.5 8.5 0 0 1 0 17V3.5Z',fill:'currentColor'})),
+  blocks:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),h('rect',{x:4,y:13.5,width:9,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),P('M16.5 15.2l3 3M19.5 15.2l-3 3'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -487,7 +623,7 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
     h('span',{style:{fontSize:16.5,fontWeight:active?650:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name));
 }
 
-function Sidebar({T,scope,folders,onScope,onClose,onAdd,onSettings,onFolderLongPress}){
+function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
   const go=(t,id)=>{onScope({type:t,id});onClose()};
   return h('div',{style:{position:'fixed',inset:0,zIndex:60}},
@@ -502,11 +638,9 @@ function Sidebar({T,scope,folders,onScope,onClose,onAdd,onSettings,onFolderLongP
         h(SidebarItem,{T,icon:Icons.video(22),label:'Videos',active:is('videos'),onClick:()=>go('videos')}),
         h(SidebarItem,{T,icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')}),
         h(SidebarItem,{T,icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')}),
-        folders.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)}))
-      ),
-      h('div',{style:{flexShrink:0,display:'flex',borderTop:'1px solid '+T.hair,paddingBottom:SAFE_B}},
-        h('button',{onClick:onAdd,className:'act95',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'15px 0',color:T.fg,borderRight:'1px solid '+T.hair}},Icons.plus(23)),
-        h('button',{onClick:onSettings,className:'act95',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',padding:'15px 0',color:T.fg}},Icons.gear(23)))
+        folders.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)})),
+        h('div',{style:{height:'calc(20px + '+SAFE_B+')'}})
+      )
     ));
 }
 
@@ -514,7 +648,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onAdd,onSettings,onFolderLongP
 const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular']];
 const FILTERS=[['all','All'],['unread','Unread'],['liked','Liked'],['articles','Articles'],['videos','Videos'],['completed','Completed']];
 
-function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onClose}){
+function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,showListOps,onClose}){
   const [open,setOpen]=useState(null);
   const row=(label,iconRight,onClick,opts)=>h('button',{onClick,className:'act98',style:{display:'flex',alignItems:'center',width:'100%',padding:'13px 16px',color:T.menuFg,textAlign:'left',borderBottom:'1px solid '+T.menuHair,gap:10}},
     opts&&opts.chev?h('span',{style:{display:'flex',transform:open===opts.chev?'rotate(90deg)':'none',transition:'transform 160ms',color:T.menuFg}},Icons.chevR(15)):null,
@@ -525,12 +659,14 @@ function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onClose}){
   return h('div',{style:{position:'fixed',inset:0,zIndex:55}},
     h('div',{onClick:onClose,style:{position:'absolute',inset:0}}),
     h('div',{className:'fdin',style:{position:'absolute',top:'calc(54px + '+SAFE_T+')',right:10,width:248,background:T.menuBg,borderRadius:13,overflow:'hidden',boxShadow:'0 10px 44px rgba(0,0,0,.4)',maxHeight:'70vh',overflowY:'auto'}},
-      row('Sort',Icons.sort(19),()=>setOpen(open==='sort'?null:'sort'),{chev:'sort'}),
-      sub(SORTS,'sort',settings.sort),
-      row('Filter',Icons.filter(19),()=>setOpen(open==='filter'?null:'filter'),{chev:'filter'}),
-      sub(FILTERS,'filter',settings.filter),
-      row('Select',Icons.checkCircle(19),onSelectMode),
-      row('Playlist',Icons.playlist(19),onPlaylistMode)
+      showListOps?h(Fragment,null,
+        row('Sort',Icons.sort(19),()=>setOpen(open==='sort'?null:'sort'),{chev:'sort'}),
+        sub(SORTS,'sort',settings.sort),
+        row('Filter',Icons.filter(19),()=>setOpen(open==='filter'?null:'filter'),{chev:'filter'}),
+        sub(FILTERS,'filter',settings.filter),
+        row('Select',Icons.checkCircle(19),onSelectMode),
+        row('Playlist',Icons.playlist(19),onPlaylistMode)):null,
+      row('Settings',Icons.gear(19),onSettings)
     ));
 }
 
@@ -624,6 +760,8 @@ function ArticleSheet({T,a,onAction,onClose}){
     h(ARow,{T,icon:Icons.tag(21),label:'Edit tags…',onClick:act('tags')}),
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.headphones(21),label:'Listen',sub:'Text-to-speech',onClick:act('listen')}):null,
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.bolt(21),label:'Speed read',sub:'Up to 3× faster',onClick:act('speed')}):null,
+    !a.isVideo&&a.html?h(ARow,{T,icon:Icons.pencil(21),label:'Edit content',sub:'Remove unwanted parts or edit the text',onClick:act('edit')}):null,
+    !a.isVideo&&a.text?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
     h(ARow,{T,icon:Icons.share(21),label:'Share…',onClick:act('share')}),
     a.url?h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:act('copy')}):null,
     a.url?h(ARow,{T,icon:Icons.globe(21),label:'Open original',onClick:act('open')}):null,
@@ -826,6 +964,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
       tb(Icons.archive(23),()=>onAction('archive')),
       h('button',{onClick:()=>setAaOpen(!aaOpen),className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg,fontFamily:'Georgia,serif',fontSize:19,fontWeight:500})},'Aa'),
+      a.text&&!a.isVideo?tb(Icons.ai(23),()=>onAction('ai')):null,
       tb(Icons.dots(23),()=>onAction('sheet'))),
     aaOpen?h(AaPopover,{T,S,update:onAction.update,onClose:()=>setAaOpen(false)}):null
   );
@@ -980,6 +1119,184 @@ function TagsList({T,articles,onPick}){
       h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)))));
 }
 
+/* ============================== content editors ============================== */
+function EditBlocksSheet({T,article,onSave,onClose}){
+  const blocks=useMemo(()=>{
+    const d=document.createElement('div');d.innerHTML=article.html;
+    return Array.from(d.children).map(c=>c.outerHTML);
+  },[article.id]);
+  const [removed,setRemoved]=useState({});
+  const count=Object.keys(removed).filter(k=>removed[k]).length;
+  return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
+    h('div',{style:{padding:'0 20px 10px',fontSize:13,color:T.meta,lineHeight:1.5}},'Tap any part of the article to remove it. Tap again to restore. Then save your cleaned-up copy.'),
+    h('div',{style:{padding:'0 14px'}},
+      blocks.map((b,i)=>h('div',{key:i,onClick:()=>setRemoved(r=>({...r,[i]:!r[i]})),
+        style:{position:'relative',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px '+(removed[i]?('solid '+T.danger):('dashed '+T.hair)),opacity:removed[i]?0.4:1,background:removed[i]?'transparent':T.card}},
+        h('div',{className:'rc',style:{fontFamily:"'Lora',Georgia,serif",fontSize:14,lineHeight:1.5,color:T.fg,'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta,pointerEvents:'none',maxHeight:170,overflow:'hidden'},dangerouslySetInnerHTML:{__html:b}}),
+        removed[i]?h('div',{style:{position:'absolute',top:8,right:10,fontSize:11,fontWeight:700,color:T.danger}},'REMOVED'):null))),
+    h(PrimaryBtn,{T,label:count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save',disabled:count>=blocks.length,
+      onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n'))}));
+}
+
+function EditTextSheet({T,article,onSave,onClose}){
+  const [title,setTitle]=useState(article.title);
+  const [md,setMd]=useState(()=>htmlToMd(article.html));
+  return h(Sheet,{T,onClose,title:'Edit text',maxH:'94%'},
+    h('div',{style:{padding:'0 20px'}},
+      h('input',{value:title,onChange:e=>setTitle(e.target.value),placeholder:'Title',
+        style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16,fontWeight:600,fontFamily:"'Lora',Georgia,serif"}}),
+      h('textarea',{value:md,onChange:e=>setMd(e.target.value),rows:14,spellCheck:false,
+        style:{width:'100%',marginTop:10,padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14.5,lineHeight:1.55,resize:'vertical',fontFamily:"'Lora',Georgia,serif",minHeight:240}}),
+      h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.5}},'Formatting: **bold** · *italic* · # heading · - list · > quote · ![](image-url) · blank line = new paragraph')),
+    h(PrimaryBtn,{T,label:'Save',disabled:!md.trim(),onClick:()=>onSave(title.trim()||article.title,mdToHtml(md))}));
+}
+
+/* ============================== AI assistant ============================== */
+function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toastFn}){
+  const [ctx,setCtx]=useState(article||null);
+  const [view,setView]=useState('menu'); // menu | langs | styles | ask | result
+  const [busy,setBusy]=useState('');
+  const [error,setError]=useState('');
+  const [result,setResult]=useState(null); // {kind,text,lang}
+  const [question,setQuestion]=useState('');
+  const [keyDraft,setKeyDraft]=useState('');
+  const [speaking,setSpeaking]=useState(false);
+  const sess=useRef(0);
+  const speakingRef=useRef(false);
+  useEffect(()=>()=>{sess.current++;if(speakingRef.current){try{speechSynthesis.cancel()}catch(e){}}},[]);
+
+  const key=S.aiKey,model=S.aiModel;
+  const outLang=S.aiLang||'English';
+  const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
+  const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
+
+  const run=async(label,fn)=>{
+    setError('');setBusy(label);
+    try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
+    setBusy('');
+  };
+  const doSummarize=()=>run('Summarizing…',async()=>{
+    const out=await openRouterChat(key,model,[
+      {role:'system',content:'You are a precise reading assistant.'},
+      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600);
+    setResult({kind:'Summary',text:out,lang:outLang});setView('result');
+  });
+  const doTranslate=lang=>run('Translating…',async()=>{
+    const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
+    const chunks=chunkParas(paras,2400);
+    const out=[];
+    for(let i=0;i<chunks.length;i++){
+      setBusy('Translating part '+(i+1)+' of '+chunks.length+'…');
+      out.push(await openRouterChat(key,model,[
+        {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. Keep the same paragraphs, separated by blank lines. Output ONLY the translation, no commentary.'},
+        {role:'user',content:chunks[i]}],4000));
+    }
+    setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
+  });
+  const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
+    const out=await openRouterChat(key,model,[
+      {role:'system',content:'You are an expert editor.'},
+      {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000);
+    setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
+  });
+  const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
+    const msgs=ctx
+      ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
+      :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
+    const out=await openRouterChat(key,model,msgs,2000);
+    setResult({kind:'Answer',text:out,lang:outLang});setView('result');
+  })};
+
+  const listen=()=>{
+    if(speaking){sess.current++;speakingRef.current=false;setSpeaking(false);try{speechSynthesis.cancel()}catch(e){}return}
+    if(!('speechSynthesis'in window)||!result){toastFn('Speech not supported');return}
+    const sents=toSentences(result.text);let i=0;const my=++sess.current;
+    speakingRef.current=true;setSpeaking(true);
+    const next=()=>{
+      if(sess.current!==my)return;
+      if(i>=sents.length){speakingRef.current=false;setSpeaking(false);return}
+      const u=new SpeechSynthesisUtterance(sents[i++]);
+      const lng=detectSpeechLang(u.text);
+      if(lng){u.lang=lng;const v=pickVoiceFor(lng,'');if(v)u.voice=v}
+      else{const v=pickVoiceFor('',S.ttsVoice);if(v)u.voice=v}
+      u.rate=S.ttsRate||1;
+      let done=false;const fin=()=>{if(done)return;done=true;next()};
+      u.onend=fin;u.onerror=fin;
+      try{speechSynthesis.speak(u)}catch(e){speakingRef.current=false;setSpeaking(false)}
+    };
+    try{speechSynthesis.cancel()}catch(e){}
+    next();
+  };
+
+  const chip=(label,active,onClick)=>h('button',{key:label,onClick,className:'act95 trc',style:{padding:'8px 14px',borderRadius:18,fontSize:13.5,fontWeight:500,background:active?T.fg:T.card,color:active?T.bg:T.fg,flexShrink:0}},label);
+  const backBtn=h('button',{onClick:()=>{setView('menu');setResult(null)},className:'act95',style:{display:'flex',alignItems:'center',gap:5,color:T.accent,fontSize:14.5,fontWeight:500,padding:'2px 20px 10px'}},Icons.back(16),'AI menu');
+
+  let body;
+  if(!key){
+    body=h('div',{style:{padding:'0 20px'}},
+      h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
+      h('input',{value:keyDraft,onChange:e=>setKeyDraft(e.target.value),placeholder:'sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
+      h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,aiKey:keyDraft.trim()}}));toastFn('AI connected')}}));
+  }else if(busy){
+    body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
+      h(Spinner,{T,size:26}),
+      h('div',{style:{fontSize:14.5,color:T.meta}},busy),
+      h('div',{style:{fontSize:12,color:T.sub}},AI_MODELS.find(m=>m[0]===model)?AI_MODELS.find(m=>m[0]===model)[1]:model),
+      h('button',{onClick:onClose,className:'act95',style:{marginTop:6,color:T.danger,fontSize:14,fontWeight:500,padding:'8px 18px'}},'Cancel'));
+  }else if(view==='result'&&result){
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:8}},result.kind+(result.lang?' · '+result.lang:'')),
+        h('div',{className:'rc',style:{fontFamily:fontCss(S.font),fontSize:16,lineHeight:1.62,color:T.fg,whiteSpace:'pre-wrap',maxHeight:'46vh',overflowY:'auto',padding:'14px 16px',background:T.card,borderRadius:12,userSelect:'text',WebkitUserSelect:'text'}},result.text),
+        h('div',{style:{display:'flex',justifyContent:'space-around',marginTop:14}},
+          h('button',{onClick:listen,className:'act95',style:{color:speaking?T.accent:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},speaking?Icons.pause(20):Icons.headphones(20),speaking?'Stop':'Listen'),
+          h('button',{onClick:()=>{copyText(result.text);toastFn('Copied')},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.copy(20),'Copy'),
+          h('button',{onClick:()=>shareText(ctx?ctx.title:'AI',result.text,ctx?ctx.url:''),className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.share(20),'Share'),
+          ctx?h('button',{onClick:()=>{onSaveNote(ctx,result.kind,result.text);},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.note(20),'To Notes'):null),
+        (result.translation||result.rewrite)&&ctx?h(PrimaryBtn,{T,style:{margin:'16px 0 0',width:'100%'},label:'Save as new article',onClick:()=>onSaveCopy(ctx,result)}):null));
+  }else if(view==='langs'){
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px 4px',fontSize:14,color:T.meta}},'Translate this article into:'),
+      h('div',{style:{display:'flex',flexWrap:'wrap',gap:8,padding:'10px 20px'}},
+        AI_LANGS.map(l=>chip(l,false,()=>doTranslate(l)))));
+  }else if(view==='styles'){
+    body=h('div',null,backBtn,
+      REWRITE_STYLES.map(st=>h(ARow,{key:st[0],T,icon:Icons.pencil(20),label:st[0],sub:st[1],onClick:()=>doRewrite(st)})));
+  }else if(view==='ask'){
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px'}},
+        ctx?h('div',{style:{fontSize:12.5,color:T.sub,marginBottom:10,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'About: '+ctx.title):null,
+        h('textarea',{value:question,onChange:e=>setQuestion(e.target.value),rows:3,placeholder:ctx?'e.g. What are the main arguments?':'Ask anything…',autoFocus:true,
+          style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
+        h(PrimaryBtn,{T,label:'Ask AI',disabled:!question.trim(),style:{margin:'12px 0 0',width:'100%'},onClick:doAsk})));
+  }else if(!ctx){
+    const pick=articles.filter(a=>!a.isVideo&&a.text).slice(0,15);
+    body=h('div',null,
+      h('div',{style:{padding:'0 20px 6px',fontSize:14,color:T.meta}},'Pick an article to work with:'),
+      pick.length?pick.map(a=>h(ARow,{key:a.id,T,icon:Icons.notes(19),label:a.title,sub:(a.source||'')+(a.readMin?' · '+a.readMin+' min':''),onClick:()=>setCtx(a)})):h('div',{style:{padding:'10px 20px',fontSize:13.5,color:T.sub}},'No readable articles saved yet.'),
+      h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat without an article',onClick:()=>setView('ask')}));
+  }else{
+    body=h('div',null,
+      h('div',{style:{padding:'0 20px 10px'}},
+        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:15.5,fontWeight:600,lineHeight:1.35}},ctx.title),
+        article?null:h('button',{onClick:()=>setCtx(null),style:{fontSize:12.5,color:T.accent,marginTop:4}},'Choose a different article')),
+      h('div',{style:{padding:'0 20px 12px'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:7}},'Reply language'),
+        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
+          ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
+      error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
+      h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+      h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
+      h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
+      h(ARow,{T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')}));
+  }
+
+  return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
+    body,
+    key&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},'Model: '+(AI_MODELS.find(m=>m[0]===model)?AI_MODELS.find(m=>m[0]===model)[1]:model)+' — change in Settings'):null);
+}
+
 /* ============================== settings ============================== */
 function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClearArchived,onEraseAll,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
@@ -1013,6 +1330,17 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
       h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
       h('span',{style:{fontSize:13,color:T.meta,width:70,textAlign:'right'}},S.wpm+' wpm')),
+    head('AI · OpenRouter'),
+    h('div',{style:{padding:'0 20px'}},
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Powers Summarize, Translate (Telugu, Hindi & more), Rewrite, and Ask. Get a free key at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
+      h('input',{value:S.aiKey,onChange:e=>set({aiKey:e.target.value.trim()}),placeholder:'API key — sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
+      h('select',{value:AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom',onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
+        style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+        AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
+        h('option',{value:'custom'},'Custom model…')),
+      h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-chat-v3-0324:free',autoCapitalize:'none',spellCheck:false,
+        style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}})),
     head('Data'),
     h('div',{style:{padding:'0 20px 6px',fontSize:13,color:T.sub}},
       data.articles.length+' articles · '+Math.round(usageKB)+' KB stored on this device'),
@@ -1117,6 +1445,7 @@ function App(){
   const [ttsOpen,setTtsOpen]=useState(false);
   const [speedId,setSpeedId]=useState(null);
   const [voices,setVoices]=useState([]);
+  const [aiOpen,setAiOpen]=useState(null); // {articleId?} — header AI works on any page
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
 
@@ -1164,6 +1493,8 @@ function App(){
     const cfg=dataRef.current.settings;
     u.rate=cfg.ttsRate||1;
     if(cfg.ttsVoice){try{const v=speechSynthesis.getVoices().find(v=>v.name===cfg.ttsVoice);if(v)u.voice=v}catch(e){}}
+    const lng=detectSpeechLang(sent); // Telugu / Hindi / other Indic text gets a matching voice
+    if(lng){u.lang=lng;const vv=pickVoiceFor(lng,'');if(vv)u.voice=vv}
     let handled=false;
     const fin=()=>{
       if(handled)return;handled=true;
@@ -1246,7 +1577,35 @@ function App(){
       case 'open':setSheet(null);window.open(a.url,'_blank');break;
       case 'delete':setSheet({type:'confirm',kind:'delete',ids:[id]});break;
       case 'sheet':setSheet({type:'article',id});break;
+      case 'edit':setSheet({type:'editChoice',id});break;
+      case 'ai':setSheet(null);setAiOpen({articleId:id});break;
     }
+  };
+  const cycleTheme=()=>{
+    const order=['light','sepia','dark','black'];
+    const next=order[(order.indexOf(S.theme)+1)%order.length];
+    update(d=>({...d,settings:{...d.settings,theme:next}}));
+    toastFn(THEMES[next].label+' theme');
+  };
+  const saveEditedContent=(id,title,html)=>{
+    const text=htmlToText(html);
+    if(!text){toastFn('Nothing left — not saved');return}
+    const words=countWords(text);
+    patchArticle(id,Object.assign(title?{title}:{},{html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words)}));
+    setSheet(null);toastFn('Content updated');
+  };
+  const saveAiCopy=(orig,result)=>{
+    const paras=result.text.split(/\n{2,}/).map(p=>p.trim()).filter(Boolean);
+    const title=(result.translation&&paras.length>1?paras.shift():orig.title+' — '+result.kind).replace(/^#+\s*/,'');
+    const html=paras.map(p=>'<p>'+escapeHtml(p).replace(/\n/g,'<br/>')+'</p>').join('\n');
+    const text=htmlToText(html);
+    const words=countWords(text);
+    update(d=>({...d,articles:[{id:uid(),url:orig.url,title,source:orig.source,author:orig.author,image:orig.image||'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:orig.folderId||null,tags:[...new Set([...orig.tags,result.translation?'translated':'rewritten'])],progress:0,opens:0,highlights:[],lang:LANG_CODES[result.lang]||''},...d.articles]}));
+    setAiOpen(null);toastFn('Saved as new article');
+  };
+  const saveAiNote=(orig,kind,text)=>{
+    patchArticle(orig.id,a=>({highlights:[...a.highlights,{id:uid(),text:'✦ AI '+kind,note:text.slice(0,6000),createdAt:Date.now()}]}));
+    toastFn('Saved to Notes');
   };
 
   /* ---------- highlights ---------- */
@@ -1358,10 +1717,13 @@ function App(){
         selecting.mode==='playlist'?'Playlist · '+selecting.ids.length:selecting.ids.length+' selected'),
       h('div',{style:{width:70}}));
   }else{
-    header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0}},
+    header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0,position:'relative'}},
       headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
-      h('div',{style:{flex:1,textAlign:'center',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',padding:'0 4px'}},scopeTitle(scope,data.folders)),
-      isArticleScope?headerBtn(Icons.dots(23),()=>setMenuOpen(true)):h('div',{style:{width:42}}));
+      h('div',{style:{position:'absolute',left:'50%',transform:'translateX(-50%)',maxWidth:'40%',textAlign:'center',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',pointerEvents:'none'}},scopeTitle(scope,data.folders)),
+      h('div',{style:{flex:1}}),
+      headerBtn(Icons.ai(22),()=>setAiOpen({})),
+      headerBtn(Icons.contrast(22),cycleTheme),
+      headerBtn(Icons.dots(22),()=>setMenuOpen(true)));
   }
 
   /* ---------- main area ---------- */
@@ -1410,15 +1772,17 @@ function App(){
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
       onRetry:()=>retryFetch(reading.id)}):null,
 
+    !selecting&&!reading?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
+      style:{position:'fixed',right:18,bottom:'calc('+(ttsUI?94:24)+'px + '+SAFE_B+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
+
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
-      onAdd:()=>{setSidebar(false);setSheet({type:'plus'})},
-      onSettings:()=>{setSidebar(false);setSettingsOpen(true)},
       onFolderLongPress:f=>{setSidebar(false);setSheet({type:'folder',folder:f})}}):null,
 
-    menuOpen?h(MenuPopover,{T,settings:S,onClose:()=>setMenuOpen(false),
+    menuOpen?h(MenuPopover,{T,settings:S,showListOps:isArticleScope,onClose:()=>setMenuOpen(false),
       onPick:(kind,v)=>{update(d=>({...d,settings:{...d.settings,[kind]:v}}));setMenuOpen(false)},
       onSelectMode:()=>{setMenuOpen(false);setSelecting({mode:'select',ids:[]})},
-      onPlaylistMode:()=>{setMenuOpen(false);setSelecting({mode:'playlist',ids:[]});toastFn('Tap articles to build your playlist')}}):null,
+      onPlaylistMode:()=>{setMenuOpen(false);setSelecting({mode:'playlist',ids:[]});toastFn('Tap articles to build your playlist')},
+      onSettings:()=>{setMenuOpen(false);setSettingsOpen(true)}}):null,
 
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
@@ -1447,6 +1811,20 @@ function App(){
         onSaveNote:note=>{patchArticle(sheet.aid,x=>({highlights:x.highlights.map(g=>g.id===sheet.hid?{...g,note}:g)}));setSheet(null);toastFn(note?'Note saved':'Note removed')},
         onDelete:()=>{patchArticle(sheet.aid,x=>({highlights:x.highlights.filter(g=>g.id!==sheet.hid)}));setSheet(null);toastFn('Highlight removed')}});
     })():null,
+
+    sheet&&sheet.type==='editChoice'?(()=>{const a=byId(sheet.id);return a?h(Sheet,{T,onClose:()=>setSheet(null),title:'Edit content'},
+      h(ARow,{T,icon:Icons.blocks(21),label:'Remove blocks',sub:'Tap unwanted paragraphs, images, or ads to delete them',onClick:()=>setSheet({type:'editBlocks',id:sheet.id})}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit text',sub:'Edit the title and full text directly',onClick:()=>setSheet({type:'editText',id:sheet.id})})):null})():null,
+
+    sheet&&sheet.type==='editBlocks'?(()=>{const a=byId(sheet.id);return a?h(EditBlocksSheet,{T,article:a,onClose:()=>setSheet(null),
+      onSave:html=>saveEditedContent(sheet.id,null,html)}):null})():null,
+
+    sheet&&sheet.type==='editText'?(()=>{const a=byId(sheet.id);return a?h(EditTextSheet,{T,article:a,onClose:()=>setSheet(null),
+      onSave:(title,html)=>saveEditedContent(sheet.id,title,html)}):null})():null,
+
+    aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
+      articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),
+      update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
     sheet&&sheet.type==='confirm'?h(ConfirmSheet,{T,
       title:sheet.kind==='delete'?('Delete '+(sheet.ids.length>1?sheet.ids.length+' articles?':'article?')):sheet.kind==='clearArchive'?'Clear archive?':'Erase everything?',
