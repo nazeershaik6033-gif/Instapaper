@@ -602,7 +602,7 @@ function Sheet({T,onClose,title,children,maxH}){
       title?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 18px 6px',flexShrink:0}},
         h('div',{style:{fontSize:18,fontWeight:600,fontFamily:UIF}},title),
         h('button',{onClick:onClose,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.sub})},Icons.x(20))):null,
-      h('div',{className:'sy',style:{overflowY:'auto',flex:'0 1 auto',paddingBottom:'calc(16px + '+SAFE_B+')'}},children)
+      h('div',{className:'sy',style:{overflowY:'auto',flex:'0 1 auto',paddingBottom:'calc(6px + '+SAFE_B+')'}},children)
     ));
 }
 
@@ -1027,7 +1027,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       h('div',{style:{position:'absolute',bottom:0,left:0,height:2,width:((a.progress||0)*100)+'%',background:T.sub,transition:'width 300ms'}})),
     h('div',{ref:scrollRef,onScroll,className:'sy',
       onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
-      style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingTop:'calc(26px + '+SAFE_T+')',paddingBottom:'calc(110px + '+SAFE_B+')'}},
+      style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingTop:'calc(26px + '+SAFE_T+')',paddingBottom:'calc(76px + '+SAFE_B+')'}},
       h('div',{style:{maxWidth:660,margin:'0 auto',padding:'0 22px'}},
         h('h1',{style:{fontFamily:fontCss(S.font),fontSize:Math.min(S.fontSize+8,30),fontWeight:700,lineHeight:1.25,margin:'0 0 10px',color:T.fg,userSelect:'text',WebkitUserSelect:'text'}},a.title),
         metaBits?h('div',{style:{fontSize:13,color:T.meta,marginBottom:22,lineHeight:1.5}},metaBits):h('div',{style:{height:10}}),
@@ -1222,15 +1222,18 @@ function EditBlocksSheet({T,article,onSave,onClose}){
   },[article.id]);
   const [removed,setRemoved]=useState({});
   const count=Object.keys(removed).filter(k=>removed[k]).length;
+  const toggle=i=>setRemoved(r=>({...r,[i]:!r[i]}));
   return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
-    h('div',{style:{padding:'0 20px 10px',fontSize:13,color:T.meta,lineHeight:1.5}},'Tap any part of the article to remove it. Tap again to restore. Then save your cleaned-up copy.'),
+    h('div',{style:{padding:'0 20px 8px'}},
+      h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:count>=blocks.length,className:'act98',
+        style:{display:'block',width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:16,fontWeight:600,textAlign:'center',opacity:count>=blocks.length?0.45:1}},
+        count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save'),
+      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove, then save your cleaned-up copy.')),
     h('div',{style:{padding:'0 14px'}},
-      blocks.map((b,i)=>h('div',{key:i,onClick:()=>setRemoved(r=>({...r,[i]:!r[i]})),
-        style:{position:'relative',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px '+(removed[i]?('solid '+T.danger):('dashed '+T.hair)),opacity:removed[i]?0.4:1,background:removed[i]?'transparent':T.card}},
-        h('div',{className:'rc',style:{fontFamily:"'Lora',Georgia,serif",fontSize:14,lineHeight:1.5,color:T.fg,'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta,pointerEvents:'none',maxHeight:170,overflow:'hidden'},dangerouslySetInnerHTML:{__html:b}}),
-        removed[i]?h('div',{style:{position:'absolute',top:8,right:10,fontSize:11,fontWeight:700,color:T.danger}},'REMOVED'):null))),
-    h(PrimaryBtn,{T,label:count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save',disabled:count>=blocks.length,
-      onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n'))}));
+      blocks.map((b,i)=>h('div',{key:i,onClick:()=>toggle(i),
+        style:{display:'flex',gap:10,alignItems:'flex-start',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px solid '+(removed[i]?T.danger:T.hair),opacity:removed[i]?0.45:1,background:removed[i]?'transparent':T.card}},
+        h('span',{style:{width:22,height:22,borderRadius:6,flexShrink:0,marginTop:1,border:'2px solid '+(removed[i]?T.danger:T.sub),background:removed[i]?T.danger:'transparent',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},removed[i]?Icons.check(14):null),
+        h('div',{className:'rc',style:{fontFamily:"'Lora',Georgia,serif",fontSize:14,lineHeight:1.5,color:T.fg,'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta,pointerEvents:'none',maxHeight:170,overflow:'hidden',flex:1,minWidth:0},dangerouslySetInnerHTML:{__html:b}})))));
 }
 
 function EditTextSheet({T,article,onSave,onClose}){
@@ -1914,7 +1917,7 @@ function App(){
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
-      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?110:30}},body),
+      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
