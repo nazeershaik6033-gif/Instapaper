@@ -65,6 +65,7 @@ async function openRouterChat(key,model,messages,maxTokens){
     if(res.status===401)msg='Invalid OpenRouter API key — check it in the AI settings.';
     else if(res.status===402)msg='Out of OpenRouter credits — switch to a (free) model or top up.';
     else if(res.status===429)msg='Rate limited by OpenRouter — wait a moment and try again.';
+    if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can’t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
     throw new Error(msg);
   }
   const j=await res.json();
@@ -106,6 +107,28 @@ async function geminiChat(key,model,messages,maxTokens){
     throw new Error('Empty Gemini response — try another model.');
   }
   return out.trim();
+}
+
+/* live model catalog from OpenRouter — only models that can actually chat */
+async function fetchOpenRouterModels(){
+  const res=await fetchWithTimeout('https://openrouter.ai/api/v1/models',{},20000);
+  if(!res.ok)throw new Error('model list failed ('+res.status+')');
+  const j=await res.json();
+  const list=(j.data||[]).filter(m=>{
+    if(!m||!m.id)return false;
+    if(/rerank|embed|guard|moderation/i.test(m.id))return false; // not chat models
+    const a=m.architecture||{};
+    const outs=a.output_modalities||[];
+    if(outs.length&&outs.indexOf('text')<0)return false;
+    return true;
+  }).map(m=>({
+    id:m.id,
+    name:m.name||m.id,
+    free:/:free$/.test(m.id)||!!(m.pricing&&m.pricing.prompt==='0'&&m.pricing.completion==='0')
+  }));
+  list.sort((a,b)=>(b.free?1:0)-(a.free?1:0)||a.name.localeCompare(b.name));
+  if(!list.length)throw new Error('empty model list');
+  return list;
 }
 
 /* one entry point for every AI feature — routes to the chosen provider */
@@ -1360,6 +1383,29 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
 function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClearArchived,onEraseAll,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const fileRef=useRef(null);
+  /* live OpenRouter model catalog (cached for a day) */
+  const orActive=(S.aiProvider||'openrouter')==='openrouter';
+  const [orModels,setOrModels]=useState(null);
+  const [orLoading,setOrLoading]=useState(false);
+  const [orErr,setOrErr]=useState('');
+  const [mq,setMq]=useState('');
+  const loadOr=async()=>{
+    setOrLoading(true);setOrErr('');
+    try{
+      const list=await fetchOpenRouterModels();
+      setOrModels(list);
+      try{localStorage.setItem('or_models_v1',JSON.stringify({at:Date.now(),list}))}catch(e){}
+    }catch(e){setOrErr('Couldn’t load the live list — using the built-in one.')}
+    setOrLoading(false);
+  };
+  useEffect(()=>{
+    if(!orActive||orModels)return;
+    try{
+      const c=JSON.parse(localStorage.getItem('or_models_v1')||'null');
+      if(c&&Array.isArray(c.list)&&c.list.length&&Date.now()-c.at<86400000){setOrModels(c.list);return}
+    }catch(e){}
+    loadOr();
+  },[orActive]);
   const head=t=>h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'24px 20px 8px'}},t);
   const archivedCount=data.articles.filter(a=>a.archived).length;
   return h(Sheet,{T,onClose,title:'Settings',maxH:'94%'},
@@ -1410,12 +1456,25 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
           h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'One key, many models (DeepSeek, Llama, Qwen…). Get a free key at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
           h('input',{value:S.aiKey,onChange:e=>set({aiKey:e.target.value.trim()}),placeholder:'API key — sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
             style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
-          h('select',{value:AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom',onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
-            style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
-            AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
-            h('option',{value:'custom'},'Custom model…')),
-          h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-r1-0528:free',autoCapitalize:'none',spellCheck:false,
-            style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}))),
+          (()=>{
+            const live=orModels;
+            const ql=mq.trim().toLowerCase();
+            let opts=live?live.filter(m=>!ql||(m.id+' '+m.name).toLowerCase().includes(ql)).slice(0,200):null;
+            if(opts&&!opts.some(m=>m.id===S.aiModel))opts=[{id:S.aiModel,name:S.aiModel,free:/:free$/.test(S.aiModel)}].concat(opts);
+            return h(Fragment,null,
+              live?h('input',{value:mq,onChange:e=>setMq(e.target.value),placeholder:'Search '+live.length+' models… (e.g. llama)',autoCapitalize:'none',spellCheck:false,
+                style:{width:'100%',marginTop:10,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5}}):null,
+              h('select',{value:opts?S.aiModel:(AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom'),onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
+                style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+                opts?opts.map(m=>h('option',{key:m.id,value:m.id},(m.free?'FREE · ':'')+m.name))
+                    :AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
+                opts?null:h('option',{value:'custom'},'Custom model…')),
+              h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}},
+                h('button',{onClick:loadOr,disabled:orLoading,className:'act95',style:{fontSize:12.5,color:T.accent,fontWeight:500,display:'flex',alignItems:'center',gap:6}},orLoading?h(Spinner,{T,size:12}):null,orLoading?'Loading…':(live?'Refresh model list':'Load all OpenRouter models')),
+                h('span',{style:{fontSize:11.5,color:orErr?T.danger:T.sub}},orErr||(live?live.length+' chat models, live from openrouter.ai':''))),
+              h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-r1-0528:free',autoCapitalize:'none',spellCheck:false,
+                style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}));
+          })())),
     head('Data'),
     h('div',{style:{padding:'0 20px 6px',fontSize:13,color:T.sub}},
       data.articles.length+' articles · '+Math.round(usageKB)+' KB stored on this device'),
