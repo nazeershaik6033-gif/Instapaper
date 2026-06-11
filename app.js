@@ -53,6 +53,13 @@ const AI_LANGS=['Telugu','Hindi','English','Tamil','Kannada','Malayalam','Marath
 const LANG_CODES={Telugu:'te',Hindi:'hi',English:'en',Tamil:'ta',Kannada:'kn',Malayalam:'ml',Marathi:'mr',Bengali:'bn',Urdu:'ur',Spanish:'es',French:'fr',German:'de',Japanese:'ja',Chinese:'zh'};
 const REWRITE_STYLES=[['Simplify','Rewrite it in plain, simple language that anyone can understand'],['Shorten','Rewrite it at half the length, keeping every key idea'],['Expand','Rewrite it with richer detail and explanation'],['Make formal','Rewrite it in a formal, professional tone'],['Make casual','Rewrite it in a friendly, conversational tone'],['Bullet points','Rewrite it as well-organized bullet points']];
 
+/* Indic + common language codes for TTS voice selection — stored as 'lang:xx-XX' in ttsVoice */
+const INDIC_TTS_LANGS=[
+  ['te-IN','Telugu'],['hi-IN','Hindi'],['ta-IN','Tamil'],['kn-IN','Kannada'],
+  ['ml-IN','Malayalam'],['mr-IN','Marathi'],['bn-IN','Bengali'],['en-IN','English (India)'],
+  ['en-US','English (US)'],['en-GB','English (UK)']
+];
+
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
 async function openRouterChat(key,model,messages,maxTokens,onWait){
   let res;
@@ -184,6 +191,18 @@ async function vaultDecrypt(pass,blob){
   return JSON.parse(new TextDecoder().decode(pt));
 }
 
+/* Opens a URL in the system browser — reliable in PWA standalone mode on iOS where
+   window.open() gets blocked as a popup. */
+function openExternalUrl(url){
+  try{
+    const a=document.createElement('a');
+    a.href=String(url);a.target='_blank';a.rel='noopener noreferrer';
+    a.style.cssText='position:fixed;left:-9999px;top:-9999px';
+    document.body.appendChild(a);a.click();
+    setTimeout(()=>{try{document.body.removeChild(a)}catch(e){}},500);
+  }catch(e){try{window.open(String(url),'_blank')}catch(e2){}}
+}
+
 /* ============================== in-app browser helpers ============================== */
 function browserTarget(input){
   const t=String(input||'').trim();
@@ -242,7 +261,15 @@ function pickVoiceFor(lang,preferredName){
       const base=lang.split('-')[0].toLowerCase();
       return voices.find(v=>v.lang&&v.lang.toLowerCase()===lang.toLowerCase())||voices.find(v=>v.lang&&v.lang.toLowerCase().indexOf(base)===0)||null;
     }
-    if(preferredName)return voices.find(v=>v.name===preferredName)||null;
+    if(preferredName){
+      // 'lang:xx-XX' sentinels → match by language code
+      if(preferredName.startsWith('lang:')){
+        const code=preferredName.slice(5);
+        const base=code.split('-')[0].toLowerCase();
+        return voices.find(v=>v.lang&&v.lang.toLowerCase()===code.toLowerCase())||voices.find(v=>v.lang&&v.lang.toLowerCase().startsWith(base))||null;
+      }
+      return voices.find(v=>v.name===preferredName)||null;
+    }
   }catch(e){}
   return null;
 }
@@ -1166,9 +1193,12 @@ function TTSPlayerSheet({T,ui,articles,settings,onToggle,onSkipSent,onJumpArticl
         h('button',{onClick:()=>onJumpArticle(1),disabled:ui.qi>=ui.queue.length-1,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,opacity:ui.qi>=ui.queue.length-1?.3:1})},Icons.skipF(24))),
       h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginTop:24,justifyContent:'safe center'}},
         RATES.map(r=>h('button',{key:r,onClick:()=>onRate(r),className:'act95 trc',style:{padding:'7px 13px',borderRadius:16,fontSize:13,fontWeight:600,background:settings.ttsRate===r?T.fg:T.card,color:settings.ttsRate===r?T.bg:T.meta,flexShrink:0}},r+'×'))),
-      voices.length?h('select',{value:settings.ttsVoice||'',onChange:e=>onVoice(e.target.value),style:{width:'100%',marginTop:16,padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
-        h('option',{value:''},'Default voice'),
-        voices.map(v=>h('option',{key:v.name,value:v.name},v.name+' ('+v.lang+')'))):null,
+      h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginTop:14,justifyContent:'safe center'}},
+        [['','Default'],...INDIC_TTS_LANGS.map(([code,label])=>['lang:'+code,label])].map(([val,label])=>
+          h('button',{key:val,onClick:()=>onVoice(val),className:'act95 trc',
+            style:{padding:'6px 12px',borderRadius:16,fontSize:12.5,fontWeight:600,flexShrink:0,
+              background:(settings.ttsVoice||'')===(val)?T.fg:T.card,
+              color:(settings.ttsVoice||'')===(val)?T.bg:T.meta}},label))),
       ui.queue.length>1?h('div',{style:{marginTop:20}},
         h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:6}},'Playlist'),
         ui.queue.map((id,i)=>{
@@ -1384,7 +1414,10 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
       const u=new SpeechSynthesisUtterance(sents[i++]);
       const lng=detectSpeechLang(u.text);
       if(lng){u.lang=lng;const v=pickVoiceFor(lng,'');if(v)u.voice=v}
-      else{const v=pickVoiceFor('',S.ttsVoice);if(v)u.voice=v}
+      else{
+        if(S.ttsVoice&&S.ttsVoice.startsWith('lang:'))u.lang=S.ttsVoice.slice(5);
+        const v=pickVoiceFor('',S.ttsVoice);if(v)u.voice=v;
+      }
       u.rate=S.ttsRate||1;
       let done=false;const fin=()=>{if(done)return;done=true;next()};
       u.onend=fin;u.onerror=fin;
@@ -1624,7 +1657,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
         url?h('button',{onClick:()=>{setUrl('');setInput('');setMode('frame')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
       url?tbtn(Icons.refresh(19),()=>{if(mode==='lite')loadLite(url);else setFrameKey(k=>k+1)}):null,
-      url?tbtn(Icons.external(19),()=>window.open(url,'_blank')):null,
+      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
     url?h(Fragment,null,
       mode==='lite'
@@ -1633,7 +1666,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
           :lite.err
             ?h('div',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:'0 30px',textAlign:'center'}},
               h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},lite.err),
-              h('button',{onClick:()=>window.open(url,'_blank'),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
+              h('button',{onClick:()=>openExternalUrl(url),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
             :h('iframe',{key:'lite|'+url,srcDoc:lite.html,sandbox:'allow-scripts allow-popups',
               style:{flex:1,border:0,width:'100%',background:'#fff'}}))
         :h('iframe',{key:url+'|'+frameKey,src:url,
@@ -1646,7 +1679,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
         mode==='lite'
           ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full view')
           :h('button',{onClick:()=>loadLite(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite view'),
-        h('button',{onClick:()=>window.open(url,'_blank'),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
+        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
     :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
       h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'}},'Your sites'),
       h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},
@@ -1757,15 +1790,30 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         'Long-press \u2014 all actions',h('br'),
         'Select text in the reader \u2014 highlight or add a note'));
   }else if(page==='voices'){
+    const teluguVoiceInstalled=voices.some(v=>v.lang&&v.lang.toLowerCase().startsWith('te'));
     content=h(Fragment,null,
       head('Speech rate'),
       h('div',{style:{padding:'0 20px'}},
         h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',paddingBottom:4}},
-          RATES.map(r=>h('button',{key:r,onClick:()=>set({ttsRate:r}),className:'act95 trc',style:{padding:'7px 13px',borderRadius:16,fontSize:13,fontWeight:600,background:S.ttsRate===r?T.fg:T.card,color:S.ttsRate===r?T.bg:T.meta,flexShrink:0}},r+'\u00d7'))),
-        voices.length?h('select',{value:S.ttsVoice||'',onChange:e=>set({ttsVoice:e.target.value}),style:{width:'100%',marginTop:12,padding:'10px 12px',borderRadius:9,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
-          h('option',{value:''},'Default voice'),
-          voices.map(v=>h('option',{key:v.name,value:v.name},v.name+' ('+v.lang+')'))):null,
-        h('div',{style:{fontSize:12,color:T.sub,marginTop:12,lineHeight:1.5}},'Telugu, Hindi, and other Indic text is detected automatically and spoken with a matching voice. Add more voices in iOS Settings \u2192 Accessibility \u2192 Spoken Content \u2192 Voices.')));
+          RATES.map(r=>h('button',{key:r,onClick:()=>set({ttsRate:r}),className:'act95 trc',style:{padding:'7px 13px',borderRadius:16,fontSize:13,fontWeight:600,background:S.ttsRate===r?T.fg:T.card,color:S.ttsRate===r?T.bg:T.meta,flexShrink:0}},r+'\u00d7')))),
+      head('Voice language'),
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:12}},'Pick a language for articles. Indic text (Telugu, Hindi\u2026) is also detected automatically and spoken in the right voice regardless of this setting.'),
+        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',paddingBottom:8}},
+          [['','Default'],...INDIC_TTS_LANGS.map(([code,label])=>['lang:'+code,label])].map(([val,label])=>
+            h('button',{key:val,onClick:()=>set({ttsVoice:val}),className:'act95 trc',
+              style:{padding:'8px 14px',borderRadius:18,fontSize:13,fontWeight:600,flexShrink:0,
+                background:(S.ttsVoice||'')===(val)?T.fg:T.card,
+                color:(S.ttsVoice||'')===(val)?T.bg:T.fg}},label))),
+        !teluguVoiceInstalled?h('div',{style:{marginTop:12,padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.sub,lineHeight:1.6}},
+          '\u{1F4F1} To get a Telugu voice on iPhone: Settings \u2192 Accessibility \u2192 Spoken Content \u2192 Voices \u2192 Telugu \u2192 download a voice. Then restart this app.'):null,
+        voices.length?h('div',{style:{marginTop:14}},
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Or pick a specific installed voice'),
+          h('select',{value:(S.ttsVoice&&!S.ttsVoice.startsWith('lang:'))?S.ttsVoice:'',
+            onChange:e=>set({ttsVoice:e.target.value}),
+            style:{width:'100%',padding:'10px 12px',borderRadius:9,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+            h('option',{value:''},'(use language setting above)'),
+            voices.map(v=>h('option',{key:v.name,value:v.name},v.name+' \u2014 '+v.lang)))):null));
   }else if(page==='ai'){
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 0'}},
@@ -1975,9 +2023,12 @@ function App(){
     const u=new SpeechSynthesisUtterance(sent);
     const cfg=dataRef.current.settings;
     u.rate=cfg.ttsRate||1;
-    if(cfg.ttsVoice){try{const v=speechSynthesis.getVoices().find(v=>v.name===cfg.ttsVoice);if(v)u.voice=v}catch(e){}}
     const lng=detectSpeechLang(sent); // Telugu / Hindi / other Indic text gets a matching voice
     if(lng){u.lang=lng;const vv=pickVoiceFor(lng,'');if(vv)u.voice=vv}
+    else if(cfg.ttsVoice){
+      if(cfg.ttsVoice.startsWith('lang:'))u.lang=cfg.ttsVoice.slice(5);
+      try{const v=pickVoiceFor('',cfg.ttsVoice);if(v)u.voice=v}catch(e){}
+    }
     let handled=false;
     const fin=()=>{
       if(handled)return;handled=true;
@@ -2057,7 +2108,7 @@ function App(){
       case 'speed':setSheet(null);setSpeedId(id);break;
       case 'share':setSheet(null);shareText(a.title,'',a.url||'');break;
       case 'copy':setSheet(null);copyText(a.url);toastFn('Link copied');break;
-      case 'open':setSheet(null);window.open(a.url,'_blank');break;
+      case 'open':setSheet(null);openExternalUrl(a.url);break;
       case 'delete':setSheet({type:'confirm',kind:'delete',ids:[id]});break;
       case 'sheet':setSheet({type:'article',id});break;
       case 'edit':setSheet({type:'editChoice',id});break;
