@@ -53,18 +53,29 @@ const AI_LANGS=['Telugu','Hindi','English','Tamil','Kannada','Malayalam','Marath
 const LANG_CODES={Telugu:'te',Hindi:'hi',English:'en',Tamil:'ta',Kannada:'kn',Malayalam:'ml',Marathi:'mr',Bengali:'bn',Urdu:'ur',Spanish:'es',French:'fr',German:'de',Japanese:'ja',Chinese:'zh'};
 const REWRITE_STYLES=[['Simplify','Rewrite it in plain, simple language that anyone can understand'],['Shorten','Rewrite it at half the length, keeping every key idea'],['Expand','Rewrite it with richer detail and explanation'],['Make formal','Rewrite it in a formal, professional tone'],['Make casual','Rewrite it in a friendly, conversational tone'],['Bullet points','Rewrite it as well-organized bullet points']];
 
-async function openRouterChat(key,model,messages,maxTokens){
-  const res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
-    method:'POST',
-    headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
-    body:JSON.stringify({model,messages,max_tokens:maxTokens||2048,temperature:0.4})
-  },120000);
+const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+async function openRouterChat(key,model,messages,maxTokens,onWait){
+  let res;
+  for(let attempt=0;;attempt++){
+    res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
+      method:'POST',
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
+      body:JSON.stringify({model,messages,max_tokens:maxTokens||2048,temperature:0.4})
+    },120000);
+    if(res.status===429&&attempt<2){ // free tiers burst-limit easily — back off and retry
+      const wait=(attempt+1)*6;
+      if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
+      await sleep(wait*1000);
+      continue;
+    }
+    break;
+  }
   if(!res.ok){
     let msg='AI request failed ('+res.status+')';
     try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
     if(res.status===401)msg='Invalid OpenRouter API key — check it in the AI settings.';
     else if(res.status===402)msg='Out of OpenRouter credits — switch to a (free) model or top up.';
-    else if(res.status===429)msg='Rate limited by OpenRouter — wait a moment and try again.';
+    else if(res.status===429)msg='OpenRouter rate limit. Free models allow ~20 requests/min and 50/day (1,000/day once you buy $10 credit one time). Wait a minute, pick another :free model, or switch to Google Gemini in Settings → AI.';
     if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can’t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
     throw new Error(msg);
   }
@@ -84,19 +95,29 @@ const GEMINI_MODELS=[
   ['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite (fastest)'],
   ['gemini-2.0-flash','Gemini 2.0 Flash']
 ];
-async function geminiChat(key,model,messages,maxTokens){
+async function geminiChat(key,model,messages,maxTokens,onWait){
   const sys=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
   const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
   const body={contents,generationConfig:{maxOutputTokens:maxTokens||2048,temperature:0.4}};
   if(sys)body.systemInstruction={parts:[{text:sys}]};
-  const res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
-    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},120000);
+  let res;
+  for(let attempt=0;;attempt++){
+    res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},120000);
+    if(res.status===429&&attempt<2){
+      const wait=(attempt+1)*6;
+      if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
+      await sleep(wait*1000);
+      continue;
+    }
+    break;
+  }
   if(!res.ok){
     let msg='Gemini request failed ('+res.status+')';
     try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
     if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in the AI settings.';
     else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
-    else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again.';
+    else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or switch provider in Settings → AI.';
     throw new Error(msg);
   }
   const j=await res.json();
@@ -132,9 +153,9 @@ async function fetchOpenRouterModels(){
 }
 
 /* one entry point for every AI feature — routes to the chosen provider */
-function aiChat(S,messages,maxTokens){
-  if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens);
-  return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens);
+function aiChat(S,messages,maxTokens,onWait){
+  if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens,onWait);
+  return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens,onWait);
 }
 const aiReady=S=>S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
 function aiModelLabel(S){
@@ -1252,7 +1273,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const doSummarize=()=>run('Summarizing…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are a precise reading assistant.'},
-      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600);
+      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
   });
   const doTranslate=lang=>run('Translating…',async()=>{
@@ -1263,21 +1284,22 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
       setBusy('Translating part '+(i+1)+' of '+chunks.length+'…');
       out.push(await aiChat(S,[
         {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. Keep the same paragraphs, separated by blank lines. Output ONLY the translation, no commentary.'},
-        {role:'user',content:chunks[i]}],4000));
+        {role:'user',content:chunks[i]}],4000,setBusy));
+      if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
   });
   const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are an expert editor.'},
-      {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000);
+      {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000,setBusy);
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
   });
   const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
     const msgs=ctx
       ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
       :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
-    const out=await openRouterChat(key,model,msgs,2000);
+    const out=await aiChat(S,msgs,2000,setBusy);
     setResult({kind:'Answer',text:out,lang:outLang});setView('result');
   })};
 
