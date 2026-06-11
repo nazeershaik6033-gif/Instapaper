@@ -24,6 +24,13 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
+**Browser & Logged-In Sites**
+- 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
+- ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
+- 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
+
+**Settings** are organized like the classic app: General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup.
+
 **AI assistant (✦ icon in the header, on any page)**
 - Two providers, pick either in Settings:
   - **OpenRouter** (free key at [openrouter.ai/keys](https://openrouter.ai/keys)) — DeepSeek R1, Llama, Qwen, Mistral free tiers plus paid models, or any custom model id
