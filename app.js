@@ -31,7 +31,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -74,6 +74,49 @@ async function openRouterChat(key,model,messages,maxTokens){
   out=String(out||'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim(); // strip R1 thinking blocks
   if(!out)throw new Error('Empty AI response — try another model.');
   return out;
+}
+
+/* ---------- Google Gemini (direct API) ---------- */
+const GEMINI_MODELS=[
+  ['gemini-2.5-flash','Gemini 2.5 Flash (fast, free tier)'],
+  ['gemini-2.5-pro','Gemini 2.5 Pro (best quality)'],
+  ['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite (fastest)'],
+  ['gemini-2.0-flash','Gemini 2.0 Flash']
+];
+async function geminiChat(key,model,messages,maxTokens){
+  const sys=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
+  const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+  const body={contents,generationConfig:{maxOutputTokens:maxTokens||2048,temperature:0.4}};
+  if(sys)body.systemInstruction={parts:[{text:sys}]};
+  const res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
+    {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},120000);
+  if(!res.ok){
+    let msg='Gemini request failed ('+res.status+')';
+    try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
+    if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in the AI settings.';
+    else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
+    else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again.';
+    throw new Error(msg);
+  }
+  const j=await res.json();
+  const cand=j&&j.candidates&&j.candidates[0];
+  const out=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||'').join(''):'';
+  if(!out.trim()){
+    if(cand&&cand.finishReason==='SAFETY')throw new Error('Gemini blocked this content (safety filters) — try another model.');
+    throw new Error('Empty Gemini response — try another model.');
+  }
+  return out.trim();
+}
+
+/* one entry point for every AI feature — routes to the chosen provider */
+function aiChat(S,messages,maxTokens){
+  if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens);
+  return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens);
+}
+const aiReady=S=>S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
+function aiModelLabel(S){
+  if(S.aiProvider==='gemini'){const m=GEMINI_MODELS.find(x=>x[0]===S.geminiModel);return m?m[1]:(S.geminiModel||'Gemini')}
+  const m=AI_MODELS.find(x=>x[0]===S.aiModel);return m?m[1]:S.aiModel;
 }
 
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
@@ -1173,7 +1216,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const speakingRef=useRef(false);
   useEffect(()=>()=>{sess.current++;if(speakingRef.current){try{speechSynthesis.cancel()}catch(e){}}},[]);
 
-  const key=S.aiKey,model=S.aiModel;
+  const ready=aiReady(S);
   const outLang=S.aiLang||'English';
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
@@ -1184,7 +1227,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     setBusy('');
   };
   const doSummarize=()=>run('Summarizing…',async()=>{
-    const out=await openRouterChat(key,model,[
+    const out=await aiChat(S,[
       {role:'system',content:'You are a precise reading assistant.'},
       {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
@@ -1195,14 +1238,14 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     const out=[];
     for(let i=0;i<chunks.length;i++){
       setBusy('Translating part '+(i+1)+' of '+chunks.length+'…');
-      out.push(await openRouterChat(key,model,[
+      out.push(await aiChat(S,[
         {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. Keep the same paragraphs, separated by blank lines. Output ONLY the translation, no commentary.'},
         {role:'user',content:chunks[i]}],4000));
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
   });
   const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
-    const out=await openRouterChat(key,model,[
+    const out=await aiChat(S,[
       {role:'system',content:'You are an expert editor.'},
       {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000);
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
@@ -1240,17 +1283,25 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const backBtn=h('button',{onClick:()=>{setView('menu');setResult(null)},className:'act95',style:{display:'flex',alignItems:'center',gap:5,color:T.accent,fontSize:14.5,fontWeight:500,padding:'2px 20px 10px'}},Icons.back(16),'AI menu');
 
   let body;
-  if(!key){
+  if(!ready){
+    const prov=S.aiProvider||'openrouter';
+    const isGem=prov==='gemini';
     body=h('div',{style:{padding:'0 20px'}},
-      h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
-      h('input',{value:keyDraft,onChange:e=>setKeyDraft(e.target.value),placeholder:'sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+      h('div',{style:{display:'flex',gap:8,marginBottom:14}},
+        chip('OpenRouter',!isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'openrouter'}}))),
+        chip('Google Gemini',isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'gemini'}})))),
+      h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},
+        isGem?'Connect a free Google Gemini API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ':'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',
+        isGem?h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey')
+             :h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
+      h('input',{value:keyDraft,onChange:e=>setKeyDraft(e.target.value),placeholder:isGem?'AIza…':'sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
         style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
-      h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,aiKey:keyDraft.trim()}}));toastFn('AI connected')}}));
+      h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,[isGem?'geminiKey':'aiKey']:keyDraft.trim()}}));toastFn('AI connected')}}));
   }else if(busy){
     body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
       h(Spinner,{T,size:26}),
       h('div',{style:{fontSize:14.5,color:T.meta}},busy),
-      h('div',{style:{fontSize:12,color:T.sub}},AI_MODELS.find(m=>m[0]===model)?AI_MODELS.find(m=>m[0]===model)[1]:model),
+      h('div',{style:{fontSize:12,color:T.sub}},aiModelLabel(S)),
       h('button',{onClick:onClose,className:'act95',style:{marginTop:6,color:T.danger,fontSize:14,fontWeight:500,padding:'8px 18px'}},'Cancel'));
   }else if(view==='result'&&result){
     body=h('div',null,backBtn,
@@ -1302,7 +1353,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
     body,
-    key&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},'Model: '+(AI_MODELS.find(m=>m[0]===model)?AI_MODELS.find(m=>m[0]===model)[1]:model)+' — change in Settings'):null);
+    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},'Model: '+aiModelLabel(S)+' — change in Settings'):null);
 }
 
 /* ============================== settings ============================== */
@@ -1338,17 +1389,33 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
       h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
       h('span',{style:{fontSize:13,color:T.meta,width:70,textAlign:'right'}},S.wpm+' wpm')),
-    head('AI · OpenRouter'),
+    head('AI assistant'),
     h('div',{style:{padding:'0 20px'}},
-      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Powers Summarize, Translate (Telugu, Hindi & more), Rewrite, and Ask. Get a free key at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
-      h('input',{value:S.aiKey,onChange:e=>set({aiKey:e.target.value.trim()}),placeholder:'API key — sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
-      h('select',{value:AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom',onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
-        style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
-        AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
-        h('option',{value:'custom'},'Custom model…')),
-      h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-chat-v3-0324:free',autoCapitalize:'none',spellCheck:false,
-        style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}})),
+      h('div',{style:{display:'flex',gap:8,marginBottom:12}},
+        [['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
+          h('button',{key:id,onClick:()=>set({aiProvider:id}),className:'act95 trc',
+            style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:14,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
+      (S.aiProvider||'openrouter')==='gemini'
+        ?h(Fragment,null,
+          h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Uses Google’s Gemini API directly — generous free tier. Get a key at ',h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey'),'.'),
+          h('input',{value:S.geminiKey,onChange:e=>set({geminiKey:e.target.value.trim()}),placeholder:'API key — AIza…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+            style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
+          h('select',{value:GEMINI_MODELS.some(m=>m[0]===S.geminiModel)?S.geminiModel:'custom',onChange:e=>{if(e.target.value!=='custom')set({geminiModel:e.target.value})},
+            style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+            GEMINI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
+            h('option',{value:'custom'},'Custom model…')),
+          h('input',{value:S.geminiModel,onChange:e=>set({geminiModel:e.target.value.trim()}),placeholder:'model id, e.g. gemini-2.5-flash',autoCapitalize:'none',spellCheck:false,
+            style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}))
+        :h(Fragment,null,
+          h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'One key, many models (DeepSeek, Llama, Qwen…). Get a free key at ',h('a',{href:'https://openrouter.ai/keys',target:'_blank',rel:'noopener',style:{color:T.accent}},'openrouter.ai/keys'),'.'),
+          h('input',{value:S.aiKey,onChange:e=>set({aiKey:e.target.value.trim()}),placeholder:'API key — sk-or-v1-…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+            style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
+          h('select',{value:AI_MODELS.some(m=>m[0]===S.aiModel)?S.aiModel:'custom',onChange:e=>{if(e.target.value!=='custom')set({aiModel:e.target.value})},
+            style:{width:'100%',marginTop:10,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+            AI_MODELS.map(m=>h('option',{key:m[0],value:m[0]},m[1])),
+            h('option',{value:'custom'},'Custom model…')),
+          h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-r1-0528:free',autoCapitalize:'none',spellCheck:false,
+            style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}))),
     head('Data'),
     h('div',{style:{padding:'0 20px 6px',fontSize:13,color:T.sub}},
       data.articles.length+' articles · '+Math.round(usageKB)+' KB stored on this device'),

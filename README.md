@@ -25,7 +25,9 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **AI assistant (✦ icon in the header, on any page)**
-- Powered by **your own OpenRouter API key** (free at [openrouter.ai/keys](https://openrouter.ai/keys)) — DeepSeek, Llama, Qwen, Gemini, Mistral free tiers plus paid models, or any custom model id
+- Two providers, pick either in Settings:
+  - **OpenRouter** (free key at [openrouter.ai/keys](https://openrouter.ai/keys)) — DeepSeek R1, Llama, Qwen, Mistral free tiers plus paid models, or any custom model id
+  - **Google Gemini** (free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — Gemini 2.5 Flash / Pro / Flash-Lite with a generous free tier
 - **Summarize** any article into key points + takeaway
 - **Translate** into Telugu, Hindi, Tamil, Kannada, and many more — read the result, listen to it spoken aloud (తెలుగు / हिन्दी voices), or save it as a new article
 - **Rewrite** — simplify, shorten, expand, change tone, or convert to bullet points
