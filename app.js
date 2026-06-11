@@ -31,16 +31,20 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-chat-v3-0324:free',aiLang:'English'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English'};
+
+/* models OpenRouter has retired — saved settings get migrated to the new default */
+const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
 
 /* ============================== AI (OpenRouter) ============================== */
 const AI_MODELS=[
-  ['deepseek/deepseek-chat-v3-0324:free','DeepSeek V3 (free)'],
-  ['deepseek/deepseek-r1:free','DeepSeek R1 (free)'],
+  ['deepseek/deepseek-r1-0528:free','DeepSeek R1 0528 (free)'],
+  ['deepseek/deepseek-r1-0528-qwen3-8b:free','DeepSeek R1 0528 Qwen3 8B (free)'],
   ['meta-llama/llama-3.3-70b-instruct:free','Llama 3.3 70B (free)'],
-  ['qwen/qwen-2.5-72b-instruct:free','Qwen 2.5 72B (free)'],
+  ['qwen/qwen3-235b-a22b:free','Qwen3 235B (free)'],
   ['google/gemini-2.0-flash-exp:free','Gemini 2.0 Flash (free)'],
   ['mistralai/mistral-small-3.1-24b-instruct:free','Mistral Small 3.1 (free)'],
+  ['deepseek/deepseek-chat-v3-0324','DeepSeek V3 (paid)'],
   ['openai/gpt-4o-mini','GPT-4o mini (paid)'],
   ['anthropic/claude-3.5-haiku','Claude 3.5 Haiku (paid)'],
   ['google/gemini-2.5-flash','Gemini 2.5 Flash (paid)']
@@ -64,9 +68,12 @@ async function openRouterChat(key,model,messages,maxTokens){
     throw new Error(msg);
   }
   const j=await res.json();
-  const out=j&&j.choices&&j.choices[0]&&j.choices[0].message&&j.choices[0].message.content;
-  if(!out||!String(out).trim())throw new Error('Empty AI response — try another model.');
-  return String(out).trim();
+  const m=j&&j.choices&&j.choices[0]&&j.choices[0].message;
+  let out=m&&m.content;
+  if(!out||!String(out).trim())out=m&&m.reasoning; // some reasoning models put text here
+  out=String(out||'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim(); // strip R1 thinking blocks
+  if(!out)throw new Error('Empty AI response — try another model.');
+  return out;
 }
 
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
@@ -426,6 +433,7 @@ function loadStore(){
   try{d=JSON.parse(localStorage.getItem(STORE_KEY)||'null')}catch(e){d=null}
   if(!d||typeof d!=='object')d={};
   d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
+  if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
@@ -1662,6 +1670,7 @@ function App(){
       const d=JSON.parse(await file.text());
       if(!d||!Array.isArray(d.articles))throw new Error('bad file');
       d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
+  if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
       d.folders=Array.isArray(d.folders)?d.folders:[];
       d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
       d.seeded=true;
