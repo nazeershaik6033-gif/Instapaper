@@ -2123,6 +2123,7 @@ function App(){
   const [browserO,setBrowserO]=useState(null); // {url} — in-app browser
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
   const toastT=useRef(null);
+  const listRef=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
 
   useEffect(()=>{ // splash + launch params (?url= from share target, ?action=add)
@@ -2414,10 +2415,9 @@ function App(){
         selecting.mode==='playlist'?'Playlist · '+selecting.ids.length:selecting.ids.length+' selected'),
       h('div',{style:{width:70}}));
   }else{
-    header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0,position:'relative'}},
+    header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0}},
       headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
-      h('div',{style:{position:'absolute',left:'50%',transform:'translateX(-50%)',maxWidth:'40%',textAlign:'center',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',pointerEvents:'none'}},scopeTitle(scope,data.folders)),
-      h('div',{style:{flex:1}}),
+      h('div',{onClick:()=>listRef.current&&listRef.current.scrollTo({top:0,behavior:'smooth'}),className:'act90',style:{fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,cursor:'pointer',paddingLeft:2}},scopeTitle(scope,data.folders)),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.contrast(22),cycleTheme),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
@@ -2455,7 +2455,7 @@ function App(){
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
-      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
+      h('div',{ref:listRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
