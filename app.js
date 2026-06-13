@@ -1708,12 +1708,13 @@ function SitesManager({T,sites,onSites,onOpen}){
 }
 
 /* ============================== in-app browser ============================== */
-function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose}){
+function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveUrl,onClose}){
   const [url,setUrl]=useState(initialUrl||'');
   const [input,setInput]=useState(initialUrl||'');
   const [frameKey,setFrameKey]=useState(0);
   const [vaultOpen,setVaultOpen]=useState(false);
   const [addForm,setAddForm]=useState(null);
+  const [saving,setSaving]=useState(false);
   const [mode,setMode]=useState('frame'); // 'frame' = real embed, 'lite' = proxied read-only
   const [lite,setLite]=useState({html:'',loading:false,err:''});
   const liteSeq=useRef(0);
@@ -1729,6 +1730,13 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
     window.addEventListener('message',onMsg);
     return()=>window.removeEventListener('message',onMsg);
   },[]);
+  const doSave=async()=>{ // pull the current page into the reading list
+    if(saving||!url||!onSaveUrl)return;
+    setSaving(true);
+    try{await onSaveUrl(url)}catch(e){}
+    setSaving(false);
+  };
+  const doShare=()=>{if(url)shareText('','',url)}; // native share sheet, falls back to copy
   const tbtn=(icon,onClick)=>h('button',{onClick,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
@@ -1758,12 +1766,15 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
           allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
           style:{flex:1,border:0,width:'100%',background:'#fff'}}),
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},
-          mode==='lite'?'Lite view — read-only. Links work; logins need the full browser.':'Blank page? The site blocks embedding — use Lite view to read it.'),
+        h('span',{style:{flex:1,minWidth:0,fontSize:11.5,color:T.sub,lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+          mode==='lite'?'Lite view — read-only':'Blank page? Try Lite view'),
+        h('button',{onClick:doSave,disabled:saving,className:'act95',style:{display:'flex',alignItems:'center',gap:6,flexShrink:0,padding:'6px 13px',borderRadius:9,background:T.fg,color:T.bg,fontSize:12.5,fontWeight:700,opacity:saving?0.7:1}},
+          saving?null:Icons.plus(14),saving?'Saving…':'Save'),
+        h('button',{onClick:doShare,className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Share'),
         mode==='lite'
-          ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full view')
-          :h('button',{onClick:()=>loadLite(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite view'),
-        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
+          ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full')
+          :h('button',{onClick:()=>loadLite(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite'),
+        h('button',{onClick:()=>openExternalUrl(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
     :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
       h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'}},'Your sites'),
       h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},
@@ -2157,6 +2168,19 @@ function App(){
     setAddS(null);
     toastFn(article.isVideo?'Video saved':'Saved — '+article.readMin+' min read');
   };
+  const saveFromBrowser=async raw=>{ // save the page open in the in-app browser
+    const url=normalizeUrl(raw);
+    if(!url)return;
+    if(dataRef.current.articles.find(a=>a.url===url)){toastFn('Already in your list');return}
+    try{
+      const rec=await fetchArticleData(url);
+      const article=Object.assign(rec,{id:uid(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]});
+      update(d=>({...d,articles:[article,...d.articles]}));
+      toastFn(article.isVideo?'Video saved':'Saved — '+article.readMin+' min read');
+    }catch(e){
+      saveStub(url,null); // couldn't extract — keep the link, fetch later
+    }
+  };
   const saveStub=(url,folderId)=>{
     if(!url)return;
     const vid=ytIdOf(url);
@@ -2472,6 +2496,7 @@ function App(){
       onChangeVault:blob=>update(d=>({...d,vault:blob})),
       session:vaultSess,
       initialUrl:browserO.url,
+      onSaveUrl:saveFromBrowser,
       onClose:()=>setBrowserO(null)}):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);
