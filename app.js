@@ -436,6 +436,43 @@ async function fetchWithTimeout(url,opts,ms){
   finally{if(t)clearTimeout(t)}
 }
 
+/* Article extractors tend to swallow the junk that follows the real story —
+   "Trending Now" / "Related" lists, newsletter promos, "Read more" link
+   blocks. This trims that trailing boilerplate: it hard-cuts at a known
+   section heading in the back half of the piece, then peels off any trailing
+   blocks that are mostly links, lone images, or orphaned headings. It never
+   strips down to nothing, so a false positive can't blank the article. */
+const TAIL_HEAD_RE=/^\s*(trending|related|more (from|in|on|stories|news|coverage)|most (popular|read)|recommended|read more|you (might|may) (also )?like|sign up|subscribe|newsletter|don'?t miss|up next|editor'?s? picks?|popular( now)?|latest( news)?|from our partners|advertisement|sponsored|share this|follow us|comments?|watch( now)?|in this article|choose )/i;
+function stripTrailingBoilerplate(html){
+  let doc;
+  try{doc=new DOMParser().parseFromString('<div id="__root">'+html+'</div>','text/html')}catch(e){return html}
+  const root=doc.getElementById('__root');
+  if(!root)return html;
+  const blocks=Array.from(root.children);
+  if(blocks.length<3)return html;
+  const txt=el=>(el.textContent||'').trim();
+  const linkDensity=el=>{const t=txt(el).length;if(!t)return 1;let l=0;el.querySelectorAll('a').forEach(a=>l+=(a.textContent||'').length);return l/t};
+  const isHeading=el=>/^H[1-6]$/.test(el.tagName);
+  // 1) hard cut at a boilerplate section heading found in the back half
+  let cut=blocks.length;
+  for(let i=Math.floor(blocks.length*0.45);i<blocks.length;i++){
+    if(isHeading(blocks[i])&&TAIL_HEAD_RE.test(txt(blocks[i]))){cut=i;break}
+  }
+  // 2) peel trailing junk: link-dense blocks, lone images, orphaned headings
+  let dropped=0;
+  while(cut>2){
+    const b=blocks[cut-1],t=txt(b),hasImg=!!b.querySelector('img');
+    let junk;
+    if(t.length<2)junk=true;
+    else if(b.tagName==='FIGURE'||(hasImg&&t.length<40))junk=true;
+    else if(isHeading(b))junk=TAIL_HEAD_RE.test(t)||dropped>0;
+    else if(/^(UL|OL)$/.test(b.tagName))junk=linkDensity(b)>0.55;
+    else junk=t.length<140&&linkDensity(b)>0.6;
+    if(junk){cut--;dropped++}else break;
+  }
+  if(cut<2||cut>=blocks.length)return html; // nothing safe to trim
+  return blocks.slice(0,cut).map(b=>b.outerHTML).join('');
+}
 async function fetchViaJina(url){
   const res=await fetchWithTimeout('https://r.jina.ai/'+url,{},25000);
   if(!res.ok)throw new Error('reader '+res.status);
@@ -448,7 +485,7 @@ async function fetchViaJina(url){
     const tm=head.match(/^Title:\s*(.+)$/m);if(tm)title=tm[1].trim();
     const pm=head.match(/^Published Time:\s*(.+)$/m);if(pm)published=pm[1].trim();
   }
-  const html=mdToHtml(md);
+  const html=stripTrailingBoilerplate(mdToHtml(md));
   const text=htmlToText(html);
   if(text.length<120)throw new Error('reader returned too little text');
   // first image in content as hero candidate
@@ -533,6 +570,7 @@ function extractFromHtml(rawHtml,url){
   scores.forEach((sc,el)=>{if(sc>bestScore){bestScore=sc;best=el}});
   if(!best)throw new Error('no content found');
   let html=sanitizeNode(best,url).replace(/(<p>\s*<\/p>)+/g,'');
+  html=stripTrailingBoilerplate(html);
   const text=htmlToText(html);
   if(text.length<160)throw new Error('could not extract article text');
   return{title,html,text,image,author:typeof author==='string'?author.replace(/^https?:\/\/\S+$/,''):'',publishedAt};
