@@ -661,7 +661,7 @@ function loadStore(){
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
-  d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
+  d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[];if(a.read===undefined)a.read=(a.progress||0)>=0.97});
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.seeded){d.articles.unshift(makeSeed());d.seeded=true}
@@ -716,7 +716,9 @@ const Icons={
   blocks:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),h('rect',{x:4,y:13.5,width:9,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),P('M16.5 15.2l3 3M19.5 15.2l-3 3')),
   refresh:s=>Svg({size:s},P('M19.5 12a7.5 7.5 0 1 1-2.2-5.3'),P('M19.6 3.6v3.6h-3.6')),
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
-  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8'))
+  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
+  star:(s,fill)=>Svg({size:s},h('path',{d:'M12 4l2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16.9 7.2 18.4l.9-5.2L4.3 9.5l5.2-.8L12 4Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'})),
+  chevD:s=>Svg({size:s},P('M6 9.5 12 15.5l6-6'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -737,14 +739,16 @@ function useLongPress(cb){
   };
 }
 
-function Sheet({T,onClose,title,children,maxH,z}){
+function Sheet({T,onClose,title,children,maxH,z,headerAction}){
   return h('div',{style:{position:'fixed',inset:0,zIndex:z||70}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:T.overlay}}),
     h('div',{className:'shn',style:{position:'absolute',left:0,right:0,bottom:0,background:T.sheet,color:T.fg,borderRadius:'16px 16px 0 0',maxHeight:maxH||'88%',display:'flex',flexDirection:'column',boxShadow:'0 -8px 40px rgba(0,0,0,.25)'}},
       h('div',{style:{width:38,height:5,borderRadius:3,background:T.hair,margin:'8px auto 0',flexShrink:0}}),
       title?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'10px 18px 6px',flexShrink:0}},
         h('div',{style:{fontSize:18,fontWeight:600,fontFamily:UIF}},title),
-        h('button',{onClick:onClose,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.sub})},Icons.x(20))):null,
+        h('div',{style:{display:'flex',alignItems:'center',gap:2}},
+          headerAction||null,
+          h('button',{onClick:onClose,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.sub})},Icons.x(20)))):null,
       h('div',{className:'sy',style:{overflowY:'auto',flex:'0 1 auto',paddingBottom:'calc(6px + '+SAFE_B+')'}},children)
     ));
 }
@@ -814,9 +818,10 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   };
   const prog=a.progress||0;
   const done=prog>=0.97;
+  const read=!!a.read;
   let footer;
-  if(a.isVideo)footer=done?'Watched':'Video';
-  else if(done)footer='Completed';
+  if(a.isVideo)footer=read?'Watched':'Video';
+  else if(read)footer='Read';
   else if(prog>0.01)footer=Math.round(prog*100)+'% · '+a.readMin+' min read';
   else footer=a.words?a.readMin+' min read':'Saved link';
   const metaLine=[a.source,a.author?('by '+a.author):''].filter(Boolean).join(' · ');
@@ -824,10 +829,12 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   return h('div',{style:{position:'relative',overflow:'hidden',background:T.bg}},
     dx!==0?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:dx<0?'flex-end':'flex-start',padding:'0 22px',background:dx<0?leftAction.bg:'#d4564a',color:'#fff',fontSize:14,fontWeight:600}},dx<0?leftAction.label:(a.liked?'Unlike':'Like')):null,
     h('div',{onTouchStart:start,onTouchMove:move,onTouchEnd:end,onMouseDown:start,onMouseMove:e=>{if(e.buttons)move(e)},onMouseUp:end,onMouseLeave:clearLp,onClick:click,onContextMenu:e=>{e.preventDefault();if(!selecting)onLongPress()},
-      style:{display:'flex',gap:14,padding:'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
+      style:{display:'flex',gap:14,padding:'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:(read?0.6:1)}},
       selecting?h('div',{style:{display:'flex',alignItems:'center',color:selected?T.accent:T.sub,flexShrink:0}},Icons.checkCircle(24,selected)):null,
       h('div',{style:{flex:1,minWidth:0}},
-        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17.5,fontWeight:600,lineHeight:1.3,color:T.fg,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
+        h('div',{style:{display:'flex',gap:8,alignItems:'flex-start'}},
+          !read?h('span',{style:{width:7,height:7,borderRadius:'50%',background:T.accent,flexShrink:0,marginTop:7}}):null,
+          h('div',{style:{flex:1,minWidth:0,fontFamily:"'Lora',Georgia,serif",fontSize:17.5,fontWeight:600,lineHeight:1.3,color:T.fg,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title)),
         metaLine?h('div',{style:{fontSize:12.5,color:T.sub,marginTop:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},metaLine):null,
         snippet?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5}},snippet)
           :(a.excerpt?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.excerpt):null),
@@ -837,7 +844,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
           a.highlights.length?h('span',{style:{display:'flex',alignItems:'center',gap:3}},Icons.highlight(12),String(a.highlights.length)):null,
           a.tags.slice(0,3).map(t=>h('span',{key:t,style:{color:T.accent}},'#'+t))
         ),
-        !done&&prog>0.01?h('div',{style:{height:2.5,background:T.hair,borderRadius:2,marginTop:7,overflow:'hidden',maxWidth:120}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:T.sub,borderRadius:2}})):null
+        !read&&prog>0.01?h('div',{style:{height:2.5,background:T.hair,borderRadius:2,marginTop:7,overflow:'hidden',maxWidth:120}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:T.sub,borderRadius:2}})):null
       ),
       (a.image||a.isVideo)?h('div',{style:{width:64,height:64,borderRadius:5,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden'}},
         a.image?h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover',display:'block'},onError:e=>{e.target.style.display='none'}}):null,
@@ -885,7 +892,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
 
 /* ============================== ooo menu ============================== */
 const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular']];
-const FILTERS=[['all','All'],['unread','Unread'],['liked','Liked'],['articles','Articles'],['videos','Videos'],['completed','Completed']];
+const FILTERS=[['all','All'],['unread','Unread'],['read','Read'],['liked','Liked'],['articles','Articles'],['videos','Videos']];
 
 function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,showListOps,onClose}){
   const [open,setOpen]=useState(null);
@@ -993,6 +1000,7 @@ function ArticleSheet({T,a,onAction,onClose}){
     h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair}},
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
+    h(ARow,{T,icon:Icons.checkCircle(21,!!a.read),label:a.read?'Mark as unread':'Mark as read',onClick:act('read')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
     h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:act('move')}),
@@ -1146,7 +1154,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     const p=max>0?clamp(el.scrollTop/max,0,1):1;
     if(Math.abs(p-lastSaved.current)>0.02||(p>=0.97&&lastSaved.current<0.97)){
       lastSaved.current=p;
-      patch({progress:p});
+      patch(p>=0.97?{progress:p,read:true}:{progress:p}); // reaching the end marks it read
     }
   };
 
@@ -1400,16 +1408,16 @@ function EditBlocksSheet({T,article,S,onSave,onClose}){
     }catch(e){setAiNote((e&&e.message)||'AI request failed — try again.')}
     setAiBusy(false);
   };
-  return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
+  const aiBtn=h('button',{onClick:suggest,disabled:aiBusy,className:'act90','aria-label':'Suggest blocks to remove with AI',title:'Suggest blocks to remove with AI',
+    style:Object.assign({},iconBtnS,{color:T.accent,opacity:aiBusy?0.6:1})},
+    aiBusy?h(Spinner,{T,size:20}):Icons.ai(22));
+  return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%',headerAction:aiBtn},
     h('div',{style:{padding:'0 20px 8px'}},
-      h('button',{onClick:suggest,disabled:aiBusy,className:'act98',
-        style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'12px',borderRadius:12,border:'1.5px solid '+T.hair,background:T.card,color:T.fg,fontSize:14.5,fontWeight:600,marginBottom:10,opacity:aiBusy?0.6:1}},
-        aiBusy?h(Spinner,{T,size:18}):Icons.ai(18),aiBusy?'Analyzing…':'Suggest blocks to remove'),
       aiNote?h('div',{style:{fontSize:12.5,color:T.accent,lineHeight:1.5,marginBottom:10,textAlign:'center'}},aiNote):null,
       h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:count>=blocks.length,className:'act98',
         style:{display:'block',width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:16,fontWeight:600,textAlign:'center',opacity:count>=blocks.length?0.45:1}},
         count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save'),
-      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove — or let AI suggest them — then save your cleaned-up copy.')),
+      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove — or tap the ✦ icon up top to let AI suggest them — then save your cleaned-up copy.')),
     h('div',{style:{padding:'0 14px'}},
       blocks.map((b,i)=>h('div',{key:i,onClick:()=>toggle(i),
         style:{display:'flex',gap:10,alignItems:'flex-start',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px solid '+(removed[i]?T.danger:T.hair),opacity:removed[i]?0.45:1,background:removed[i]?'transparent':T.card}},
@@ -1708,13 +1716,22 @@ function SitesManager({T,sites,onSites,onOpen}){
 }
 
 /* ============================== in-app browser ============================== */
-function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveUrl,onClose}){
+function BrowserTile({T,st,onOpen,onEdit}){ // tap to open, long-press (or right-click) to edit/move/delete
+  const lp=useLongPress(onEdit);
+  return h('button',{onClick:()=>{if(!lp.firedRef.current.fired)onOpen()},onTouchStart:lp.onTouchStart,onTouchMove:lp.onTouchMove,onTouchEnd:lp.onTouchEnd,onMouseDown:lp.onMouseDown,onMouseUp:lp.onMouseUp,onMouseLeave:lp.onMouseLeave,onContextMenu:e=>{e.preventDefault();onEdit()},
+    className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,minWidth:0}},
+    h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
+      h('img',{src:faviconUrl(st.url),alt:'',style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
+    h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.name));
+}
+function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveUrl,toastFn,onClose}){
   const [url,setUrl]=useState(initialUrl||'');
   const [input,setInput]=useState(initialUrl||'');
   const [frameKey,setFrameKey]=useState(0);
   const [vaultOpen,setVaultOpen]=useState(false);
   const [addForm,setAddForm]=useState(null);
   const [saving,setSaving]=useState(false);
+  const [collapsed,setCollapsed]=useState({}); // bookmark folder sections collapsed by name
   const [mode,setMode]=useState('frame'); // 'frame' = real embed, 'lite' = proxied read-only
   const [lite,setLite]=useState({html:'',loading:false,err:''});
   const liteSeq=useRef(0);
@@ -1737,6 +1754,22 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
     setSaving(false);
   };
   const doShare=()=>{if(url)shareText('','',url)}; // native share sheet, falls back to copy
+  const isBookmarked=!!url&&sites.some(s=>normalizeUrl(s.url)===normalizeUrl(url));
+  const bmFolders=[...new Set(sites.map(s=>(s.folder||'').trim()).filter(Boolean))];
+  const toggleBookmark=()=>{ // star in toolbar: add the current page, or remove if already saved
+    if(!url)return;
+    const nu=normalizeUrl(url);
+    if(isBookmarked){onSites(list=>list.filter(s=>normalizeUrl(s.url)!==nu));toastFn&&toastFn('Bookmark removed')}
+    else setAddForm({name:domainOf(url)||'',url,folder:''});
+  };
+  const saveBookmark=()=>{
+    const u=normalizeUrl(addForm.url);if(!u)return;
+    const name=addForm.name.trim()||domainOf(u)||u,folder=(addForm.folder||'').trim();
+    if(addForm.id)onSites(list=>list.map(s=>s.id===addForm.id?{...s,name,url:u,folder}:s));
+    else onSites(list=>list.concat([{id:uid(),name,url:u,folder}]));
+    setAddForm(null);toastFn&&toastFn(addForm.id?'Bookmark updated':'Bookmarked');
+  };
+  const deleteBookmark=()=>{if(addForm&&addForm.id){const id=addForm.id;onSites(list=>list.filter(s=>s.id!==id));setAddForm(null);toastFn&&toastFn('Bookmark removed')}};
   const tbtn=(icon,onClick)=>h('button',{onClick,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
@@ -1749,6 +1782,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
         url?h('button',{onClick:()=>{setUrl('');setInput('');setMode('frame')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
       url?tbtn(Icons.refresh(19),()=>{if(mode==='lite')loadLite(url);else setFrameKey(k=>k+1)}):null,
+      url?h('button',{onClick:toggleBookmark,className:'act90',style:Object.assign({},iconBtnS,{color:isBookmarked?T.accent:T.fg,width:38}),'aria-label':isBookmarked?'Remove bookmark':'Bookmark this page'},Icons.star(19,isBookmarked)):null,
       url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
     url?h(Fragment,null,
@@ -1776,27 +1810,43 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
           :h('button',{onClick:()=>loadLite(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite'),
         h('button',{onClick:()=>openExternalUrl(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
     :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
-      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'}},'Your sites'),
-      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},
-        sites.map(st=>h('button',{key:st.id,onClick:()=>go(st.url),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,minWidth:0}},
-          h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
-            h('img',{src:faviconUrl(st.url),alt:'',style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
-          h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.name))),
-        h('button',{onClick:()=>setAddForm({name:'',url:''}),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
-          h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
-          h('span',{style:{fontSize:11.5,color:T.sub}},'Add'))),
-      addForm?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:16}},
-        h('input',{value:addForm.name,onChange:e=>setAddForm({...addForm,name:e.target.value}),placeholder:'Name',
-          style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-        h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-          style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-        h('div',{style:{display:'flex',gap:10,marginTop:10}},
-          h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u}]));setAddForm(null)},className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Add site'),
-          h('button',{onClick:()=>setAddForm(null),className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Cancel'))):null,
-      h('div',{style:{fontSize:12,color:T.sub,marginTop:18,lineHeight:1.5}},'Reorder, rename, or remove sites in Settings → Logged-In Sites. Tap the key icon to copy a saved password while logging in.')),
+      (()=>{
+        const groups={},order=[];
+        sites.forEach(s=>{const f=(s.folder||'').trim();if(!(f in groups)){groups[f]=[];order.push(f)}groups[f].push(s)});
+        const hasNamed=order.some(f=>f);
+        if(!order.length)return h('div',{style:{fontSize:13.5,color:T.sub,padding:'14px 2px',lineHeight:1.5}},'No bookmarks yet. Open a page and tap the ★ star to save it here, or use “Add a bookmark” below.');
+        return order.map(f=>{
+          const label=f||(hasNamed?'Ungrouped':'Your sites');
+          const isCol=!!collapsed[f];
+          return h('div',{key:f||'__none',style:{marginBottom:16}},
+            h('button',{onClick:()=>setCollapsed(c=>({...c,[f]:!c[f]})),className:'act90',style:{display:'flex',alignItems:'center',gap:7,width:'100%',padding:'4px 2px',marginBottom:10}},
+              h('span',{style:{display:'flex',color:T.sub,transform:isCol?'rotate(-90deg)':'none',transition:'transform 150ms'}},Icons.chevD(15)),
+              h('span',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},label),
+              h('span',{style:{fontSize:11.5,color:T.sub,fontWeight:600}},groups[f].length)),
+            isCol?null:h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},
+              groups[f].map(st=>h(BrowserTile,{key:st.id,T,st,onOpen:()=>go(st.url),onEdit:()=>setAddForm({id:st.id,name:st.name,url:st.url,folder:st.folder||''})}))));
+        });
+      })(),
+      h('button',{onClick:()=>setAddForm({name:'',url:'',folder:''}),className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:7,width:'100%',padding:'13px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600,marginTop:8}},Icons.plus(16),'Add a bookmark'),
+      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Tap the ★ star while viewing a page to bookmark it. Long-press a bookmark to edit, move it to a folder, or delete it. Tap the key icon to copy a saved password while logging in.')),
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
-        h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null);
+        h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null,
+    addForm?h(Sheet,{T,onClose:()=>setAddForm(null),title:addForm.id?'Edit bookmark':'Add bookmark',z:95},
+      h('div',{style:{padding:'0 20px 8px'}},
+        h('input',{value:addForm.name,onChange:e=>setAddForm({...addForm,name:e.target.value}),placeholder:'Name',
+          style:{width:'100%',padding:'12px 14px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,marginTop:6}}),
+        h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',padding:'12px 14px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,marginTop:10}}),
+        bmFolders.length?h('div',{style:{display:'flex',flexWrap:'wrap',gap:8,marginTop:12}},
+          bmFolders.map(f=>h('button',{key:f,onClick:()=>setAddForm({...addForm,folder:addForm.folder===f?'':f}),className:'act90',
+            style:{padding:'6px 13px',borderRadius:999,border:'1px solid '+(addForm.folder===f?T.accent:T.hair),color:addForm.folder===f?T.accent:T.fg,fontSize:12.5,fontWeight:600}},f))):null,
+        h('input',{value:addForm.folder,onChange:e=>setAddForm({...addForm,folder:e.target.value}),placeholder:'Folder (optional)',autoCapitalize:'words',
+          style:{width:'100%',padding:'12px 14px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,marginTop:10}}),
+        h('div',{style:{display:'flex',gap:10,marginTop:14}},
+          addForm.id?h('button',{onClick:deleteBookmark,className:'act98',style:{padding:'12px 16px',borderRadius:10,background:T.card,color:T.danger,fontSize:14,fontWeight:600}},'Delete'):null,
+          h('button',{onClick:()=>setAddForm(null),className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Cancel'),
+          h('button',{onClick:saveBookmark,disabled:!normalizeUrl(addForm.url),className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600,opacity:normalizeUrl(addForm.url)?1:0.45}},addForm.id?'Save':'Add')))):null);
 }
 
 /* ============================== settings ============================== */
@@ -2131,6 +2181,7 @@ function App(){
       if(st2.session!==sess||!st2.playing)return;
       st2.si++;
       if(st2.si>=st2.sentences.length){
+        patchArticle(st2.queue[st2.qi],{read:true,progress:1}); // finished narrating this one
         if(st2.qi+1<st2.queue.length){ttsLoad(st2.qi+1,0);speak()}
         else{st2.playing=false;syncTts()}
       }else speak();
@@ -2210,6 +2261,7 @@ function App(){
       case 'close':setReadingId(null);break;
       case 'like':patchArticle(id,x=>({liked:!x.liked}));break;
       case 'archive':{const now=!a.archived;patchArticle(id,{archived:now});toastFn(now?'Archived':'Moved to Home');setSheet(null);break}
+      case 'read':{const now=!a.read;patchArticle(id,{read:now});toastFn(now?'Marked as read':'Marked as unread');setSheet(null);break}
       case 'move':setSheet({type:'move',ids:[id]});break;
       case 'tags':setSheet({type:'tags',id});break;
       case 'listen':setSheet(null);startTts([id]);break;
@@ -2306,7 +2358,7 @@ function App(){
       d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
       d.folders=Array.isArray(d.folders)?d.folders:[];
-      d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
+      d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[];if(a.read===undefined)a.read=(a.progress||0)>=0.97});
       d.sites=Array.isArray(d.sites)?d.sites:[];
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
@@ -2327,11 +2379,11 @@ function App(){
     else{
       arr=data.articles.filter(a=>inScope(a,scope));
       const f=S.filter;
-      if(f==='unread')arr=arr.filter(a=>(a.progress||0)<0.97);
+      if(f==='unread')arr=arr.filter(a=>!a.read);
+      else if(f==='read')arr=arr.filter(a=>a.read);
       else if(f==='liked')arr=arr.filter(a=>a.liked);
       else if(f==='articles')arr=arr.filter(a=>!a.isVideo);
       else if(f==='videos')arr=arr.filter(a=>a.isVideo);
-      else if(f==='completed')arr=arr.filter(a=>(a.progress||0)>=0.97);
     }
     return sortArticles(arr,S.sort);
   },[data,scope,q,S.sort,S.filter]);
@@ -2368,6 +2420,7 @@ function App(){
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.contrast(22),cycleTheme),
+      headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
       headerBtn(Icons.dots(22),()=>setMenuOpen(true)));
   }
 
@@ -2497,6 +2550,7 @@ function App(){
       session:vaultSess,
       initialUrl:browserO.url,
       onSaveUrl:saveFromBrowser,
+      toastFn,
       onClose:()=>setBrowserO(null)}):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);
@@ -2507,7 +2561,7 @@ function App(){
       onRate:ttsSetRate,onVoice:ttsSetVoice,onClose:()=>setTtsOpen(false)}):null,
 
     speedA?h(SpeedReader,{a:speedA,T,S,onClose:()=>setSpeedId(null),
-      onFinish:()=>{patchArticle(speedA.id,{progress:1});toastFn('Completed — nice!')},
+      onFinish:()=>{patchArticle(speedA.id,{progress:1,read:true});toastFn('Completed — nice!')},
       saveWpm:v=>update(d=>({...d,settings:{...d.settings,wpm:v}}))}):null,
 
     h(Toast,{T,toast})
