@@ -21,11 +21,13 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 💾 Full backup export / import
 
 **Content editing**
-- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
+- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **Browser & Logged-In Sites**
 - 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
+- 💾 **Save / Share from the browser** — reading any page in the built-in browser? Tap **Save** to download & clean it straight into your reading list, or **Share** to send the link out via the system share sheet
+- 📥 **Share into Instapaper** — once installed to your home screen, Instapaper appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
