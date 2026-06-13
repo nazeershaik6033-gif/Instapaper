@@ -21,7 +21,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 💾 Full backup export / import
 
 **Content editing**
-- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
+- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **Browser & Logged-In Sites**

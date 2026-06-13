@@ -1362,20 +1362,54 @@ function TagsList({T,articles,onPick}){
 }
 
 /* ============================== content editors ============================== */
-function EditBlocksSheet({T,article,onSave,onClose}){
+function EditBlocksSheet({T,article,S,onSave,onClose}){
   const blocks=useMemo(()=>{
     const d=document.createElement('div');d.innerHTML=article.html;
     return Array.from(d.children).map(c=>c.outerHTML);
   },[article.id]);
   const [removed,setRemoved]=useState({});
+  const [aiBusy,setAiBusy]=useState(false);
+  const [aiNote,setAiNote]=useState('');
   const count=Object.keys(removed).filter(k=>removed[k]).length;
   const toggle=i=>setRemoved(r=>({...r,[i]:!r[i]}));
+  // AI suggests which blocks are boilerplate and pre-ticks them; the user still
+  // reviews and presses Save, so removal stays under manual control.
+  const suggest=async()=>{
+    if(aiBusy)return;
+    if(!aiReady(S)){setAiNote('Add an AI key in Settings → AI to use suggestions.');return}
+    setAiBusy(true);setAiNote('Analyzing…');
+    try{
+      const listing=blocks.map((b,i)=>{
+        const d=document.createElement('div');d.innerHTML=b;
+        const el=d.firstElementChild,tag=el?el.tagName.toLowerCase():'?';
+        let t=(d.textContent||'').replace(/\s+/g,' ').trim();
+        if(!t&&el&&el.querySelector('img'))t='[image] '+(el.querySelector('img').getAttribute('alt')||'');
+        return'['+i+'] ('+tag+') '+(t.slice(0,200)||'[empty]');
+      }).join('\n');
+      const messages=[
+        {role:'system',content:'You clean up reader-mode web articles. Given the title and a numbered list of content blocks, identify the blocks that are NOT part of the main article body — navigation, ads, promos, newsletter or subscription prompts, social share buttons, "related"/"recommended"/"trending"/"read more" link lists, author bios, comment sections, cookie or legal notices, breadcrumbs, and similar boilerplate. Keep every real article paragraph, heading, quote, and meaningful image. Reply with ONLY a JSON array of the block numbers to remove, e.g. [4,7,8]. Reply with [] if nothing should be removed.'},
+        {role:'user',content:'Title: '+(article.title||'')+'\n\nBlocks:\n'+listing}
+      ];
+      const out=await aiChat(S,messages,500,n=>setAiNote(n));
+      const arr=out.match(/\[[\s\S]*?\]/);
+      const nums=new Set();
+      ((arr?arr[0]:out).match(/\d+/g)||[]).forEach(s=>{const n=+s;if(n>=0&&n<blocks.length)nums.add(n)});
+      if(!nums.size){setAiNote('AI found nothing to remove — looks clean already.');setAiBusy(false);return}
+      const next={};nums.forEach(n=>next[n]=true);setRemoved(next);
+      setAiNote('AI pre-selected '+nums.size+' block'+(nums.size>1?'s':'')+'. Review them, then tap Save to remove.');
+    }catch(e){setAiNote((e&&e.message)||'AI request failed — try again.')}
+    setAiBusy(false);
+  };
   return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
     h('div',{style:{padding:'0 20px 8px'}},
+      h('button',{onClick:suggest,disabled:aiBusy,className:'act98',
+        style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'12px',borderRadius:12,border:'1.5px solid '+T.hair,background:T.card,color:T.fg,fontSize:14.5,fontWeight:600,marginBottom:10,opacity:aiBusy?0.6:1}},
+        aiBusy?h(Spinner,{T,size:18}):Icons.ai(18),aiBusy?'Analyzing…':'Suggest blocks to remove'),
+      aiNote?h('div',{style:{fontSize:12.5,color:T.accent,lineHeight:1.5,marginBottom:10,textAlign:'center'}},aiNote):null,
       h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:count>=blocks.length,className:'act98',
         style:{display:'block',width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:16,fontWeight:600,textAlign:'center',opacity:count>=blocks.length?0.45:1}},
         count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save'),
-      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove, then save your cleaned-up copy.')),
+      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove — or let AI suggest them — then save your cleaned-up copy.')),
     h('div',{style:{padding:'0 14px'}},
       blocks.map((b,i)=>h('div',{key:i,onClick:()=>toggle(i),
         style:{display:'flex',gap:10,alignItems:'flex-start',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px solid '+(removed[i]?T.danger:T.hair),opacity:removed[i]?0.45:1,background:removed[i]?'transparent':T.card}},
@@ -2401,10 +2435,10 @@ function App(){
     })():null,
 
     sheet&&sheet.type==='editChoice'?(()=>{const a=byId(sheet.id);return a?h(Sheet,{T,onClose:()=>setSheet(null),title:'Edit content'},
-      h(ARow,{T,icon:Icons.blocks(21),label:'Remove blocks',sub:'Tap unwanted paragraphs, images, or ads to delete them',onClick:()=>setSheet({type:'editBlocks',id:sheet.id})}),
+      h(ARow,{T,icon:Icons.blocks(21),label:'Remove blocks',sub:'Tap unwanted parts to delete — or let AI suggest them',onClick:()=>setSheet({type:'editBlocks',id:sheet.id})}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Edit text',sub:'Edit the title and full text directly',onClick:()=>setSheet({type:'editText',id:sheet.id})})):null})():null,
 
-    sheet&&sheet.type==='editBlocks'?(()=>{const a=byId(sheet.id);return a?h(EditBlocksSheet,{T,article:a,onClose:()=>setSheet(null),
+    sheet&&sheet.type==='editBlocks'?(()=>{const a=byId(sheet.id);return a?h(EditBlocksSheet,{T,S,article:a,onClose:()=>setSheet(null),
       onSave:html=>saveEditedContent(sheet.id,null,html)}):null})():null,
 
     sheet&&sheet.type==='editText'?(()=>{const a=byId(sheet.id);return a?h(EditTextSheet,{T,article:a,onClose:()=>setSheet(null),
