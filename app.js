@@ -457,14 +457,26 @@ async function fetchViaJina(url){
   return{title,html,text,image,publishedAt,author:''};
 }
 
-const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u)];
+/* Several free CORS proxies, tried in order. Any single one is frequently
+   down or rate-limited, so the more independent fallbacks the better. The
+   last one (r.jina.ai in HTML mode) actually renders JavaScript, so it can
+   read pages that the plain proxies return empty for. */
+const PROXIES=[
+  {b:u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u)},
+  {b:u=>'https://corsproxy.io/?url='+encodeURIComponent(u)},
+  {b:u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u)},
+  {b:u=>'https://proxy.cors.sh/'+u},
+  {b:u=>'https://api.allorigins.win/get?url='+encodeURIComponent(u),json:true},
+  {b:u=>'https://r.jina.ai/'+u,headers:{'X-Return-Format':'html'}}
+];
 async function fetchRawHtml(url){
   let lastErr=null;
   for(const p of PROXIES){
     try{
-      const res=await fetchWithTimeout(p(url),{},25000);
+      const res=await fetchWithTimeout(p.b(url),p.headers?{headers:p.headers}:{},15000);
       if(!res.ok)throw new Error('proxy '+res.status);
-      const text=await res.text();
+      let text=await res.text();
+      if(p.json){try{const j=JSON.parse(text);text=(j&&j.contents)||''}catch(e){text=''}}
       if(text&&text.length>200)return text;
       throw new Error('empty proxy response');
     }catch(e){lastErr=e}
