@@ -689,6 +689,29 @@ function loadStore(){
   return d;
 }
 
+/* ============================== media store (IndexedDB) ============================== */
+/* Photos & files are far too large for localStorage, so their blobs + metadata live
+   in IndexedDB. This subsystem is intentionally separate from the article store and is
+   NOT included in the backup export (see Settings). */
+const MEDIA_DB='instapaper-media',MEDIA_VER=1;
+let _mediaDB=null;
+function mediaDB(){
+  if(_mediaDB)return _mediaDB;
+  _mediaDB=new Promise((res,rej)=>{
+    let r;try{r=indexedDB.open(MEDIA_DB,MEDIA_VER)}catch(e){return rej(e)}
+    r.onupgradeneeded=e=>{const db=e.target.result;
+      if(!db.objectStoreNames.contains('media'))db.createObjectStore('media',{keyPath:'id'});
+      if(!db.objectStoreNames.contains('albums'))db.createObjectStore('albums',{keyPath:'id'});
+    };
+    r.onsuccess=e=>res(e.target.result);
+    r.onerror=()=>rej(r.error);
+  });
+  return _mediaDB;
+}
+function idbAll(store){return mediaDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(store,'readonly').objectStore(store).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)}))}
+function idbPut(store,val){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).put(val);t.oncomplete=()=>res(val);t.onerror=()=>rej(t.error)}))}
+function idbDel(store,id){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)}))}
+
 /* ============================== icons ============================== */
 function Svg(props,...kids){
   return h('svg',Object.assign({xmlns:'http://www.w3.org/2000/svg',width:props.size||22,height:props.size||22,viewBox:props.vb||'0 0 24 24',fill:'none',style:Object.assign({display:'block',flexShrink:0},props.style||{})},{}),...kids);
@@ -739,7 +762,13 @@ const Icons={
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
   key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
   star:(s,fill)=>Svg({size:s},h('path',{d:'M12 4l2.3 4.7 5.2.8-3.8 3.7.9 5.2L12 16.9 7.2 18.4l.9-5.2L4.3 9.5l5.2-.8L12 4Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'})),
-  chevD:s=>Svg({size:s},P('M6 9.5 12 15.5l6-6'))
+  chevD:s=>Svg({size:s},P('M6 9.5 12 15.5l6-6')),
+  image:s=>Svg({size:s},h('rect',{x:3.5,y:4.5,width:17,height:15,rx:2.4,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:8.5,cy:9.5,r:1.6,stroke:'currentColor',strokeWidth:1.5}),P('M4 16.5 9 12l3.5 3 3-2.5 4.5 4')),
+  camera:s=>Svg({size:s},P('M3.5 8.5c0-1 .8-1.8 1.8-1.8h2L9 4.5h6L16.7 6.7h2c1 0 1.8.8 1.8 1.8v9c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8v-9Z'),h('circle',{cx:12,cy:12.5,r:3.4,stroke:'currentColor',strokeWidth:1.7})),
+  file:s=>Svg({size:s},P('M6.5 4c0-.8.7-1.5 1.5-1.5h5l4 4V20c0 .8-.7 1.5-1.5 1.5H8c-.8 0-1.5-.7-1.5-1.5V4Z'),P('M13 2.5V6.5h4')),
+  pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
+  crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
+  rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -902,6 +931,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
         h(SidebarItem,{T,icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')}),
         h(SidebarItem,{T,icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')}),
         h(SidebarItem,{T,icon:Icons.video(22),label:'Videos',active:is('videos'),onClick:()=>go('videos')}),
+        h(SidebarItem,{T,icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')}),
         h(SidebarItem,{T,icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')}),
         h(SidebarItem,{T,icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')}),
         h(SidebarItem,{T,icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}}),
@@ -1021,7 +1051,7 @@ function ArticleSheet({T,a,onAction,onClose}){
     h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair}},
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
-    h(ARow,{T,icon:Icons.checkCircle(21,!!a.read),label:a.read?'Mark as unread':'Mark as read',onClick:act('read')}),
+    h(ARow,{T,icon:Icons.checkCircle(21,!!a.read),label:a.read?(a.isVideo?'Mark as unwatched':'Mark as unread'):(a.isVideo?'Mark as watched':'Mark as read'),onClick:act('read')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
     h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:act('move')}),
@@ -1370,6 +1400,196 @@ function EmptyState({T,icon,title,sub}){
     h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},icon),
     h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},title),
     h('div',{style:{fontSize:13.5,lineHeight:1.5}},sub));
+}
+
+/* ============================== photos / media ============================== */
+function MediaThumb({T,m,onClick,onLongPress}){
+  const [url,setUrl]=useState('');
+  const lp=useLongPress(onLongPress);
+  useEffect(()=>{
+    if(m.kind!=='image'||!m.blob){setUrl('');return}
+    const u=URL.createObjectURL(m.blob);setUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[m.blob]);
+  return h('div',Object.assign({onClick},lp,{style:{position:'relative',paddingTop:'100%',borderRadius:10,overflow:'hidden',background:T.thumbBg||T.card,cursor:'pointer'}}),
+    m.kind==='image'&&url
+      ?h('img',{src:url,alt:m.caption||m.name,style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}})
+      :h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6,padding:8,color:T.sub}},
+        Icons.file(30),h('div',{style:{fontSize:10.5,textAlign:'center',overflow:'hidden',maxHeight:28,lineHeight:1.2,wordBreak:'break-word'}},m.name)),
+    m.pinned?h('div',{style:{position:'absolute',top:5,left:5,color:'#fff',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.55))',display:'flex'}},Icons.pin(14,true)):null,
+    m.favorite?h('div',{style:{position:'absolute',top:5,right:5,color:'#fff',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.55))',display:'flex'}},Icons.heart(15,true)):null,
+    m.caption?h('div',{style:{position:'absolute',left:0,right:0,bottom:0,padding:'14px 6px 5px',fontSize:11,color:'#fff',background:'linear-gradient(transparent,rgba(0,0,0,.6))',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.caption):null
+  );
+}
+
+function PhotoEditor({T,m,onSave,onClose}){
+  const isImage=m.kind==='image';
+  const [caption,setCaption]=useState(m.caption||'');
+  const [blob,setBlob]=useState(m.blob);
+  const [url,setUrl]=useState('');
+  const [crop,setCrop]=useState(null); // {x,y,w,h} in displayed px
+  const [busy,setBusy]=useState(false);
+  const imgRef=useRef(null),drag=useRef(null);
+  const dirty=blob!==m.blob||caption!==(m.caption||'');
+  useEffect(()=>{
+    if(!isImage||!blob){setUrl('');return}
+    const u=URL.createObjectURL(blob);setUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[blob]);
+  const loadImg=u=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=u});
+  const toBlob=cv=>new Promise(res=>cv.toBlob(b=>res(b),m.mime==='image/png'?'image/png':'image/jpeg',0.92));
+  const rotate=async dir=>{ // dir: +1 cw, -1 ccw
+    setBusy(true);
+    try{
+      const u=URL.createObjectURL(blob);const img=await loadImg(u);URL.revokeObjectURL(u);
+      const cv=document.createElement('canvas');cv.width=img.naturalHeight;cv.height=img.naturalWidth;
+      const ctx=cv.getContext('2d');
+      ctx.translate(cv.width/2,cv.height/2);ctx.rotate(dir*Math.PI/2);ctx.drawImage(img,-img.naturalWidth/2,-img.naturalHeight/2);
+      setBlob(await toBlob(cv));setCrop(null);
+    }catch(e){}
+    setBusy(false);
+  };
+  const applyCrop=async()=>{
+    if(!crop||crop.w<10||crop.h<10){setCrop(null);return}
+    setBusy(true);
+    try{
+      const img=imgRef.current,r=img.getBoundingClientRect();
+      const sx=img.naturalWidth/r.width,sy=img.naturalHeight/r.height;
+      const cv=document.createElement('canvas');
+      cv.width=Math.max(1,Math.round(crop.w*sx));cv.height=Math.max(1,Math.round(crop.h*sy));
+      const u=URL.createObjectURL(blob);const im=await loadImg(u);URL.revokeObjectURL(u);
+      cv.getContext('2d').drawImage(im,crop.x*sx,crop.y*sy,crop.w*sx,crop.h*sy,0,0,cv.width,cv.height);
+      setBlob(await toBlob(cv));setCrop(null);
+    }catch(e){}
+    setBusy(false);
+  };
+  const cStart=e=>{const r=imgRef.current.getBoundingClientRect();const p=e.touches?e.touches[0]:e;drag.current={x0:p.clientX-r.left,y0:p.clientY-r.top,r};setCrop({x:drag.current.x0,y:drag.current.y0,w:0,h:0})};
+  const cMove=e=>{if(!drag.current)return;const p=e.touches?e.touches[0]:e,r=drag.current.r;const x=clamp(p.clientX-r.left,0,r.width),y=clamp(p.clientY-r.top,0,r.height),x0=drag.current.x0,y0=drag.current.y0;setCrop({x:Math.min(x,x0),y:Math.min(y,y0),w:Math.abs(x-x0),h:Math.abs(y-y0)})};
+  const cEnd=()=>{drag.current=null;setCrop(c=>c&&(c.w<10||c.h<10)?null:c)};
+  const tbBtn=(icon,label,onClick,disabled)=>h('button',{onClick,disabled,className:'act90',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:4,color:T.fg,fontSize:11,opacity:disabled?.4:1,flex:1,padding:'8px 0'}},icon,label);
+  return h('div',{style:{position:'fixed',inset:0,zIndex:80,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',paddingTop:SAFE_T}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 12px',flexShrink:0}},
+      h('button',{onClick:onClose,className:'act90',style:{color:T.sub,fontSize:15.5,padding:6}},'Cancel'),
+      h('div',{style:{flex:1,textAlign:'center',fontSize:16,fontWeight:600}},'Edit'),
+      h('button',{onClick:()=>onSave({caption,blob:blob!==m.blob?blob:undefined}),disabled:!dirty||busy,className:'act90',style:{color:dirty&&!busy?T.accent:T.sub,fontSize:15.5,fontWeight:600,padding:6}},'Save')),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'0 16px'}},
+      isImage&&url?h('div',{style:{position:'relative',userSelect:'none',touchAction:'none',margin:'4px auto 12px',display:'flex',justifyContent:'center'}},
+        h('div',{style:{position:'relative',display:'inline-block'},onMouseDown:cStart,onMouseMove:cMove,onMouseUp:cEnd,onTouchStart:cStart,onTouchMove:cMove,onTouchEnd:cEnd},
+          h('img',{ref:imgRef,src:url,alt:'',draggable:false,style:{maxWidth:'100%',maxHeight:'52vh',display:'block',borderRadius:8}}),
+          crop?h('div',{style:{position:'absolute',left:crop.x,top:crop.y,width:crop.w,height:crop.h,border:'2px solid #fff',boxShadow:'0 0 0 9999px rgba(0,0,0,.45)',pointerEvents:'none'}}):null)
+      ):h('div',{style:{padding:'40px 0',textAlign:'center',color:T.sub}},Icons.file(46),h('div',{style:{marginTop:10,fontSize:14}},m.name)),
+      busy?h('div',{style:{textAlign:'center',color:T.sub,fontSize:13,marginBottom:10}},'Working…'):null,
+      h('div',{style:{fontSize:12.5,color:T.sub,marginBottom:6,fontWeight:600,letterSpacing:'.03em',textTransform:'uppercase'}},'Caption'),
+      h('input',{value:caption,onChange:e=>setCaption(e.target.value),placeholder:'Add a caption',
+        style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 13px',fontSize:15,marginBottom:16}})),
+    isImage?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,display:'flex',padding:'4px 8px calc(6px + '+SAFE_B+')'}},
+      tbBtn(Icons.rotate(22),'Left',()=>rotate(-1),busy),
+      tbBtn(h('span',{style:{transform:'scaleX(-1)',display:'flex'}},Icons.rotate(22)),'Right',()=>rotate(1),busy),
+      crop&&crop.w>10?tbBtn(Icons.crop(22),'Apply crop',applyCrop,busy):tbBtn(Icons.crop(22),'Drag to crop',()=>{},true)
+    ):h('div',{style:{paddingBottom:SAFE_B}}));
+}
+
+function PhotosView({T,S,media,albums,onPick,onUpdate,onDelete,onAddAlbum,onRenameAlbum,onDeleteAlbum,toastFn}){
+  const [tab,setTab]=useState('all'); // all | albums | favourites
+  const [openAlbum,setOpenAlbum]=useState(null); // albumId being viewed
+  const [actM,setActM]=useState(null); // media for action sheet
+  const [moveM,setMoveM]=useState(null); // media for move-to-album sheet
+  const [editM,setEditM]=useState(null); // media being edited
+  const [mkAlbum,setMkAlbum]=useState(null); // {forMedia?} create-album sheet
+  const [albName,setAlbName]=useState('');
+  const [viewer,setViewer]=useState(null); // media for fullscreen view
+  const sortP=arr=>arr.slice().sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0)||(b.addedAt||0)-(a.addedAt||0));
+
+  const tabBtn=(id,label)=>h('button',{onClick:()=>{setTab(id);setOpenAlbum(null)},className:'act95',style:{flex:1,padding:'9px 0',fontSize:14,fontWeight:tab===id?600:500,color:tab===id?T.fg:T.sub,borderBottom:'2px solid '+(tab===id?T.fg:'transparent')}},label);
+  const grid=items=>items.length
+    ?h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,padding:'8px'}},
+      items.map(m=>h(MediaThumb,{key:m.id,T,m,onClick:()=>setViewer(m),onLongPress:()=>setActM(m)})))
+    :h(EmptyState,{T,icon:Icons.image(40),title:'No photos yet',sub:'Tap + and choose Take photo, Photo library, or Upload files to add images and documents here.'});
+
+  let content;
+  if(tab==='all')content=grid(sortP(media));
+  else if(tab==='favourites')content=grid(sortP(media.filter(m=>m.favorite)));
+  else{ // albums
+    if(openAlbum){
+      const al=albums.find(a=>a.id===openAlbum);
+      content=h('div',null,
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'8px 12px'}},
+          h('button',{onClick:()=>setOpenAlbum(null),className:'act90',style:{display:'flex',color:T.fg}},Icons.back(20)),
+          h('div',{style:{fontSize:16,fontWeight:600,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},al?al.name:'Album'),
+          h('button',{onClick:()=>{setAlbName(al?al.name:'');setMkAlbum({rename:openAlbum})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(19)),
+          h('button',{onClick:()=>{onDeleteAlbum(openAlbum);setOpenAlbum(null);toastFn('Album deleted')},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(19))),
+        grid(sortP(media.filter(m=>m.albumId===openAlbum))));
+    }else{
+      content=h('div',null,
+        h('button',{onClick:()=>{setAlbName('');setMkAlbum({})},className:'act98',style:{display:'flex',alignItems:'center',gap:10,width:'calc(100% - 16px)',margin:'10px 8px',padding:'13px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:15,fontWeight:500}},Icons.plus(19),'New album'),
+        albums.length?h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,padding:'2px 8px 8px'}},
+          albums.map(al=>{const ms=sortP(media.filter(m=>m.albumId===al.id));const cover=ms.find(m=>m.kind==='image');
+            return h('button',{key:al.id,onClick:()=>setOpenAlbum(al.id),className:'act96',style:{textAlign:'left',background:'none'}},
+              h('div',{style:{position:'relative',paddingTop:'72%',borderRadius:11,overflow:'hidden',background:T.card}},
+                cover?h(AlbumCover,{m:cover}):h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.image(30))),
+              h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,marginTop:6,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},al.name),
+              h('div',{style:{fontSize:12,color:T.sub}},ms.length+(ms.length===1?' item':' items')));
+          }))
+          :h('div',{style:{padding:'30px 30px',textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5}},'Create an album to group photos. Long-press any photo and choose “Move to album”.'));
+    }
+  }
+  const isImg=actM&&actM.kind==='image';
+  return h('div',null,
+    h('div',{style:{display:'flex',borderBottom:'1px solid '+T.hair,position:'sticky',top:0,background:T.bg,zIndex:2}},
+      tabBtn('all','All photos'),tabBtn('albums','Albums'),tabBtn('favourites','Favourites')),
+    content,
+    h('div',{style:{height:'calc(30px + '+SAFE_B+')'}}),
+
+    viewer?h(MediaViewer,{T,m:viewer,onClose:()=>setViewer(null),onActions:()=>{const mm=viewer;setViewer(null);setActM(mm)}}):null,
+
+    actM?h(Sheet,{T,onClose:()=>setActM(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actM.caption||actM.name),
+      h(ARow,{T,icon:Icons.pin(21,actM.pinned),label:actM.pinned?'Unpin':'Pin to top',onClick:()=>{onUpdate(actM.id,m=>({pinned:!m.pinned}));setActM(null)}}),
+      h(ARow,{T,icon:Icons.heart(21,actM.favorite),label:actM.favorite?'Remove favourite':'Add to favourites',onClick:()=>{onUpdate(actM.id,m=>({favorite:!m.favorite}));setActM(null)}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to album…',onClick:()=>{const mm=actM;setActM(null);setMoveM(mm)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:isImg?'Edit (caption · crop · rotate)':'Edit caption',onClick:()=>{const mm=actM;setActM(null);setEditM(mm)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onDelete(actM.id);setActM(null)}})):null,
+
+    moveM?h(Sheet,{T,title:'Move to album',onClose:()=>setMoveM(null)},
+      h(ARow,{T,icon:Icons.plus(21),label:'New album…',onClick:()=>{const mm=moveM;setMoveM(null);setAlbName('');setMkAlbum({forMedia:mm.id})}}),
+      moveM.albumId?h(ARow,{T,icon:Icons.x(21),label:'Remove from album',onClick:()=>{onUpdate(moveM.id,{albumId:null});setMoveM(null);toastFn('Removed from album')}}):null,
+      albums.map(al=>h(ARow,{key:al.id,T,icon:Icons.folder(21),label:al.name,onClick:()=>{onUpdate(moveM.id,{albumId:al.id});setMoveM(null);toastFn('Moved to '+al.name)}})),
+      albums.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No albums yet — create one above.')):null,
+
+    mkAlbum?h(Sheet,{T,title:mkAlbum.rename?'Rename album':'New album',onClose:()=>setMkAlbum(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:albName,autoFocus:true,onChange:e=>setAlbName(e.target.value),placeholder:'Album name',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:async()=>{const nm=albName.trim()||'New album';
+            if(mkAlbum.rename){onRenameAlbum(mkAlbum.rename,nm)}
+            else{const id=await onAddAlbum(nm);if(mkAlbum.forMedia){onUpdate(mkAlbum.forMedia,{albumId:id});toastFn('Moved to '+nm)}else{setTab('albums');setOpenAlbum(id)}}
+            setMkAlbum(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkAlbum.rename?'Rename':'Create')) ):null,
+
+    editM?h(PhotoEditor,{T,m:editM,onClose:()=>setEditM(null),onSave:patch=>{onUpdate(editM.id,patch.blob?{caption:patch.caption,blob:patch.blob}:{caption:patch.caption});setEditM(null);toastFn('Saved')}}):null
+  );
+}
+
+function AlbumCover({m}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{if(!m||!m.blob)return;const u=URL.createObjectURL(m.blob);setUrl(u);return()=>URL.revokeObjectURL(u)},[m&&m.blob]);
+  return url?h('img',{src:url,alt:'',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}):null;
+}
+
+function MediaViewer({T,m,onClose,onActions}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{if(!m||!m.blob)return;const u=URL.createObjectURL(m.blob);setUrl(u);return()=>URL.revokeObjectURL(u)},[m&&m.blob]);
+  const isImage=m.kind==='image';
+  return h('div',{style:{position:'fixed',inset:0,zIndex:78,background:'rgba(0,0,0,.96)',display:'flex',flexDirection:'column',paddingTop:SAFE_T}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 12px'}},
+      h('button',{onClick:onClose,className:'act90',style:{color:'#fff',display:'flex',padding:6}},Icons.x(24)),
+      h('div',{style:{flex:1}}),
+      h('button',{onClick:onActions,className:'act90',style:{color:'#fff',display:'flex',padding:6}},Icons.dots(24))),
+    h('div',{onClick:onClose,style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'0 8px'}},
+      isImage&&url
+        ?h('img',{src:url,alt:m.caption||m.name,onClick:e=>e.stopPropagation(),style:{maxWidth:'100%',maxHeight:'100%',objectFit:'contain'}})
+        :h('div',{style:{textAlign:'center',color:'#fff'}},Icons.file(60),h('div',{style:{marginTop:12,fontSize:15}},m.name),
+          url?h('a',{href:url,download:m.name,onClick:e=>e.stopPropagation(),style:{display:'inline-block',marginTop:16,color:'#fff',border:'1px solid rgba(255,255,255,.5)',borderRadius:10,padding:'9px 18px',fontSize:14}},'Open / download'):null)),
+    m.caption&&isImage?h('div',{style:{color:'#fff',textAlign:'center',padding:'10px 20px calc(14px + '+SAFE_B+')',fontSize:14,lineHeight:1.4}},m.caption):h('div',{style:{height:'calc(10px + '+SAFE_B+')'}}));
 }
 
 function NotesList({T,articles,onOpenArticle,onOpenHighlight}){
@@ -2087,6 +2307,7 @@ function scopeTitle(scope,folders){
     case 'liked':return 'Liked';
     case 'archive':return 'Archive';
     case 'videos':return 'Videos';
+    case 'photos':return 'Photos';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'tag':return '#'+scope.id;
@@ -2131,8 +2352,65 @@ function App(){
     const next=typeof mut==='function'?mut(prev):Object.assign({},prev,mut);
     dataRef.current=next;persist(next);return next;
   })},[persist]);
-  const patchArticle=useCallback((id,patch)=>{update(d=>({...d,articles:d.articles.map(a=>a.id===id?{...a,...(typeof patch==='function'?patch(a):patch)}:a)}))},[update]);
+  const patchArticle=useCallback((id,patch)=>{update(d=>({...d,articles:d.articles.map(a=>{
+    if(a.id!==id)return a;
+    const p=typeof patch==='function'?patch(a):patch;
+    const merged={...a,...p};
+    if(merged.read&&!a.read&&merged.archived===undefined)merged.archived=true; // finishing an item auto-archives it
+    return merged;
+  })}))},[update]);
   const byId=id=>dataRef.current.articles.find(a=>a.id===id);
+
+  /* ---------- media (photos & files) ---------- */
+  useEffect(()=>{ // load media + albums from IndexedDB once
+    let live=true;
+    Promise.all([idbAll('media').catch(()=>[]),idbAll('albums').catch(()=>[])]).then(([m,al])=>{
+      if(!live)return;
+      m.sort((a,b)=>(b.addedAt||0)-(a.addedAt||0));
+      setMedia(m);setAlbums(al);
+    });
+    return()=>{live=false};
+  },[]);
+  const addFiles=useCallback(async(fileList)=>{
+    const files=Array.from(fileList||[]);if(!files.length)return;
+    const recs=[];
+    for(const f of files){
+      const rec={id:uid(),kind:f.type.startsWith('image/')?'image':'file',mime:f.type||'application/octet-stream',name:f.name||'Untitled',caption:'',albumId:null,favorite:false,pinned:false,addedAt:Date.now()+recs.length,blob:f};
+      try{await idbPut('media',rec);recs.push(rec)}catch(e){}
+    }
+    if(recs.length){setMedia(prev=>[...recs.reverse(),...prev]);toastFn(recs.length+(recs.length>1?' items added':' item added'))}
+  },[toastFn]);
+  const updateMedia=useCallback(async(id,patch)=>{
+    let updated=null;
+    setMedia(prev=>prev.map(m=>{if(m.id!==id)return m;updated={...m,...(typeof patch==='function'?patch(m):patch)};return updated}));
+    if(updated)try{await idbPut('media',updated)}catch(e){}
+  },[]);
+  const deleteMedia=useCallback(async ids=>{
+    const arr=Array.isArray(ids)?ids:[ids];
+    setMedia(prev=>prev.filter(m=>!arr.includes(m.id)));
+    for(const id of arr)try{await idbDel('media',id)}catch(e){}
+    toastFn(arr.length>1?arr.length+' items deleted':'Deleted');
+  },[toastFn]);
+  const addAlbum=useCallback(async name=>{
+    const al={id:uid(),name:name||'New album',createdAt:Date.now()};
+    setAlbums(prev=>[...prev,al]);try{await idbPut('albums',al)}catch(e){}
+    return al.id;
+  },[]);
+  const renameAlbum=useCallback(async(id,name)=>{
+    let updated=null;
+    setAlbums(prev=>prev.map(a=>{if(a.id!==id)return a;updated={...a,name};return updated}));
+    if(updated)try{await idbPut('albums',updated)}catch(e){}
+  },[]);
+  const deleteAlbum=useCallback(async id=>{ // album removed; its photos stay (albumId cleared)
+    setAlbums(prev=>prev.filter(a=>a.id!==id));
+    try{await idbDel('albums',id)}catch(e){}
+    setMedia(prev=>prev.map(m=>{if(m.albumId!==id)return m;const u={...m,albumId:null};idbPut('media',u).catch(()=>{});return u}));
+  },[]);
+  const pickFiles=useCallback((accept,capture)=>{
+    const el=fileInputRef.current;if(!el)return;
+    el.value='';el.accept=accept||'';if(capture)el.setAttribute('capture',capture);else el.removeAttribute('capture');
+    el.click();
+  },[]);
 
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
@@ -2143,6 +2421,9 @@ function App(){
   const [sidebar,setSidebar]=useState(false);
   const [menuOpen,setMenuOpen]=useState(false);
   const [addS,setAddS]=useState(null);
+  const [media,setMedia]=useState([]); // {id,kind,mime,name,caption,albumId,favorite,pinned,addedAt,blob}
+  const [albums,setAlbums]=useState([]); // {id,name,createdAt}
+  const fileInputRef=useRef(null); // hidden <input> reused for take-photo / library / files
   const [settingsOpen,setSettingsOpen]=useState(false);
   const [selecting,setSelecting]=useState(null);
   const [sheet,setSheet]=useState(null);
@@ -2294,7 +2575,7 @@ function App(){
       case 'close':setReadingId(null);break;
       case 'like':patchArticle(id,x=>({liked:!x.liked}));break;
       case 'archive':{const now=!a.archived;patchArticle(id,{archived:now});toastFn(now?'Archived':'Moved to Home');setSheet(null);break}
-      case 'read':{const now=!a.read;patchArticle(id,{read:now});toastFn(now?'Marked as read':'Marked as unread');setSheet(null);break}
+      case 'read':{const now=!a.read;patchArticle(id,{read:now});toastFn(now?((a.isVideo?'Watched':'Read')+' · archived'):'Marked as unread');setSheet(null);break}
       case 'move':setSheet({type:'move',ids:[id]});break;
       case 'tags':setSheet({type:'tags',id});break;
       case 'listen':setSheet(null);startTts([id]);break;
@@ -2431,7 +2712,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
 
   const readerAction=k=>doAction(readingId,k);
@@ -2459,6 +2740,7 @@ function App(){
   /* ---------- main area ---------- */
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
+  else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
@@ -2515,11 +2797,17 @@ function App(){
       onPlaylistMode:()=>{setMenuOpen(false);setSelecting({mode:'playlist',ids:[]});toastFn('Tap articles to build your playlist')},
       onSettings:()=>{setMenuOpen(false);setSettingsOpen(true)}}):null,
 
+    h('input',{ref:fileInputRef,type:'file',multiple:true,style:{display:'none'},
+      onChange:e=>{const fs=e.target.files;if(fs&&fs.length){addFiles(fs);if(scope.type!=='photos')setScope({type:'photos'})}}}),
+
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
     sheet&&sheet.type==='plus'?h(Sheet,{T,onClose:()=>setSheet(null)},
       h(ARow,{T,icon:Icons.link(21),label:'Save a link',sub:'Article, video, or any web page',onClick:()=>{setSheet(null);setAddS({prefill:''})}}),
+      h(ARow,{T,icon:Icons.camera(21),label:'Take photo',sub:'Capture with the camera',onClick:()=>{setSheet(null);pickFiles('image/*','environment')}}),
+      h(ARow,{T,icon:Icons.image(21),label:'Photo library',sub:'Choose photos from your device',onClick:()=>{setSheet(null);pickFiles('image/*')}}),
+      h(ARow,{T,icon:Icons.file(21),label:'Upload files',sub:'Images, PDFs, or any file',onClick:()=>{setSheet(null);pickFiles('')}}),
       h(ARow,{T,icon:Icons.folder(21),label:'New folder',sub:'Organize your reading',onClick:()=>setSheet({type:'folder'})})):null,
 
     sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
