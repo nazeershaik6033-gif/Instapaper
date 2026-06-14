@@ -20,6 +20,15 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import
 
+**Photos & files**
+- 📷 **Photos section** (sidebar → Photos) — add images and files via the **+** button: **Take photo**, **Photo library**, or **Upload files** (images, PDFs, anything)
+- 🗂 Three tabs — **All photos**, **Albums**, and **Favourites**; **pin** photos to the top, group them into **albums**, and **favourite** the best ones
+- ✂️ **Edit** any photo — add a caption, **crop**, and **rotate**; **move**, edit, or delete from any tab
+- Photos are stored privately on-device in IndexedDB (kept out of the backup file so backups stay small)
+
+**Reading state & auto-archive**
+- Articles and videos track a **read / watched** state. Finishing an article (scrolling to the end, or finishing TTS / Speed Read) or marking a video watched **auto-moves it to Archive**, keeping Home and Videos as clean "to-do" lists. Nothing is deleted — find everything you've finished under Archive or the **Read** filter.
+
 **Content editing**
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
