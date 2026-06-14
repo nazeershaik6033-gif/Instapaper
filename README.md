@@ -28,6 +28,11 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 
 **Reading state & auto-archive**
 - Articles and videos track a **read / watched** state. Finishing an article (scrolling to the end, or finishing TTS / Speed Read) or marking a video watched **auto-moves it to Archive**, keeping Home and Videos as clean "to-do" lists. Nothing is deleted — find everything you've finished under Archive or the **Read** filter.
+- **Hide read** — a one-tap toggle under the search bar hides everything you've already read or watched from the current list.
+- **Mark videos as watched** — right in the video player, or via long-press → Mark as watched.
+
+**AI for videos**
+- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
 
 **Content editing**
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
