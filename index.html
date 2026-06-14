@@ -93,6 +93,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 <body>
 <div class="spl" id="spl">Instapaper</div>
 <div id="root"></div>
+<script>
+/* failsafe: never let the splash hang forever if app.js fails to load/run */
+setTimeout(function(){var s=document.getElementById('spl');if(s)s.classList.add('hide')},8000);
+</script>
 <script src="app.js"></script>
 <script>
 if('serviceWorker' in navigator){

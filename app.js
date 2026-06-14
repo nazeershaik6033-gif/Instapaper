@@ -2328,8 +2328,9 @@ const EMPTY_STATES={
 class Boundary extends React.Component{
   constructor(p){super(p);this.state={err:null}}
   static getDerivedStateFromError(e){return{err:e}}
+  componentDidCatch(){try{const s=document.getElementById('spl');if(s)s.classList.add('hide')}catch(e){}}
   render(){
-    if(this.state.err)return ce('div',{style:{minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
+    if(this.state.err)return ce('div',{style:{position:'fixed',inset:0,zIndex:300,minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
       ce('div',{style:{fontFamily:WORDMARK,fontSize:24,fontWeight:600}},'Instapaper'),
       ce('div',{style:{fontSize:14,color:'#76767c'}},'Something went wrong. Your articles are safe.'),
       ce('button',{onClick:()=>location.reload(),style:{padding:'12px 26px',borderRadius:11,background:'#1c1c1e',color:'#fff',fontSize:15,fontWeight:600}},'Reload'));
@@ -2361,7 +2362,34 @@ function App(){
   })}))},[update]);
   const byId=id=>dataRef.current.articles.find(a=>a.id===id);
 
-  /* ---------- media (photos & files) ---------- */
+  const S=data.settings;
+  const T=THEMES[S.theme]||THEMES.light;
+
+  const [scope,setScope]=useState({type:'home'});
+  const [query,setQuery]=useState('');
+  const [readingId,setReadingId]=useState(null);
+  const [sidebar,setSidebar]=useState(false);
+  const [menuOpen,setMenuOpen]=useState(false);
+  const [addS,setAddS]=useState(null);
+  const [media,setMedia]=useState([]); // {id,kind,mime,name,caption,albumId,favorite,pinned,addedAt,blob}
+  const [albums,setAlbums]=useState([]); // {id,name,createdAt}
+  const fileInputRef=useRef(null); // hidden <input> reused for take-photo / library / files
+  const [settingsOpen,setSettingsOpen]=useState(false);
+  const [selecting,setSelecting]=useState(null);
+  const [sheet,setSheet]=useState(null);
+  const [toast,setToast]=useState(null);
+  const [ttsUI,setTtsUI]=useState(null);
+  const [ttsOpen,setTtsOpen]=useState(false);
+  const [speedId,setSpeedId]=useState(null);
+  const [voices,setVoices]=useState([]);
+  const [aiOpen,setAiOpen]=useState(null); // {articleId?} — header AI works on any page
+  const [browserO,setBrowserO]=useState(null); // {url} — in-app browser
+  const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
+  const toastT=useRef(null);
+  const listRef=useRef(null);
+  const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
+
+  /* ---------- media (photos & files) — declared after toastFn so its deps resolve ---------- */
   useEffect(()=>{ // load media + albums from IndexedDB once
     let live=true;
     Promise.all([idbAll('media').catch(()=>[]),idbAll('albums').catch(()=>[])]).then(([m,al])=>{
@@ -2411,33 +2439,6 @@ function App(){
     el.value='';el.accept=accept||'';if(capture)el.setAttribute('capture',capture);else el.removeAttribute('capture');
     el.click();
   },[]);
-
-  const S=data.settings;
-  const T=THEMES[S.theme]||THEMES.light;
-
-  const [scope,setScope]=useState({type:'home'});
-  const [query,setQuery]=useState('');
-  const [readingId,setReadingId]=useState(null);
-  const [sidebar,setSidebar]=useState(false);
-  const [menuOpen,setMenuOpen]=useState(false);
-  const [addS,setAddS]=useState(null);
-  const [media,setMedia]=useState([]); // {id,kind,mime,name,caption,albumId,favorite,pinned,addedAt,blob}
-  const [albums,setAlbums]=useState([]); // {id,name,createdAt}
-  const fileInputRef=useRef(null); // hidden <input> reused for take-photo / library / files
-  const [settingsOpen,setSettingsOpen]=useState(false);
-  const [selecting,setSelecting]=useState(null);
-  const [sheet,setSheet]=useState(null);
-  const [toast,setToast]=useState(null);
-  const [ttsUI,setTtsUI]=useState(null);
-  const [ttsOpen,setTtsOpen]=useState(false);
-  const [speedId,setSpeedId]=useState(null);
-  const [voices,setVoices]=useState([]);
-  const [aiOpen,setAiOpen]=useState(null); // {articleId?} — header AI works on any page
-  const [browserO,setBrowserO]=useState(null); // {url} — in-app browser
-  const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
-  const toastT=useRef(null);
-  const listRef=useRef(null);
-  const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
 
   useEffect(()=>{ // splash + launch params (?url= from share target, ?action=add)
     const spl=document.getElementById('spl');if(spl)spl.classList.add('hide');
