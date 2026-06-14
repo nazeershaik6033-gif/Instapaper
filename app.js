@@ -1059,7 +1059,7 @@ function ArticleSheet({T,a,onAction,onClose}){
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.headphones(21),label:'Listen',sub:'Text-to-speech',onClick:act('listen')}):null,
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.bolt(21),label:'Speed read',sub:'Up to 3× faster',onClick:act('speed')}):null,
     !a.isVideo&&a.html?h(ARow,{T,icon:Icons.pencil(21),label:'Edit content',sub:'Remove unwanted parts or edit the text',onClick:act('edit')}):null,
-    (a.text||a.transcript)?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
+    (a.text||a.transcript||a.isVideo)?h(ARow,{T,icon:Icons.ai(21),label:a.isVideo?'AI assist':'AI assist',sub:a.isVideo?'Summarize · Transcript · Ask':'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
     h(ARow,{T,icon:Icons.share(21),label:'Share…',onClick:act('share')}),
     a.url?h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:act('copy')}):null,
     a.url?h(ARow,{T,icon:Icons.globe(21),label:'Open original',onClick:act('open')}):null,
@@ -1239,6 +1239,8 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
             h('iframe',{src:'https://www.youtube-nocookie.com/embed/'+a.videoId+'?playsinline=1',allow:'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',allowFullScreen:true,style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0}})),
           a.author?h('div',{style:{fontSize:14.5,color:T.meta,marginBottom:14}},a.author):null,
           a.url?h('a',{href:a.url,target:'_blank',rel:'noopener',style:{color:T.accent,fontSize:14}},'Watch on YouTube'):null,
+          h('button',{onClick:()=>onAction('read'),className:'act95',style:{display:'flex',alignItems:'center',gap:7,marginTop:16,padding:'10px 16px',borderRadius:10,border:'1px solid '+(a.read?T.fg:T.hair),background:a.read?T.fg:'transparent',color:a.read?T.bg:T.fg,fontSize:14,fontWeight:500}},
+            Icons.checkCircle(17,a.read),a.read?'Watched':'Mark as watched'),
           a.transcript?h(TranscriptSection,{T,S,transcript:a.transcript}):null
         ):null,
         !a.isVideo&&!heroDupe&&a.image?h('img',{src:a.image,alt:'',style:{width:'100%',borderRadius:8,marginBottom:22,display:'block'},onError:e=>{e.target.style.display='none'}}):null,
@@ -1263,7 +1265,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
       tb(Icons.archive(23),()=>onAction('archive')),
       h('button',{onClick:()=>setAaOpen(!aaOpen),className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg,fontFamily:'Georgia,serif',fontSize:19,fontWeight:500})},'Aa'),
-      (a.text||a.transcript)?tb(Icons.ai(23),()=>onAction('ai')):null,
+      (a.text||a.transcript||a.isVideo)?tb(Icons.ai(23),()=>onAction('ai')):null,
       tb(Icons.dots(23),()=>onAction('sheet'))),
     aaOpen?h(AaPopover,{T,S,update:onAction.update,onClose:()=>setAaOpen(false)}):null
   );
@@ -1709,16 +1711,35 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.isVideo&&ctx.transcript?ctx.transcript:(ctx.text||''))).slice(0,15000):'';
 
+  // For videos, fetch the transcript on demand (and save it) so AI can work without a pre-saved one.
+  const ensureTranscript=async()=>{
+    if(ctx&&ctx.transcript)return ctx.transcript;
+    if(!ctx||!ctx.isVideo||!ctx.videoId)throw new Error('No transcript available for this item.');
+    setBusy('Fetching transcript…');
+    const t=await fetchYoutubeTranscript(ctx.videoId);
+    if(!t)throw new Error('No captions found for this video. It may have captions disabled, or they could not be reached.');
+    update(d=>({...d,articles:d.articles.map(a=>a.id===ctx.id?{...a,transcript:t}:a)}));
+    setCtx({...ctx,transcript:t});
+    return t;
+  };
+  const videoBody=async()=>{const t=await ensureTranscript();return ((ctx.title||'')+'\n\n'+t).slice(0,15000)};
+
   const run=async(label,fn)=>{
     setError('');setBusy(label);
     try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
     setBusy('');
   };
   const doSummarize=()=>run('Summarizing…',async()=>{
+    const isVid=ctx&&ctx.isVideo;
+    const text=isVid?await videoBody():ctxText;
     const out=await aiChat(S,[
-      {role:'system',content:'You are a precise reading assistant.'},
-      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
+      {role:'system',content:isVid?'You are a precise assistant that summarizes video transcripts.':'You are a precise reading assistant.'},
+      {role:'user',content:'Summarize the following '+(isVid?'video':'article')+' as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+text}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
+  });
+  const doFullTranscript=()=>run('Fetching transcript…',async()=>{
+    const t=await ensureTranscript();
+    setResult({kind:'Transcript',text:t,lang:''});setView('result');
   });
   const doTranslate=lang=>run('Translating…',async()=>{
     const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
@@ -1740,9 +1761,10 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
   });
   const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
-    const msgs=ctx
-      ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
-      :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
+    let msgs;
+    if(ctx&&ctx.isVideo){const text=await videoBody();msgs=[{role:'system',content:'Answer using the video transcript below. Be concise and concrete. Respond in '+outLang+'.\n\nTRANSCRIPT:\n'+text},{role:'user',content:q}]}
+    else if(ctx)msgs=[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}];
+    else msgs=[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
     const out=await aiChat(S,msgs,2000,setBusy);
     setResult({kind:'Answer',text:out,lang:outLang});setView('result');
   })};
@@ -1837,10 +1859,15 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
         h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
           ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
-      h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
-      h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
-      h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
-      h(ARow,{T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')}));
+      ctx.isVideo?h(Fragment,null,
+        h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+        h(ARow,{T,icon:Icons.headphones(20),label:'Full transcript',sub:'Speech-to-text · save & listen',onClick:doFullTranscript}),
+        h(ARow,{T,icon:Icons.ai(20),label:'Ask about this video',sub:'Any question, answered from the video',onClick:()=>setView('ask')})
+      ):h(Fragment,null,
+        h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+        h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
+        h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
+        h(ARow,{T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')})));
   }
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
@@ -2699,9 +2726,10 @@ function App(){
       else if(f==='liked')arr=arr.filter(a=>a.liked);
       else if(f==='articles')arr=arr.filter(a=>!a.isVideo);
       else if(f==='videos')arr=arr.filter(a=>a.isVideo);
+      if(S.hideRead&&f!=='read')arr=arr.filter(a=>!a.read); // "Hide read" quick toggle (articles + watched videos)
     }
     return sortArticles(arr,S.sort);
-  },[data,scope,q,S.sort,S.filter]);
+  },[data,scope,q,S.sort,S.filter,S.hideRead]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -2769,7 +2797,11 @@ function App(){
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
+          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
+        scope.type!=='archive'&&!q?h('div',{style:{display:'flex',justifyContent:'flex-end',marginTop:8}},
+          h('button',{onClick:()=>update(d=>({...d,settings:{...d.settings,hideRead:!d.settings.hideRead}})),className:'act95 trc',
+            style:{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',borderRadius:18,fontSize:13.5,fontWeight:500,border:'1px solid '+(S.hideRead?T.fg:T.hair),background:S.hideRead?T.fg:'transparent',color:S.hideRead?T.bg:T.meta}},
+            Icons.checkCircle(15,S.hideRead),S.hideRead?'Showing unread':'Hide read')):null):null,
       h('div',{ref:listRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
