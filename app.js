@@ -943,7 +943,8 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
 
 /* ============================== ooo menu ============================== */
 const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular']];
-const FILTERS=[['all','All'],['unread','Unread'],['read','Read'],['liked','Liked'],['articles','Articles'],['videos','Videos']];
+const FILTERS=[['all','All'],['unread','Unread'],['liked','Liked'],['articles','Articles'],['videos','Videos'],['read','Completed']];
+const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular'};
 
 function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,showListOps,onClose}){
   const [open,setOpen]=useState(null);
@@ -957,14 +958,32 @@ function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,s
     h('div',{onClick:onClose,style:{position:'absolute',inset:0}}),
     h('div',{className:'fdin',style:{position:'absolute',top:'calc(54px + '+SAFE_T+')',right:10,width:248,background:T.menuBg,borderRadius:13,overflow:'hidden',boxShadow:'0 10px 44px rgba(0,0,0,.4)',maxHeight:'70vh',overflowY:'auto'}},
       showListOps?h(Fragment,null,
-        row('Sort',Icons.sort(19),()=>setOpen(open==='sort'?null:'sort'),{chev:'sort'}),
-        sub(SORTS,'sort',settings.sort),
-        row('Filter',Icons.filter(19),()=>setOpen(open==='filter'?null:'filter'),{chev:'filter'}),
-        sub(FILTERS,'filter',settings.filter),
         row('Select',Icons.checkCircle(19),onSelectMode),
         row('Playlist',Icons.playlist(19),onPlaylistMode)):null,
       row('Settings',Icons.gear(19),onSettings)
     ));
+}
+
+/* inline filter + sort pills shown under the search bar on list scopes */
+function ListControls({T,settings,onPick}){
+  const [open,setOpen]=useState(null); // 'filter' | 'sort' | null
+  const curF=FILTERS.find(f=>f[0]===settings.filter)||FILTERS[0];
+  const curS=SORTS.find(s=>s[0]===settings.sort)||SORTS[0];
+  const pill=(icon,label,active,onClick)=>h('button',{onClick,className:'act95 trc',
+    style:{display:'flex',alignItems:'center',gap:6,padding:'8px 14px',borderRadius:18,fontSize:13.5,fontWeight:500,
+      border:'1px solid '+(active?T.accent:T.hair),background:'transparent',color:active?T.accent:T.fg,whiteSpace:'nowrap'}},icon,label);
+  const dropdown=(items,key,active)=>h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 7px)',left:0,minWidth:210,background:T.menuBg,borderRadius:13,overflow:'hidden',boxShadow:'0 12px 44px rgba(0,0,0,.45)',zIndex:41}},
+    items.map(([v,l])=>h('button',{key:v,onClick:()=>{onPick(key,v);setOpen(null)},className:'act98',
+      style:{display:'flex',alignItems:'center',width:'100%',padding:'13px 18px',color:T.menuFg,textAlign:'left',gap:10,borderBottom:'1px solid '+T.menuHair,fontSize:15.5,fontWeight:v===active?600:400}},
+      h('span',{style:{flex:1}},l),v===active?h('span',{style:{display:'flex',color:T.accent}},Icons.check(17)):null)));
+  return h('div',{style:{display:'flex',gap:10,padding:'0 16px 10px'}},
+    open?h('div',{onClick:()=>setOpen(null),style:{position:'fixed',inset:0,zIndex:40}}):null,
+    h('div',{style:{position:'relative'}},
+      pill(Icons.filter(15),curF[1],open==='filter',()=>setOpen(open==='filter'?null:'filter')),
+      open==='filter'?dropdown(FILTERS,'filter',settings.filter):null),
+    h('div',{style:{position:'relative'}},
+      pill(Icons.sort(15),SORT_SHORT[curS[0]]||curS[1],open==='sort',()=>setOpen(open==='sort'?null:'sort')),
+      open==='sort'?dropdown(SORTS.map(s=>[s[0],SORT_SHORT[s[0]]||s[1]]),'sort',settings.sort):null));
 }
 
 /* ============================== add link sheet ============================== */
@@ -2726,10 +2745,9 @@ function App(){
       else if(f==='liked')arr=arr.filter(a=>a.liked);
       else if(f==='articles')arr=arr.filter(a=>!a.isVideo);
       else if(f==='videos')arr=arr.filter(a=>a.isVideo);
-      if(S.hideRead&&f!=='read')arr=arr.filter(a=>!a.read); // "Hide read" quick toggle (articles + watched videos)
     }
     return sortArticles(arr,S.sort);
-  },[data,scope,q,S.sort,S.filter,S.hideRead]);
+  },[data,scope,q,S.sort,S.filter]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -2797,11 +2815,8 @@ function App(){
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
-        scope.type!=='archive'&&!q?h('div',{style:{display:'flex',justifyContent:'flex-end',marginTop:8}},
-          h('button',{onClick:()=>update(d=>({...d,settings:{...d.settings,hideRead:!d.settings.hideRead}})),className:'act95 trc',
-            style:{display:'flex',alignItems:'center',gap:6,padding:'7px 14px',borderRadius:18,fontSize:13.5,fontWeight:500,border:'1px solid '+(S.hideRead?T.fg:T.hair),background:S.hideRead?T.fg:'transparent',color:S.hideRead?T.bg:T.meta}},
-            Icons.checkCircle(15,S.hideRead),S.hideRead?'Showing unread':'Hide read')):null):null,
+          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
+      isArticleScope&&!selecting&&!q?h(ListControls,{T,settings:S,onPick:(kind,v)=>update(d=>({...d,settings:{...d.settings,[kind]:v}}))}):null,
       h('div',{ref:listRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
