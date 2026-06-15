@@ -2867,71 +2867,94 @@ function BookmarkTile({T,site,onOpen,onLongPress}){
 function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
   const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
+  const [url,setUrl]=useState(initialUrl||’’);
+  const [frameKey,setFrameKey]=useState(0);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
-  const [openFolder,setOpenFolder]=useState(null); // folderId being viewed
-  const [actSite,setActSite]=useState(null); // bookmark long-press action sheet
-  const [moveSite,setMoveSite]=useState(null); // move-to-folder sheet
-  const [editSite,setEditSite]=useState(null); // rename bookmark sheet
-  const [mkFolder,setMkFolder]=useState(null); // {} new · {rename:id} · {forSite:id}
-  const [fName,setFName]=useState('');
-  const open=t=>{const u=browserTarget(t);if(u)openExternalUrl(u)};
-  useEffect(()=>{if(initialUrl)open(initialUrl)},[]); // launched with a target → open it in the system browser
+  const [mode,setMode]=useState(‘frame’);
+  const [lite,setLite]=useState({html:’’,loading:false,err:’’});
+  const liteSeq=useRef(0);
+  const loadLite=async u=>{
+    const my=++liteSeq.current;
+    setMode(‘lite’);setUrl(u);setInput(u);setLite({html:’’,loading:true,err:’’});
+    try{const html=await fetchLitePage(u);if(liteSeq.current===my)setLite({html,loading:false,err:’’})}
+    catch(e){if(liteSeq.current===my)setLite({html:’’,loading:false,err:’Couldn’t load this page in Lite view either.’})}
+  };
+  const go=t=>{const u=browserTarget(t);if(!u)return;if(mode===’lite’)loadLite(u);else{setUrl(u);setInput(u)}};
+  useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
+  useEffect(()=>{if(lite.err&&url)openExternalUrl(url)},[lite.err,url]);
+  useEffect(()=>{
+    const onMsg=e=>{const d=e.data;if(d&&typeof d.__lite===’string’&&/^https?:/i.test(d.__lite))loadLite(d.__lite)};
+    window.addEventListener(‘message’,onMsg);
+    return()=>window.removeEventListener(‘message’,onMsg);
+  },[]);
+  const [actSite,setActSite]=useState(null);
+  const [moveSite,setMoveSite]=useState(null);
+  const [editSite,setEditSite]=useState(null);
+  const [mkFolder,setMkFolder]=useState(null);
+  const [fName,setFName]=useState(‘’);
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
-  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
-  const addBtn=(onClick)=>h('button',{onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
-    h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
-    h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
-  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>open(st.url),onLongPress:()=>setActSite(st)});
-  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
+  const tbtn=(icon,onClick)=>h(‘button’,{onClick,className:’act90’,style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
+  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,margin:’4px 2px 12px’};
+  const addBtn=(onClick)=>h(‘button’,{onClick,className:’act95’,style:{display:’flex’,flexDirection:’column’,alignItems:’center’,gap:7}},
+    h(‘span’,{style:{width:54,height:54,borderRadius:14,border:’1.5px dashed ‘+T.sub,display:’flex’,alignItems:’center’,justifyContent:’center’,color:T.sub}},Icons.plus(22)),
+    h(‘span’,{style:{fontSize:11.5,color:T.sub}},’Add’));
+  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>go(st.url),onLongPress:()=>setActSite(st)});
+  const grid=children=>h(‘div’,{style:{display:’grid’,gridTemplateColumns:’repeat(4,1fr)’,gap:14}},children);
   const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
-  const curFolder=openFolder?folders.find(f=>f.id===openFolder):null;
-
-  let body;
-  if(curFolder){
-    const fSites=sites.filter(s=>s.folderId===curFolder.id);
-    body=h('div',null,
-      h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'0 2px 14px'}},
-        h('button',{onClick:()=>setOpenFolder(null),className:'act90',style:{display:'flex',color:T.fg}},Icons.back(20)),
-        h('div',{style:{fontSize:16,fontWeight:600,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},curFolder.name),
-        h('button',{onClick:()=>{setFName(curFolder.name);setMkFolder({rename:curFolder.id})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(18)),
-        h('button',{onClick:()=>{onSites(list=>list.map(s=>s.folderId===curFolder.id?{...s,folderId:null}:s));onFolders(list=>list.filter(f=>f.id!==curFolder.id));setOpenFolder(null)},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(18))),
-      grid([...fSites.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:curFolder.id}))]),
-      fSites.length?null:h('div',{style:{fontSize:12.5,color:T.sub,marginTop:18,textAlign:'center',lineHeight:1.5}},'No bookmarks here yet. Tap Add, or long-press a bookmark elsewhere and move it in.'));
-  }else{
-    body=h('div',null,
-      folders.length?h('div',null,
-        h('div',{style:lblS},'Folders'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:20}},
-          folders.map(f=>{const n=sites.filter(s=>s.folderId===f.id).length;
-            return h('button',{key:f.id,onClick:()=>setOpenFolder(f.id),className:'act96',style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:12,background:T.card,textAlign:'left',minWidth:0}},
-              h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.folder(22)),
-              h('span',{style:{minWidth:0}},
-                h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-                h('span',{style:{display:'block',fontSize:11.5,color:T.sub}},n+(n===1?' site':' sites'))));
-          }))):null,
-      h('div',{style:lblS},'Bookmarks'),
-      grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
-      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
-      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tapping a site or entering an address opens it in your browser.'));
-  }
-
-
+  const homeBody=h(‘div’,null,
+    folders.map(f=>{
+      const fSites=sites.filter(s=>s.folderId===f.id);
+      return h(‘div’,{key:f.id,style:{marginBottom:20}},
+        h(‘div’,{style:{display:’flex’,alignItems:’center’,marginBottom:8}},
+          h(‘div’,{style:{fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,flex:1}},f.name),
+          h(‘button’,{onClick:()=>{setFName(f.name);setMkFolder({rename:f.id})},className:’act90’,style:{display:’flex’,color:T.sub}},Icons.pencil(15)),
+          h(‘button’,{onClick:()=>{onSites(list=>list.map(s=>s.folderId===f.id?{...s,folderId:null}:s));onFolders(list=>list.filter(x=>x.id!==f.id))},className:’act90’,style:{display:’flex’,color:T.danger}},Icons.trash(15))),
+        grid([...fSites.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:f.id}))]));
+    }),
+    h(‘div’,{style:lblS},’Bookmarks’),
+    grid([...loose.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:null}))]),
+    h(‘button’,{onClick:()=>{setFName(‘’);setMkFolder({})},className:’act98’,style:{display:’flex’,alignItems:’center’,gap:8,marginTop:18,padding:’11px 14px’,borderRadius:11,border:’1px dashed ‘+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),’New folder’),
+    h(‘div’,{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},’Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.’));
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
       h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-          onKeyDown:e=>{if(e.key==='Enter'){open(input);setInput('')}},
+          onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
-      h('button',{onClick:()=>setVaultOpen(true),className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.key(19))),
-    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},body),
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):url?h('button',{onClick:()=>{setUrl('');setInput('');setMode('frame')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
+      url?tbtn(Icons.refresh(19),()=>{if(mode==='lite')loadLite(url);else setFrameKey(k=>k+1)}):null,
+      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
+      tbtn(Icons.key(19),()=>setVaultOpen(true))),
+    url?h(Fragment,null,
+      mode==='lite'
+        ?(lite.loading
+          ?h('div',{style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.meta,fontSize:14}},h(Spinner,{T,size:20}),'Loading Lite view…')
+          :lite.err
+            ?h('div',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:'0 30px',textAlign:'center'}},
+              h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},'Couldn\'t load this page — opening in browser…'),
+              h('button',{onClick:()=>openExternalUrl(url),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
+            :h('iframe',{key:'lite|'+url,srcDoc:lite.html,sandbox:'allow-scripts allow-popups',
+              style:{flex:1,border:0,width:'100%',background:'#fff'}}))
+        :h('iframe',{key:url+'|'+frameKey,src:url,
+          sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
+          allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
+          style:{flex:1,border:0,width:'100%',background:'#fff'},
+          onLoad:e=>{try{const doc=e.target.contentDocument;if(doc&&doc.body&&doc.body.childElementCount===0)openExternalUrl(url)}catch(err){}}}),
+      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
+        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},
+          mode==='lite'?'Lite view — read-only. Links work; logins need the full browser.':'Blank page? The site blocks embedding — use Lite view to read it.'),
+        mode==='lite'
+          ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full view')
+          :h('button',{onClick:()=>loadLite(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite view'),
+        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
+    :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
-      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);open(s.url)}}),
+      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);go(s.url)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Rename',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:()=>{const s=actSite;setActSite(null);setMoveSite(s)}}),
       h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onSites(list=>list.filter(x=>x.id!==actSite.id));setActSite(null)}})):null,
@@ -2948,7 +2971,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=fName.trim()||'New folder';
             if(mkFolder.rename){onFolders(list=>list.map(f=>f.id===mkFolder.rename?{...f,name:nm}:f))}
-            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id);else setOpenFolder(id)}
+            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id)}
             setMkFolder(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkFolder.rename?'Rename':'Create'))):null,
 
     editSite?h(Sheet,{T,title:'Edit bookmark',onClose:()=>setEditSite(null)},
@@ -2965,9 +2988,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
         h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',enterKeyHint:'done',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
-        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add'+(curFolder?' to '+curFolder.name:'')))):null,
-
-
+        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add bookmark'))):null,
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
         h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null);
