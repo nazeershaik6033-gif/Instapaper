@@ -1640,6 +1640,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
     catch(e){if(liteSeq.current===my)setLite({html:'',loading:false,err:'Couldn’t load this page in Lite view either.'})}
   };
   const go=t=>{const u=browserTarget(t);if(!u)return;if(mode==='lite')loadLite(u);else{setUrl(u);setInput(u)}};
+  useEffect(()=>{if(lite.err&&url)openExternalUrl(url)},[lite.err,url]);
   useEffect(()=>{ // link taps inside Lite view arrive as messages
     const onMsg=e=>{const d=e.data;if(d&&typeof d.__lite==='string'&&/^https?:/i.test(d.__lite))loadLite(d.__lite)};
     window.addEventListener('message',onMsg);
@@ -1665,14 +1666,15 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
           ?h('div',{style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.meta,fontSize:14}},h(Spinner,{T,size:20}),'Loading Lite view…')
           :lite.err
             ?h('div',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:'0 30px',textAlign:'center'}},
-              h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},lite.err),
+              h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},'Couldn\'t load this page — opening in browser…'),
               h('button',{onClick:()=>openExternalUrl(url),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
             :h('iframe',{key:'lite|'+url,srcDoc:lite.html,sandbox:'allow-scripts allow-popups',
               style:{flex:1,border:0,width:'100%',background:'#fff'}}))
         :h('iframe',{key:url+'|'+frameKey,src:url,
           sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
           allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-          style:{flex:1,border:0,width:'100%',background:'#fff'}}),
+          style:{flex:1,border:0,width:'100%',background:'#fff'},
+          onLoad:e=>{try{const doc=e.target.contentDocument;if(doc&&doc.body&&doc.body.childElementCount===0)openExternalUrl(url)}catch(err){}}}),
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
         h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},
           mode==='lite'?'Lite view — read-only. Links work; logins need the full browser.':'Blank page? The site blocks embedding — use Lite view to read it.'),
