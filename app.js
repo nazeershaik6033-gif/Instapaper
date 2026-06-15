@@ -218,30 +218,6 @@ function faviconUrl(siteOrUrl){
   return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(host);
 }
 
-/* Lite view: fetch a page through the read proxies and make it safe to render
-   in a sandboxed frame — works even when the site blocks normal embedding. */
-function buildLiteHtml(raw,url){
-  const doc=new DOMParser().parseFromString(raw,'text/html');
-  doc.querySelectorAll('script,iframe,frame,frameset,object,embed,meta[http-equiv]').forEach(n=>{try{n.remove()}catch(e){}});
-  doc.querySelectorAll('*').forEach(el=>{
-    for(const a of Array.from(el.attributes)){
-      if(/^on/i.test(a.name))el.removeAttribute(a.name);
-      else if((a.name==='href'||a.name==='src'||a.name==='action')&&/^\s*javascript:/i.test(a.value))el.removeAttribute(a.name);
-    }
-  });
-  const head=doc.head||doc.documentElement;
-  const base=doc.createElement('base');
-  base.setAttribute('href',url);
-  head.insertBefore(base,head.firstChild);
-  const nav=doc.createElement('script');
-  nav.textContent='document.addEventListener("click",function(e){var t=e.target;var a=t&&t.closest?t.closest("a[href]"):null;if(!a)return;e.preventDefault();try{parent.postMessage({__lite:a.href},"*")}catch(err){}},true);';
-  (doc.body||doc.documentElement).appendChild(nav);
-  return'<!DOCTYPE html>'+doc.documentElement.outerHTML;
-}
-async function fetchLitePage(url){
-  const raw=await fetchRawHtml(url); // throws if every proxy fails
-  return buildLiteHtml(raw,url);
-}
 
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
 function detectSpeechLang(s){
@@ -2030,21 +2006,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
   const [addForm,setAddForm]=useState(null);
   const [saving,setSaving]=useState(false);
   const [collapsed,setCollapsed]=useState({}); // bookmark folder sections collapsed by name
-  const [mode,setMode]=useState('frame'); // 'frame' = real embed, 'lite' = proxied read-only
-  const [lite,setLite]=useState({html:'',loading:false,err:''});
-  const liteSeq=useRef(0);
-  const loadLite=async u=>{
-    const my=++liteSeq.current;
-    setMode('lite');setUrl(u);setInput(u);setLite({html:'',loading:true,err:''});
-    try{const html=await fetchLitePage(u);if(liteSeq.current===my)setLite({html,loading:false,err:''})}
-    catch(e){if(liteSeq.current===my)setLite({html:'',loading:false,err:'Couldn’t load this page in Lite view either.'})}
-  };
-  const go=t=>{const u=browserTarget(t);if(!u)return;if(mode==='lite')loadLite(u);else{setUrl(u);setInput(u)}};
-  useEffect(()=>{ // link taps inside Lite view arrive as messages
-    const onMsg=e=>{const d=e.data;if(d&&typeof d.__lite==='string'&&/^https?:/i.test(d.__lite))loadLite(d.__lite)};
-    window.addEventListener('message',onMsg);
-    return()=>window.removeEventListener('message',onMsg);
-  },[]);
+  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
   const doSave=async()=>{ // pull the current page into the reading list
     if(saving||!url||!onSaveUrl)return;
     setSaving(true);
@@ -2078,34 +2040,22 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
           onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        url?h('button',{onClick:()=>{setUrl('');setInput('');setMode('frame')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
-      url?tbtn(Icons.refresh(19),()=>{if(mode==='lite')loadLite(url);else setFrameKey(k=>k+1)}):null,
+        url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
+      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
       url?h('button',{onClick:toggleBookmark,className:'act90',style:Object.assign({},iconBtnS,{color:isBookmarked?T.accent:T.fg,width:38}),'aria-label':isBookmarked?'Remove bookmark':'Bookmark this page'},Icons.star(19,isBookmarked)):null,
       url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
     url?h(Fragment,null,
-      mode==='lite'
-        ?(lite.loading
-          ?h('div',{style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.meta,fontSize:14}},h(Spinner,{T,size:20}),'Loading Lite view…')
-          :lite.err
-            ?h('div',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:'0 30px',textAlign:'center'}},
-              h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},lite.err),
-              h('button',{onClick:()=>openExternalUrl(url),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
-            :h('iframe',{key:'lite|'+url,srcDoc:lite.html,sandbox:'allow-scripts allow-popups',
-              style:{flex:1,border:0,width:'100%',background:'#fff'}}))
-        :h('iframe',{key:url+'|'+frameKey,src:url,
-          sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
-          allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-          style:{flex:1,border:0,width:'100%',background:'#fff'}}),
+      h('iframe',{key:url+'|'+frameKey,src:url,
+        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
+        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
+        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
         h('span',{style:{flex:1,minWidth:0,fontSize:11.5,color:T.sub,lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-          mode==='lite'?'Lite view — read-only':'Blank page? Try Lite view'),
+          'Blank page? The site may block embedding.'),
         h('button',{onClick:doSave,disabled:saving,className:'act95',style:{display:'flex',alignItems:'center',gap:6,flexShrink:0,padding:'6px 13px',borderRadius:9,background:T.fg,color:T.bg,fontSize:12.5,fontWeight:700,opacity:saving?0.7:1}},
           saving?null:Icons.plus(14),saving?'Saving…':'Save'),
         h('button',{onClick:doShare,className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Share'),
-        mode==='lite'
-          ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full')
-          :h('button',{onClick:()=>loadLite(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite'),
         h('button',{onClick:()=>openExternalUrl(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
     :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
       (()=>{
