@@ -1999,29 +1999,13 @@ function BrowserTile({T,st,onOpen,onEdit}){ // tap to open, long-press (or right
     h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.name));
 }
 function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveUrl,toastFn,onClose}){
-  const [url,setUrl]=useState(initialUrl||'');
-  const [input,setInput]=useState(initialUrl||'');
-  const [frameKey,setFrameKey]=useState(0);
+  const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
   const [addForm,setAddForm]=useState(null);
-  const [saving,setSaving]=useState(false);
   const [collapsed,setCollapsed]=useState({}); // bookmark folder sections collapsed by name
-  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
-  const doSave=async()=>{ // pull the current page into the reading list
-    if(saving||!url||!onSaveUrl)return;
-    setSaving(true);
-    try{await onSaveUrl(url)}catch(e){}
-    setSaving(false);
-  };
-  const doShare=()=>{if(url)shareText('','',url)}; // native share sheet, falls back to copy
-  const isBookmarked=!!url&&sites.some(s=>normalizeUrl(s.url)===normalizeUrl(url));
+  const go=t=>{const u=browserTarget(t);if(!u)return;openExternalUrl(u)}; // hand off to the system browser
+  useEffect(()=>{const u=browserTarget(initialUrl);if(u)openExternalUrl(u)},[]); // open a passed-in URL straight away
   const bmFolders=[...new Set(sites.map(s=>(s.folder||'').trim()).filter(Boolean))];
-  const toggleBookmark=()=>{ // star in toolbar: add the current page, or remove if already saved
-    if(!url)return;
-    const nu=normalizeUrl(url);
-    if(isBookmarked){onSites(list=>list.filter(s=>normalizeUrl(s.url)!==nu));toastFn&&toastFn('Bookmark removed')}
-    else setAddForm({name:domainOf(url)||'',url,folder:''});
-  };
   const saveBookmark=()=>{
     const u=normalizeUrl(addForm.url);if(!u)return;
     const name=addForm.name.trim()||domainOf(u)||u,folder=(addForm.folder||'').trim();
@@ -2040,29 +2024,14 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
           onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
-      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
-      url?h('button',{onClick:toggleBookmark,className:'act90',style:Object.assign({},iconBtnS,{color:isBookmarked?T.accent:T.fg,width:38}),'aria-label':isBookmarked?'Remove bookmark':'Bookmark this page'},Icons.star(19,isBookmarked)):null,
-      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
-    url?h(Fragment,null,
-      h('iframe',{key:url+'|'+frameKey,src:url,
-        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
-        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
-      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{flex:1,minWidth:0,fontSize:11.5,color:T.sub,lineHeight:1.4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-          'Blank page? The site may block embedding.'),
-        h('button',{onClick:doSave,disabled:saving,className:'act95',style:{display:'flex',alignItems:'center',gap:6,flexShrink:0,padding:'6px 13px',borderRadius:9,background:T.fg,color:T.bg,fontSize:12.5,fontWeight:700,opacity:saving?0.7:1}},
-          saving?null:Icons.plus(14),saving?'Saving…':'Save'),
-        h('button',{onClick:doShare,className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Share'),
-        h('button',{onClick:()=>openExternalUrl(url),className:'act90',style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
-    :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
       (()=>{
         const groups={},order=[];
         sites.forEach(s=>{const f=(s.folder||'').trim();if(!(f in groups)){groups[f]=[];order.push(f)}groups[f].push(s)});
         const hasNamed=order.some(f=>f);
-        if(!order.length)return h('div',{style:{fontSize:13.5,color:T.sub,padding:'14px 2px',lineHeight:1.5}},'No bookmarks yet. Open a page and tap the ★ star to save it here, or use “Add a bookmark” below.');
+        if(!order.length)return h('div',{style:{fontSize:13.5,color:T.sub,padding:'14px 2px',lineHeight:1.5}},'No bookmarks yet. Use “Add a bookmark” below — tapping one opens it in your browser.');
         return order.map(f=>{
           const label=f||(hasNamed?'Ungrouped':'Your sites');
           const isCol=!!collapsed[f];
@@ -2076,7 +2045,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onSaveU
         });
       })(),
       h('button',{onClick:()=>setAddForm({name:'',url:'',folder:''}),className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:7,width:'100%',padding:'13px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600,marginTop:8}},Icons.plus(16),'Add a bookmark'),
-      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Tap the ★ star while viewing a page to bookmark it. Long-press a bookmark to edit, move it to a folder, or delete it. Tap the key icon to copy a saved password while logging in.')),
+      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Tapping a bookmark or entering an address opens it in your browser. Long-press a bookmark to edit, move it to a folder, or delete it. Tap the key icon to copy a saved password while logging in.')),
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
         h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null,
