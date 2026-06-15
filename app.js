@@ -264,8 +264,8 @@ function faviconUrl(siteOrUrl){
   return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(host);
 }
 
-/* Lite view: fetch a page through the read proxies and make it safe to render
-   in a sandboxed frame — works even when the site blocks normal embedding. */
+
+
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
 function detectSpeechLang(s){
   if(/[ఀ-౿]/.test(s))return'te-IN';
@@ -2870,23 +2870,8 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
   const [url,setUrl]=useState(initialUrl||’’);
   const [frameKey,setFrameKey]=useState(0);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
-  const [mode,setMode]=useState(‘frame’);
-  const [lite,setLite]=useState({html:’’,loading:false,err:’’});
-  const liteSeq=useRef(0);
-  const loadLite=async u=>{
-    const my=++liteSeq.current;
-    setMode(‘lite’);setUrl(u);setInput(u);setLite({html:’’,loading:true,err:’’});
-    try{const html=await fetchLitePage(u);if(liteSeq.current===my)setLite({html,loading:false,err:’’})}
-    catch(e){if(liteSeq.current===my)setLite({html:’’,loading:false,err:’Couldn’t load this page in Lite view either.’})}
-  };
-  const go=t=>{const u=browserTarget(t);if(!u)return;if(mode===’lite’)loadLite(u);else{setUrl(u);setInput(u)}};
+  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
   useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
-  useEffect(()=>{if(lite.err&&url)openExternalUrl(url)},[lite.err,url]);
-  useEffect(()=>{
-    const onMsg=e=>{const d=e.data;if(d&&typeof d.__lite===’string’&&/^https?:/i.test(d.__lite))loadLite(d.__lite)};
-    window.addEventListener(‘message’,onMsg);
-    return()=>window.removeEventListener(‘message’,onMsg);
-  },[]);
   const [actSite,setActSite]=useState(null);
   const [moveSite,setMoveSite]=useState(null);
   const [editSite,setEditSite]=useState(null);
@@ -2924,31 +2909,17 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):url?h('button',{onClick:()=>{setUrl('');setInput('');setMode('frame')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
-      url?tbtn(Icons.refresh(19),()=>{if(mode==='lite')loadLite(url);else setFrameKey(k=>k+1)}):null,
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
+      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
       url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
     url?h(Fragment,null,
-      mode==='lite'
-        ?(lite.loading
-          ?h('div',{style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.meta,fontSize:14}},h(Spinner,{T,size:20}),'Loading Lite view…')
-          :lite.err
-            ?h('div',{style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,padding:'0 30px',textAlign:'center'}},
-              h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5}},'Couldn\'t load this page — opening in browser…'),
-              h('button',{onClick:()=>openExternalUrl(url),className:'act95',style:{padding:'11px 22px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Open in browser ↗'))
-            :h('iframe',{key:'lite|'+url,srcDoc:lite.html,sandbox:'allow-scripts allow-popups',
-              style:{flex:1,border:0,width:'100%',background:'#fff'}}))
-        :h('iframe',{key:url+'|'+frameKey,src:url,
-          sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
-          allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-          style:{flex:1,border:0,width:'100%',background:'#fff'},
-          onLoad:e=>{try{const doc=e.target.contentDocument;if(doc&&doc.body&&doc.body.childElementCount===0)openExternalUrl(url)}catch(err){}}}),
+      h('iframe',{key:url+'|'+frameKey,src:url,
+        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
+        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
+        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},
-          mode==='lite'?'Lite view — read-only. Links work; logins need the full browser.':'Blank page? The site blocks embedding — use Lite view to read it.'),
-        mode==='lite'
-          ?h('button',{onClick:()=>{setMode('frame');setFrameKey(k=>k+1)},style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Full view')
-          :h('button',{onClick:()=>loadLite(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Lite view'),
+        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},'Blank page? The site may block embedding.'),
         h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
     :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
 
