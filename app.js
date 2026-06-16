@@ -482,20 +482,170 @@ const PROXIES=[
   {b:u=>'https://api.allorigins.win/get?url='+encodeURIComponent(u),json:true},
   {b:u=>'https://r.jina.ai/'+u,headers:{'X-Return-Format':'html'}}
 ];
-async function fetchRawHtml(url){
-  let lastErr=null;
+/* Fetch a URL through the proxy pool, trying each in turn. A proxy can return
+   a usable body, an error/consent page, or nothing — so when an `ok` validator
+   is given we keep going until one response actually passes it, remembering the
+   longest body as a last-resort fallback. */
+async function fetchRawAcross(url,ok){
+  let best='',lastErr=null;
   for(const p of PROXIES){
     try{
       const res=await fetchWithTimeout(p.b(url),p.headers?{headers:p.headers}:{},15000);
-      if(!res.ok)throw new Error('proxy '+res.status);
+      if(!res.ok){lastErr=new Error('proxy '+res.status);continue}
       let text=await res.text();
       if(p.json){try{const j=JSON.parse(text);text=(j&&j.contents)||''}catch(e){text=''}}
-      if(text&&text.length>200)return text;
-      throw new Error('empty proxy response');
+      if(!text){lastErr=new Error('empty proxy response');continue}
+      if(!ok||ok(text))return text;
+      if(text.length>best.length)best=text;
     }catch(e){lastErr=e}
   }
+  if(best)return best;
   throw lastErr||new Error('all proxies failed');
 }
+function fetchRawHtml(url){return fetchRawAcross(url,t=>t.length>200)}
+
+/* ============================== daily brief ============================== */
+function ymd(d){const z=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())}
+function fmtDateShort(ts){if(!ts)return'';const d=new Date(ts);const o={day:'numeric',month:'short'};if(new Date().getFullYear()!==d.getFullYear())o.year='numeric';return d.toLocaleDateString(undefined,o)}
+function parseYtChannelId(url){const m=String(url||'').match(/channel\/(UC[\w-]{20,})/);return m?m[1]:''}
+/* Turn anything a user might paste into a real YouTube page URL we can scrape:
+   a full link, youtube.com/@handle, @handle, /c/Name, /user/Name, or a bare name. */
+function ytTargetUrl(input){
+  let s=String(input||'').trim();
+  if(!s)return'';
+  if(/^@[\w.\-]+$/.test(s))return'https://www.youtube.com/'+s;
+  if(/youtube\.com|youtu\.be/i.test(s)){
+    if(!/^https?:\/\//i.test(s))s='https://'+s.replace(/^\/+/,'');
+    return s;
+  }
+  if(/^[\w.\-]+$/.test(s))return'https://www.youtube.com/@'+s.replace(/^@/,'');
+  if(!/^https?:\/\//i.test(s))s='https://'+s.replace(/^\/+/,'');
+  return s;
+}
+function scanYtChannelId(raw){
+  const m=String(raw||'').match(/"(?:channelId|externalId|browseId)":"(UC[\w-]{20,})"/)
+    ||raw.match(/itemprop="(?:channelId|identifier)"\s+content="(UC[\w-]{20,})"/)
+    ||raw.match(/rel="canonical"[^>]*href="[^"]*channel\/(UC[\w-]{20,})/)
+    ||raw.match(/href="[^"]*channel\/(UC[\w-]{20,})"[^>]*rel="canonical"/)
+    ||raw.match(/channel\/(UC[\w-]{20,})/);
+  return m?m[1]:'';
+}
+/* YouTube's own resolve_url endpoint maps a handle/custom URL straight to a
+   channel id as small JSON — and, unlike the public channel page, it isn't
+   gated behind the cookie-consent wall that breaks scraping through proxies. */
+const YT_INNERTUBE_KEY='AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+async function resolveYtViaApi(pageUrl){
+  const target='https://www.youtube.com/youtubei/v1/navigation/resolve_url?key='+YT_INNERTUBE_KEY+'&prettyPrint=false';
+  const body=JSON.stringify({context:{client:{clientName:'WEB',clientVersion:'2.20240726.00.00',hl:'en',gl:'US'}},url:pageUrl});
+  const wraps=[
+    u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+    u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u)
+  ];
+  for(const w of wraps){
+    try{
+      const res=await fetchWithTimeout(w(target),{method:'POST',headers:{'Content-Type':'application/json'},body},20000);
+      if(!res.ok)continue;
+      const txt=await res.text();
+      const m=txt.match(/"browseId":"(UC[\w-]{20,})"/)||txt.match(/"(?:channelId|externalId)":"(UC[\w-]{20,})"/);
+      if(m)return m[1];
+    }catch(e){}
+  }
+  return'';
+}
+async function resolveYtChannelId(url){
+  const direct=parseYtChannelId(url);if(direct)return direct;
+  const u=ytTargetUrl(url);if(!u)return'';
+  const api=await resolveYtViaApi(u);if(api)return api;
+  for(const p of PROXIES){
+    try{
+      const res=await fetchWithTimeout(p.b(u),p.headers?{headers:p.headers}:{},20000);
+      if(!res.ok)continue;
+      let raw=await res.text();
+      if(p.json){try{const j=JSON.parse(raw);raw=(j&&j.contents)||''}catch(e){raw=''}}
+      const id=scanYtChannelId(raw);
+      if(id)return id;
+    }catch(e){}
+  }
+  return'';
+}
+async function fetchYtVideos(channelId){
+  const raw=await fetchRawAcross('https://www.youtube.com/feeds/videos.xml?channel_id='+channelId,t=>/<entry[\s>]/i.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/xml');
+  const entries=[].slice.call(doc.getElementsByTagName('entry'),0,20);
+  return entries.map(entry=>{
+    const tx=t=>{const n=entry.getElementsByTagName(t)[0];return n?(n.textContent||'').trim():''};
+    const videoId=tx('yt:videoId')||tx('videoId');if(!videoId)return null;
+    const tn=entry.getElementsByTagName('media:thumbnail')[0];
+    const thumb=(tn&&tn.getAttribute('url'))||('https://i.ytimg.com/vi/'+videoId+'/hqdefault.jpg');
+    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb};
+  }).filter(Boolean);
+}
+function tmin(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):0}
+function fmtClock(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'00:00');if(!m)return t||'';let h=+m[1];const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+m[2]+' '+ap}
+function briefWindow(slots,selId,now){
+  const sorted=(slots||[]).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  if(!sorted.length)return null;
+  const nowTs=now.getTime(),occ=[];
+  for(let off=-1;off<=1;off++){const d=new Date(now);d.setDate(d.getDate()+off);
+    for(const s of sorted){const t=new Date(d);t.setHours(0,0,0,0);t.setMinutes(tmin(s.time));occ.push({slot:s,ts:t.getTime(),date:ymd(t)})}}
+  occ.sort((a,b)=>a.ts-b.ts);
+  let activeIdx=-1;for(let i=0;i<occ.length;i++)if(occ[i].ts<=nowTs)activeIdx=i;
+  const activeSlotId=activeIdx>=0?occ[activeIdx].slot.id:sorted[sorted.length-1].id;
+  const sel=selId||activeSlotId;
+  let iIdx=-1;for(let i=0;i<occ.length;i++)if(occ[i].slot.id===sel&&occ[i].ts<=nowTs)iIdx=i;
+  if(iIdx<0){
+    const up=occ.find(o=>o.slot.id===sel&&o.ts>nowTs);
+    return{activeSlotId,sel,future:up?up.ts:null,start:0,end:0,key:''};
+  }
+  const inst=occ[iIdx],prev=occ[iIdx-1],next=occ[iIdx+1];
+  return{activeSlotId,sel,future:null,start:prev?prev.ts:0,end:next?Math.min(next.ts,nowTs):nowTs,key:inst.date+'#'+sel,instTs:inst.ts};
+}
+function tgHandle(url){
+  const s=String(url||'').trim().replace(/^@/,'');
+  const m=s.match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{3,})/i);
+  if(m)return m[1];
+  if(/^[A-Za-z0-9_]{3,}$/.test(s))return s;
+  return'';
+}
+async function fetchTelegram(handle){ // public channel preview at t.me/s/<handle>
+  const raw=await fetchRawAcross('https://t.me/s/'+encodeURIComponent(handle),t=>/tgme_widget_message/.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/html');
+  const msgs=[].slice.call(doc.querySelectorAll('.tgme_widget_message'));
+  return msgs.map(m=>{
+    const post=m.getAttribute('data-post')||'';
+    const te=m.querySelector('.tgme_widget_message_text');
+    let title=te?(te.textContent||'').trim():'';
+    const time=m.querySelector('time[datetime]');
+    const publishedMs=time?Date.parse(time.getAttribute('datetime'))||0:0;
+    let thumb='';const ph=m.querySelector('.tgme_widget_message_photo_wrap,.tgme_widget_message_video_thumb');
+    if(ph){const mt=(ph.getAttribute('style')||'').match(/url\(['"]?(.*?)['"]?\)/);if(mt)thumb=mt[1]}
+    if(!title)title=thumb?'📷 Media post':'Post';
+    return{id:post||String(publishedMs),title:title.slice(0,220),url:post?'https://t.me/'+post:'https://t.me/'+handle,publishedMs,thumb};
+  }).filter(e=>e.publishedMs).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,25);
+}
+async function fetchRss(url){ // RSS or Atom — news, blogs, Reddit, bridges
+  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/xml');
+  let nodes=[].slice.call(doc.getElementsByTagName('item')),atom=false;
+  if(!nodes.length){nodes=[].slice.call(doc.getElementsByTagName('entry'));atom=true}
+  return nodes.slice(0,25).map(n=>{
+    const tx=t=>{const e=n.getElementsByTagName(t)[0];return e?(e.textContent||'').trim():''};
+    let link='';
+    if(atom){const ls=n.getElementsByTagName('link');for(let i=0;i<ls.length;i++){if((ls[i].getAttribute('rel')||'alternate')==='alternate'){link=ls[i].getAttribute('href')||'';break}}if(!link&&ls[0])link=ls[0].getAttribute('href')||''}
+    else link=tx('link')||tx('guid');
+    return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,thumb:''};
+  }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
+}
+function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
+async function fetchFeed(it){
+  if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}))}
+  if(it.kind==='telegram'&&it.handle)return await fetchTelegram(it.handle);
+  if(it.kind==='rss'&&it.feedUrl)return await fetchRss(it.feedUrl);
+  return null;
+}
+const BRIEF_SLOTS0=[{id:'m',name:'Morning',time:'08:00'},{id:'a',name:'Afternoon',time:'14:00'},{id:'n',name:'Night',time:'20:00'}];
+const BRIEF0={groups:[],items:[],slots:BRIEF_SLOTS0.map(s=>({...s})),done:{key:'',ids:[]},feeds:{},yt:{},seen:{}};
+
 
 const SAN_ALLOW={P:'p',H1:'h2',H2:'h2',H3:'h3',H4:'h4',H5:'h5',H6:'h6',BLOCKQUOTE:'blockquote',UL:'ul',OL:'ol',LI:'li',PRE:'pre',CODE:'code',EM:'em',I:'em',STRONG:'strong',B:'strong',A:'a',IMG:'img',FIGURE:'figure',FIGCAPTION:'figcaption',BR:'br',HR:'hr',MARK:'em',CITE:'cite',SUP:'sup',SUB:'sub'};
 function absUrl(u,base){try{return new URL(u,base).href}catch(e){return''}}
@@ -662,6 +812,19 @@ function loadStore(){
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.seeded){d.articles.unshift(makeSeed());d.seeded=true}
+  if(!d.brief||typeof d.brief!=='object')d.brief={};
+  d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
+  d.brief.items=Array.isArray(d.brief.items)?d.brief.items:[];
+  if(!d.brief.briefSeeded&&!d.brief.items.length){ // first run: seed a Social group of launch tiles
+    const gid=uid(),now=Date.now();
+    d.brief.groups=[{id:gid,name:'Social'}].concat(d.brief.groups);
+    d.brief.items=[['YouTube','https://www.youtube.com'],['Telegram','https://web.telegram.org'],['Instagram','https://www.instagram.com'],['X','https://x.com'],['WhatsApp','https://web.whatsapp.com']]
+      .map((s,i)=>({id:uid(),groupId:gid,kind:'link',name:s[0],url:s[1],channelId:'',addedAt:now+i}));
+  }
+  d.brief.briefSeeded=true;
+  if(!Array.isArray(d.brief.slots)||!d.brief.slots.length)d.brief.slots=BRIEF_SLOTS0.map(s=>({...s}));
+  if(!d.brief.done||typeof d.brief.done!=='object'||!('key'in d.brief.done))d.brief.done={key:'',ids:[]};
+  if(!d.brief.feeds||typeof d.brief.feeds!=='object')d.brief.feeds={};
   return d;
 }
 
@@ -701,6 +864,10 @@ const Icons={
   heart:(s,fill)=>Svg({size:s},h('path',{d:'M12 20.2S4 14.8 4 9.6C4 6.9 6.1 5 8.5 5c1.5 0 2.8.8 3.5 2 .7-1.2 2-2 3.5-2C17.9 5 20 6.9 20 9.6c0 5.2-8 10.6-8 10.6Z',stroke:'currentColor',strokeWidth:1.7,strokeLinejoin:'round',fill:fill?'currentColor':'none'})),
   archive:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:4.4,rx:1,stroke:'currentColor',strokeWidth:1.7}),P('M5.2 9.4V19h13.6V9.4'),P('M9.8 13h4.4')),
   video:s=>Svg({size:s},h('rect',{x:3.5,y:5.5,width:17,height:13,rx:2.6,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.3 9.3v5.4l4.8-2.7-4.8-2.7Z',fill:'currentColor'})),
+  sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 2.6v2.4M12 19v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.6 12h2.4M19 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7')),
+  send:s=>Svg({size:s},h('path',{d:'M21 4 3 11l6 2.4L11 20l3.2-4.6L21 4Z',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M21 4 9.4 13.4')),
+  rss:s=>Svg({size:s},h('circle',{cx:6,cy:18,r:1.6,fill:'currentColor'}),P('M5 11.5a7.5 7.5 0 0 1 7.5 7.5M5 5.5a13.5 13.5 0 0 1 13.5 13.5')),
+  calendar:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:15,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 9.5h17M8 3.2v3.6M16 3.2v3.6')),
   notes:s=>Svg({size:s},P('M4 5.8C4 4.8 4.8 4 5.8 4h12.4c1 0 1.8.8 1.8 1.8v9.4c0 1-.8 1.8-1.8 1.8H9l-3.6 3v-3H5.8c-1 0-1.8-.8-1.8-1.8V5.8Z'),P('M8 8.6h8M8 12h5.5')),
   tag:s=>Svg({size:s},P('M4 5.5C4 4.7 4.7 4 5.5 4h5.2c.4 0 .8.2 1.1.4l7.7 7.7c.6.6.6 1.6 0 2.2l-5.2 5.2c-.6.6-1.6.6-2.2 0L4.4 11.8a1.6 1.6 0 0 1-.4-1.1V5.5Z'),h('circle',{cx:8.6,cy:8.6,r:1.3,fill:'currentColor'})),
   folder:s=>Svg({size:s},P('M3.5 7c0-1 .8-1.8 1.8-1.8h4l2 2.2h7.4c1 0 1.8.8 1.8 1.8v8c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8V7Z'),P('M3.5 10h17')),
@@ -908,6 +1075,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
         h(SidebarItem,{T,icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')}),
         h(SidebarItem,{T,icon:Icons.video(22),label:'Videos',active:is('videos'),onClick:()=>go('videos')}),
         h(SidebarItem,{T,icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')}),
+        h(SidebarItem,{T,icon:Icons.sun(22),label:'Daily Brief',active:is('brief'),onClick:()=>go('brief')}),
         h(SidebarItem,{T,icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')}),
         h(SidebarItem,{T,icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')}),
         h(SidebarItem,{T,icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}}),
@@ -1587,6 +1755,176 @@ function MediaViewer({T,m,onClose,onActions}){
         :h('div',{style:{textAlign:'center',color:'#fff'}},Icons.file(60),h('div',{style:{marginTop:12,fontSize:15}},m.name),
           url?h('a',{href:url,download:m.name,onClick:e=>e.stopPropagation(),style:{display:'inline-block',marginTop:16,color:'#fff',border:'1px solid rgba(255,255,255,.5)',borderRadius:10,padding:'9px 18px',fontSize:14}},'Open / download'):null)),
     m.caption&&isImage?h('div',{style:{color:'#fff',textAlign:'center',padding:'10px 20px calc(14px + '+SAFE_B+')',fontSize:14,lineHeight:1.4}},m.caption):h('div',{style:{height:'calc(10px + '+SAFE_B+')'}}));
+}
+function Ring({T,frac,size}){
+  const r=(size-4)/2,c=2*Math.PI*r;
+  return h('svg',{width:size,height:size,viewBox:'0 0 '+size+' '+size,style:{transform:'rotate(-90deg)',flexShrink:0}},
+    h('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:T.hair,strokeWidth:3}),
+    h('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:T.accent,strokeWidth:3,strokeLinecap:'round',strokeDasharray:c,strokeDashoffset:c*(1-clamp(frac,0,1)),style:{transition:'stroke-dashoffset .3s'}}));
+}
+const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
+function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  const check=h('button',{onClick:e=>{e.stopPropagation();onToggle()},className:'act90',style:{display:'flex',flexShrink:0,color:done?T.accent:T.sub,padding:2,marginTop:1}},Icons.checkCircle(24,done));
+  if(feedy){
+    const es=entries||[],K=BRIEF_KIND[item.kind]||BRIEF_KIND.rss;
+    const card=e=>h('button',{key:e.id,onClick:()=>onEntry(e),className:'act98',style:{display:'flex',gap:e.thumb?0:8,width:'100%',textAlign:'left',background:T.card,borderRadius:10,overflow:'hidden',alignItems:e.thumb?'stretch':'flex-start',padding:e.thumb?0:'8px 10px'}},
+      e.thumb?h('div',{style:{width:92,flexShrink:0,position:'relative',background:T.hair,aspectRatio:'16 / 9'}},
+        h('img',{src:e.thumb,alt:'',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:ev=>{ev.target.style.opacity=0}}),
+        item.kind==='youtube'?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',filter:'drop-shadow(0 1px 3px rgba(0,0,0,.6))'}},Icons.play(18,true)):null)
+        :h('span',{style:{color:K.c,marginTop:1,flexShrink:0,display:'flex'}},K.ic(13)),
+      h('div',{style:{flex:1,minWidth:0,padding:e.thumb?'6px 10px':0}},
+        h('div',{style:{fontSize:12.5,color:T.fg,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.title||'Update'),
+        e.publishedMs?h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},fmtDateShort(e.publishedMs)):null));
+    return h('div',Object.assign({},lp,{style:{display:'flex',gap:8,padding:'10px 4px',alignItems:'flex-start'}}),check,
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{onClick:onOpen,style:{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}},
+          h('span',{style:{color:K.c,display:'flex',flexShrink:0}},K.ic(15)),
+          h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.55:1}},item.name),
+          es.length?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:K.c,borderRadius:5,padding:'2px 6px'}},es.length+' new'):null),
+        es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,6).map(card),
+          es.length>6?h('button',{onClick:onOpen,style:{fontSize:12,color:T.accent,fontWeight:600,textAlign:'left',padding:'2px'}},'+'+(es.length-6)+' more'):null)
+          :h('div',{onClick:onOpen,style:{marginTop:5,fontSize:12,color:T.sub,cursor:'pointer'}},'No new posts since the last brief.')));
+  }
+  return h('div',Object.assign({},lp,{style:{display:'flex',gap:10,padding:'11px 4px',alignItems:'center'}}),check,
+    h('div',{onClick:onOpen,style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:11,cursor:'pointer'}},
+      h('span',{style:{width:32,height:32,borderRadius:9,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0}},
+        h('img',{src:faviconUrl(item.url),alt:'',style:{width:19,height:19},onError:e=>{e.target.style.opacity=0}})),
+      h('div',{style:{minWidth:0}},
+        h('div',{style:{fontSize:14.5,fontWeight:500,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textDecoration:done?'line-through':'none',opacity:done?.55:1}},item.name),
+        h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(item.url)))),
+    h('span',{onClick:onOpen,style:{color:T.sub,display:'flex',cursor:'pointer',flexShrink:0}},Icons.external(17)));
+}
+function BriefView({T,brief,onBrief,toastFn}){
+  const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
+  const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  const now=new Date();
+  const [sel,setSel]=useState(null);
+  const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
+  const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Brief',time:'00:00'};
+  const doneIds=(brief.done&&brief.done.key===win.key&&win.key)?brief.done.ids:[];
+  const [act,setAct]=useState(null);
+  const [moveIt,setMoveIt]=useState(null);
+  const [edit,setEdit]=useState(null);
+  const [grp,setGrp]=useState(null);
+  const [gName,setGName]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [slotSheet,setSlotSheet]=useState(false);
+  useEffect(()=>{
+    let live=true;
+    (async()=>{for(const it of items){
+      if(!hasFeed(it))continue;
+      const c=feeds[it.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
+      try{const es=await fetchFeed(it);if(es&&live)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}
+    }})();
+    return()=>{live=false};
+  },[]);
+  const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
+  const toggle=id=>{if(!win.key)return;onBrief(b=>{const cur=(b.done&&b.done.key===win.key)?b.done.ids:[];const ids=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:{key:win.key,ids}}})};
+  const open=it=>{const u=normalizeUrl(it.url)||it.url;if(u)openExternalUrl(u)};
+  const openEntry=e=>{if(e&&e.url)openExternalUrl(e.url)};
+  const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
+  const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
+  const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
+  const saveItem=async f=>{
+    const raw=(f.url||'').trim();if(!raw){toastFn('Enter a link or handle');return}
+    const patch={kind:f.kind,channelId:'',handle:'',feedUrl:'',url:''};
+    setBusy(true);
+    if(f.kind==='youtube'){patch.channelId=f.channelId||await resolveYtChannelId(raw);patch.url=patch.channelId?'https://www.youtube.com/channel/'+patch.channelId:(ytTargetUrl(raw)||raw)}
+    else if(f.kind==='telegram'){patch.handle=tgHandle(raw);patch.url=patch.handle?'https://t.me/'+patch.handle:(normalizeUrl(raw)||raw)}
+    else if(f.kind==='rss'){patch.feedUrl=normalizeUrl(raw)||raw;patch.url=patch.feedUrl}
+    else{patch.url=normalizeUrl(raw)||raw}
+    setBusy(false);
+    let ytName='';if(f.kind==='youtube'){const hm=raw.match(/@([\w.\-]+)/)||(/^[\w.\-]+$/.test(raw)&&!/youtu/i.test(raw)?[null,raw]:null);if(hm)ytName='@'+hm[1]}
+    patch.name=(f.name||'').trim()||(patch.handle?'@'+patch.handle:'')||ytName||domainOf(patch.url)||'Item';
+    if(f.kind==='youtube'&&!patch.channelId)toastFn('Couldn’t find that channel — it’ll still open as a link');
+    if(f.kind==='telegram'&&!patch.handle)toastFn('Couldn’t read that Telegram handle');
+    let itemId=f.id;
+    if(f.id)onBrief(b=>({...b,items:b.items.map(x=>x.id===f.id?{...x,...patch}:x)}));
+    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>({...b,items:b.items.concat([ni])}))}
+    setEdit(null);
+    const probe={kind:patch.kind,channelId:patch.channelId,handle:patch.handle,feedUrl:patch.feedUrl};
+    if(hasFeed(probe)){try{const es=await fetchFeed(probe);if(es)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[itemId]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}}
+  };
+  const total=items.length,doneN=items.filter(i=>doneIds.includes(i.id)).length;
+  const newCount=win.future?0:items.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+  const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
+  const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
+  if(ungrouped.length)sections.push({g:null,list:ungrouped});
+  const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it)});
+  const sectionHead=(g,list)=>h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'14px 4px 4px'}},
+    h('div',{style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(g?g.name:'Other')+' · '+list.filter(i=>doneIds.includes(i.id)).length+'/'+list.length),
+    g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:3}},Icons.pencil(16)):null,
+    g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null,
+    h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:3}},Icons.plus(18)));
+
+  return h('div',null,
+    h('div',{className:'sx',style:{display:'flex',gap:7,overflowX:'auto',padding:'8px 14px 2px'}},
+      slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',style:{flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-start',gap:1,padding:'7px 13px',borderRadius:11,border:'1px solid '+(s.id===win.sel?T.accent:T.hair),background:s.id===win.sel?T.card:'transparent'}},
+        h('span',{style:{fontSize:13,fontWeight:600,color:s.id===win.sel?T.fg:T.sub}},s.name+(s.id===win.activeSlotId?' •':'')),
+        h('span',{style:{fontSize:10.5,color:T.sub}},fmtClock(s.time)))),
+      h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 6px'}},Icons.calendar(18))),
+    h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'6px 16px 4px'}},
+      h('div',{style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center'}},
+        h(Ring,{T,frac:total?doneN/total:0,size:46}),
+        h('div',{style:{position:'absolute',fontSize:12,fontWeight:700,color:T.fg}},doneN+'/'+(total||0))),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg}},curSlot.name+' brief'),
+        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:1}},win.future?('Starts at '+fmtClock(curSlot.time)+' today'):(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done')+(newCount?' · '+newCount+' new since '+(win.start?fmtClock(new Date(win.start).getHours()+':'+String(new Date(win.start).getMinutes()).padStart(2,'0')):'last brief'):''):'Add the sites, apps and channels you check.'))),
+      newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
+    h('div',{style:{padding:'2px 14px 0'}},
+      win.future?h('div',{style:{fontSize:12.5,color:T.sub,background:T.card,borderRadius:10,padding:'10px 12px',margin:'6px 2px',lineHeight:1.45}},'This brief begins at '+fmtClock(curSlot.time)+'. New videos since your last brief will appear here then.'):null,
+      total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),list.length?list.map(itemRow):h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px'}},'Nothing here yet — tap + to add.')))
+        :h(EmptyState,{T,icon:Icons.sun(40),title:'Your daily brief',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
+      h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
+      h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:10,padding:'11px 14px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},Icons.plus(18),'Add item'),
+      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+
+    slotSheet?h(Sheet,{T,title:'Brief times',maxH:'90%',onClose:()=>setSlotSheet(false)},
+      h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 12px',lineHeight:1.45}},'Each brief shows everything new since the previous one. Add as many as you like.'),
+        slots.map(s=>h('div',{key:s.id,style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
+          h('input',{value:s.name,onChange:e=>setSlot(s.id,{name:e.target.value}),placeholder:'Name',
+            style:{flex:1,minWidth:0,border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:14.5}}),
+          h('input',{type:'time',value:s.time,onChange:e=>setSlot(s.id,{time:e.target.value||s.time}),
+            style:{border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 10px',fontSize:14.5,colorScheme:(T.id==='dark'||T.id==='black')?'dark':'light'}}),
+          (brief.slots||[]).length>1?h('button',{onClick:()=>{if(sel===s.id)setSel(null);onBrief(b=>({...b,slots:(b.slots||[]).filter(x=>x.id!==s.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(18)):null)),
+        h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Brief',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a brief'))):null,
+
+    act?h(Sheet,{T,onClose:()=>setAct(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},act.name),
+      h(ARow,{T,icon:Icons.external(21),label:act.kind==='youtube'?'Open channel':'Open',onClick:()=>{const it=act;setAct(null);open(it)}}),
+      hasFeed(act)&&feeds[act.id]&&feeds[act.id].entries&&feeds[act.id].entries[0]?h(ARow,{T,icon:Icons.play(21,true),label:'Open latest',onClick:()=>{const e=feeds[act.id].entries[0];setAct(null);openEntry(e)}}):null,
+      h(ARow,{T,icon:Icons.checkCircle(21,doneIds.includes(act.id)),label:doneIds.includes(act.id)?'Mark not done':'Mark done',onClick:()=>{toggle(act.id);setAct(null)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const it=act;setAct(null);setEdit({id:it.id,groupId:it.groupId,kind:it.kind,name:it.name,url:it.url,channelId:it.channelId})}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to group…',onClick:()=>{const it=act;setAct(null);setMoveIt(it)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{removeItem(act.id);setAct(null)}})):null,
+
+    moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
+      h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{setItemGroup(moveIt.id,null);setMoveIt(null)}}),
+      groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
+      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with “New group”.')):null,
+
+    grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:gName,autoFocus:true,onChange:e=>setGName(e.target.value),placeholder:'Group name (e.g. Social, Markets)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onBrief(b=>({...b,groups:b.groups.map(g=>g.id===grp.rename?{...g,name:nm}:g)}));else onBrief(b=>({...b,groups:b.groups.concat([{id:uid(),name:nm}])}));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
+
+    edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}},
+          [['link','Site / app'],['youtube','YouTube'],['telegram','Telegram'],['rss','RSS / News']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
+        h('input',{value:edit.name,onChange:e=>setEdit({...edit,name:e.target.value}),placeholder:'Name (optional)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+        h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value,channelId:'',handle:'',feedUrl:''}),placeholder:edit.kind==='youtube'?'@handle, channel link, or name':edit.kind==='telegram'?'t.me/durov or @durov':edit.kind==='rss'?'https://…/feed.xml':'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:6}}),
+        h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},
+          edit.kind==='youtube'?'Paste a channel URL, an @handle, or just the handle name (youtube.com/@handle, @handle, or /channel/…). The brief shows its new videos.'
+          :edit.kind==='telegram'?'Public channel only (t.me/<name> or @name). The brief shows its new posts.'
+          :edit.kind==='rss'?'Any RSS/Atom feed — a news site, blog, Substack, subreddit (.../.rss), or an X/Instagram bridge URL.'
+          :'A site or app shortcut — opens in your browser. Use this for accounts with no public feed (Instagram, X, WhatsApp).'),
+        h('button',{onClick:()=>saveItem(edit),disabled:busy,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600,opacity:busy?.6:1}},busy?h(Spinner,{T,size:15}):null,busy?'Fetching…':(edit.id?'Save':'Add')))):null);
 }
 
 function NotesList({T,articles,onOpenArticle,onOpenHighlight}){
@@ -2273,6 +2611,7 @@ function scopeTitle(scope,folders){
     case 'archive':return 'Archive';
     case 'videos':return 'Videos';
     case 'photos':return 'Photos';
+    case 'brief':return 'Daily Brief';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'tag':return '#'+scope.id;
@@ -2678,7 +3017,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
 
   const readerAction=k=>doAction(readingId,k);
@@ -2708,6 +3047,7 @@ function App(){
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
+  else if(scope.type==='brief')body=h(BriefView,{T,brief:{...BRIEF0,...(data.brief||{})},onBrief:fn=>update(d=>({...d,brief:fn({...BRIEF0,...(d.brief||{})})})),toastFn});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
