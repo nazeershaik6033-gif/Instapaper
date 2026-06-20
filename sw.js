@@ -1,5 +1,5 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
-const CACHE = 'instapaper-shell-v37';
+const CACHE = 'instapaper-shell-v38';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png'];
 const RUNTIME_HOSTS = ['cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
