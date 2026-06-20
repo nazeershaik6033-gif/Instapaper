@@ -7,6 +7,10 @@ const h=(t,p,...c)=>ce(t,p,...c);
 /* ============================== constants ============================== */
 const STORE_KEY='instapaper_v1';
 const APP_VERSION='1.0.0';
+/* True when running inside the Naz Trades journal (embedded in an iframe).
+   In that case the header shows a Back arrow that returns to the journal. */
+const EMBEDDED=(()=>{try{return window.self!==window.parent}catch(e){return true}})();
+const exitToHost=()=>{try{window.parent.postMessage({type:'arthveda-reader-back'},'*')}catch(e){}};
 
 const THEMES={
   light:{id:'light',label:'Light',bg:'#ffffff',fg:'#1c1c1e',sub:'#9a9aa0',meta:'#76767c',hair:'#e8e8ec',card:'#f4f4f6',search:'#efeff1',sheet:'#ffffff',overlay:'rgba(0,0,0,.42)',menuBg:'#ffffff',menuFg:'#1c1c1e',menuHair:'#ececef',accent:'#3478c6',danger:'#d0342c',hl:'rgba(255,222,60,.5)',thumbBg:'#ececee',statusbar:'#ffffff',swatch:'#ffffff'},
@@ -31,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -137,6 +141,48 @@ async function geminiChat(key,model,messages,maxTokens,onWait){
   return out.trim();
 }
 
+/* ---------- Gemini video understanding (YouTube URL) ----------
+   Gemini can "watch" a YouTube video passed as a fileData part and return a
+   transcript / summary / answer. Only Gemini supports this — text-only models
+   (OpenRouter) cannot, so aiVideo requires the Gemini provider. */
+async function geminiVideo(key,model,prompt,url,maxTokens,onWait){
+  const body={contents:[{role:'user',parts:[{fileData:{fileUri:url}},{text:prompt}]}],generationConfig:{maxOutputTokens:maxTokens||4096,temperature:0.3}};
+  let res;
+  for(let attempt=0;;attempt++){
+    res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
+      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},180000);
+    if(res.status===429&&attempt<2){
+      const wait=(attempt+1)*6;
+      if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
+      await sleep(wait*1000);
+      continue;
+    }
+    break;
+  }
+  if(!res.ok){
+    let msg='Gemini video request failed ('+res.status+')';
+    try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
+    if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in Settings → AI.';
+    else if(res.status===400)msg='Gemini couldn’t read this video. It may be private, age-restricted, or region-locked.';
+    else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
+    else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or use Gemini 2.5 Flash in Settings → AI.';
+    throw new Error(msg);
+  }
+  const j=await res.json();
+  const cand=j&&j.candidates&&j.candidates[0];
+  const out=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||'').join(''):'';
+  if(!out.trim()){
+    if(cand&&cand.finishReason==='SAFETY')throw new Error('Gemini blocked this video (safety filters).');
+    throw new Error('Empty response — the video may be too long for the free tier, or has no usable audio.');
+  }
+  return out.trim();
+}
+function aiVideo(S,prompt,url,maxTokens,onWait){
+  if(S.aiProvider!=='gemini'||!S.geminiKey)
+    return Promise.reject(new Error('Video AI is powered by Google Gemini. Open Settings → AI, switch to Gemini, and add a free key from aistudio.google.com/apikey.'));
+  return geminiVideo(S.geminiKey,S.geminiModel||'gemini-2.5-flash',prompt,url,maxTokens,onWait);
+}
+
 /* live model catalog from OpenRouter — only models that can actually chat */
 async function fetchOpenRouterModels(){
   const res=await fetchWithTimeout('https://openrouter.ai/api/v1/models',{},20000);
@@ -218,7 +264,8 @@ function faviconUrl(siteOrUrl){
   return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(host);
 }
 
-
+/* Lite view: fetch a page through the read proxies and make it safe to render
+   in a sandboxed frame — works even when the site blocks normal embedding. */
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
 function detectSpeechLang(s){
   if(/[ఀ-౿]/.test(s))return'te-IN';
@@ -256,10 +303,167 @@ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
 function domainOf(url){try{return new URL(url).hostname.replace(/^www\./,'')}catch(e){return''}}
 function fmtDate(ts){if(!ts)return'';const d=new Date(ts);return d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})}
+function fmtDateShort(ts){if(!ts)return'';const d=new Date(ts);const o={day:'numeric',month:'short'};if(new Date().getFullYear()!==d.getFullYear())o.year='numeric';return d.toLocaleDateString(undefined,o)}
 function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function unescapeEnt(s){const d=document.createElement('textarea');d.innerHTML=s;return d.value}
 function safeUrl(u){u=String(u||'').trim();return/^https?:\/\//i.test(u)?u:''}
 function normalizeUrl(u){u=String(u||'').trim();if(!u)return'';if(!/^https?:\/\//i.test(u))u='https://'+u;try{new URL(u);return u}catch(e){return''}}
+
+/* ---------- daily brief: youtube channel resolution + latest video (RSS) ---------- */
+function ymd(d){const z=n=>String(n).padStart(2,'0');return d.getFullYear()+'-'+z(d.getMonth()+1)+'-'+z(d.getDate())}
+function parseYtChannelId(url){const m=String(url||'').match(/channel\/(UC[\w-]{20,})/);return m?m[1]:''}
+/* Turn anything a user might paste into a real YouTube page URL we can scrape:
+   a full link, youtube.com/@handle, @handle, /c/Name, /user/Name, or a bare name. */
+function ytTargetUrl(input){
+  let s=String(input||'').trim();
+  if(!s)return'';
+  // explicit @handle with no domain  →  /@handle
+  if(/^@[\w.\-]+$/.test(s))return'https://www.youtube.com/'+s;
+  // contains a youtube domain already → just ensure a protocol
+  if(/(?:^|\.)(?:youtube\.com|youtu\.be)\//i.test(s)||/youtube\.com|youtu\.be/i.test(s)){
+    if(!/^https?:\/\//i.test(s))s='https://'+s.replace(/^\/+/,'');
+    return s;
+  }
+  // bare token (no slash / space) → treat as a channel handle
+  if(/^[\w.\-]+$/.test(s))return'https://www.youtube.com/@'+s.replace(/^@/,'');
+  // some other URL
+  if(!/^https?:\/\//i.test(s))s='https://'+s.replace(/^\/+/,'');
+  return s;
+}
+function scanYtChannelId(raw){
+  const m=String(raw||'').match(/"(?:channelId|externalId|browseId)":"(UC[\w-]{20,})"/)
+    ||raw.match(/itemprop="(?:channelId|identifier)"\s+content="(UC[\w-]{20,})"/)
+    ||raw.match(/rel="canonical"[^>]*href="[^"]*channel\/(UC[\w-]{20,})/)
+    ||raw.match(/href="[^"]*channel\/(UC[\w-]{20,})"[^>]*rel="canonical"/)
+    ||raw.match(/channel\/(UC[\w-]{20,})/);
+  return m?m[1]:'';
+}
+/* YouTube's own resolve_url endpoint maps a handle/custom URL straight to a
+   channel id as small JSON — and, unlike the public channel page, it isn't
+   gated behind the cookie-consent wall that breaks scraping through proxies.
+   Needs a POST, so route it through corsproxy.io (which forwards method+body). */
+const YT_INNERTUBE_KEY='AIzaSyAO_FJ2SlqU8Q4STEHLGCilw_Y9_11qcW8';
+async function resolveYtViaApi(pageUrl){
+  const target='https://www.youtube.com/youtubei/v1/navigation/resolve_url?key='+YT_INNERTUBE_KEY+'&prettyPrint=false';
+  const body=JSON.stringify({context:{client:{clientName:'WEB',clientVersion:'2.20240726.00.00',hl:'en',gl:'US'}},url:pageUrl});
+  const wraps=[
+    u=>['https://corsproxy.io/?url='+encodeURIComponent(u),{}],
+    u=>['https://api.allorigins.win/raw?url='+encodeURIComponent(u),{}]
+  ];
+  for(const w of wraps){
+    try{
+      const [pu]=w(target);
+      const res=await fetchWithTimeout(pu,{method:'POST',headers:{'Content-Type':'application/json'},body},20000);
+      if(!res.ok)continue;
+      const txt=await res.text();
+      const m=txt.match(/"browseId":"(UC[\w-]{20,})"/)||txt.match(/"(?:channelId|externalId)":"(UC[\w-]{20,})"/);
+      if(m)return m[1];
+    }catch(e){}
+  }
+  return'';
+}
+/* Resolve a handle/name to its UC… channel id. Try the resolve_url API first
+   (small, consent-proof), then fall back to scraping the page through every
+   proxy and finally the Jina reader. */
+async function resolveYtChannelId(url){
+  const direct=parseYtChannelId(url);if(direct)return direct;
+  const u=ytTargetUrl(url);if(!u)return'';
+  const api=await resolveYtViaApi(u);if(api)return api;
+  for(const p of PROXIES){
+    try{
+      const res=await fetchWithTimeout(p(u),{},25000);
+      if(!res.ok)continue;
+      const raw=await res.text();
+      const id=scanYtChannelId(raw);
+      if(id)return id;
+    }catch(e){}
+  }
+  try{
+    const res=await fetchWithTimeout('https://r.jina.ai/'+u,{},20000);
+    if(res.ok){const id=scanYtChannelId(await res.text());if(id)return id}
+  }catch(e){}
+  return'';
+}
+async function fetchYtVideos(channelId){
+  const raw=await fetchRawAcross('https://www.youtube.com/feeds/videos.xml?channel_id='+channelId,t=>/<entry[\s>]/i.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/xml');
+  const entries=[].slice.call(doc.getElementsByTagName('entry'),0,20);
+  return entries.map(entry=>{
+    const tx=t=>{const n=entry.getElementsByTagName(t)[0];return n?(n.textContent||'').trim():''};
+    const videoId=tx('yt:videoId')||tx('videoId');if(!videoId)return null;
+    const tn=entry.getElementsByTagName('media:thumbnail')[0];
+    const thumb=(tn&&tn.getAttribute('url'))||('https://i.ytimg.com/vi/'+videoId+'/hqdefault.jpg');
+    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb};
+  }).filter(Boolean);
+}
+function tmin(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):0}
+function fmtClock(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'00:00');if(!m)return t||'';let h=+m[1];const ap=h>=12?'PM':'AM';h=h%12||12;return h+':'+m[2]+' '+ap}
+/* Roll out every slot occurrence across yesterday→tomorrow, then locate, for the
+   selected slot, its most recent boundary (≤ now), the previous boundary (window
+   start), and the end of its window (next boundary, capped at now). */
+function briefWindow(slots,selId,now){
+  const sorted=(slots||[]).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  if(!sorted.length)return null;
+  const nowTs=now.getTime(),occ=[];
+  for(let off=-1;off<=1;off++){const d=new Date(now);d.setDate(d.getDate()+off);
+    for(const s of sorted){const t=new Date(d);t.setHours(0,0,0,0);t.setMinutes(tmin(s.time));occ.push({slot:s,ts:t.getTime(),date:ymd(t)})}}
+  occ.sort((a,b)=>a.ts-b.ts);
+  let activeIdx=-1;for(let i=0;i<occ.length;i++)if(occ[i].ts<=nowTs)activeIdx=i;
+  const activeSlotId=activeIdx>=0?occ[activeIdx].slot.id:sorted[sorted.length-1].id;
+  const sel=selId||activeSlotId;
+  let iIdx=-1;for(let i=0;i<occ.length;i++)if(occ[i].slot.id===sel&&occ[i].ts<=nowTs)iIdx=i;
+  if(iIdx<0){ // selected slot hasn't occurred yet today → upcoming
+    const up=occ.find(o=>o.slot.id===sel&&o.ts>nowTs);
+    return{activeSlotId,sel,future:up?up.ts:null,start:0,end:0,key:''};
+  }
+  const inst=occ[iIdx],prev=occ[iIdx-1],next=occ[iIdx+1];
+  return{activeSlotId,sel,future:null,start:prev?prev.ts:0,end:next?Math.min(next.ts,nowTs):nowTs,key:inst.date+'#'+sel,instTs:inst.ts};
+}
+function tgHandle(url){
+  const s=String(url||'').trim().replace(/^@/,'');
+  const m=s.match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{3,})/i);
+  if(m)return m[1];
+  if(/^[A-Za-z0-9_]{3,}$/.test(s))return s;
+  return'';
+}
+async function fetchTelegram(handle){ // public channel preview at t.me/s/<handle>
+  const raw=await fetchRawAcross('https://t.me/s/'+encodeURIComponent(handle),t=>/tgme_widget_message/.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/html');
+  const msgs=[].slice.call(doc.querySelectorAll('.tgme_widget_message'));
+  return msgs.map(m=>{
+    const post=m.getAttribute('data-post')||'';
+    const te=m.querySelector('.tgme_widget_message_text');
+    let title=te?(te.textContent||'').trim():'';
+    const time=m.querySelector('time[datetime]');
+    const publishedMs=time?Date.parse(time.getAttribute('datetime'))||0:0;
+    let thumb='';const ph=m.querySelector('.tgme_widget_message_photo_wrap,.tgme_widget_message_video_thumb');
+    if(ph){const mt=(ph.getAttribute('style')||'').match(/url\(['"]?(.*?)['"]?\)/);if(mt)thumb=mt[1]}
+    if(!title)title=thumb?'📷 Media post':'Post';
+    return{id:post||String(publishedMs),title:title.slice(0,220),url:post?'https://t.me/'+post:'https://t.me/'+handle,publishedMs,thumb};
+  }).filter(e=>e.publishedMs).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,25);
+}
+async function fetchRss(url){ // RSS or Atom — news, blogs, Reddit, bridges
+  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t));
+  const doc=new DOMParser().parseFromString(raw,'text/xml');
+  let nodes=[].slice.call(doc.getElementsByTagName('item')),atom=false;
+  if(!nodes.length){nodes=[].slice.call(doc.getElementsByTagName('entry'));atom=true}
+  return nodes.slice(0,25).map(n=>{
+    const tx=t=>{const e=n.getElementsByTagName(t)[0];return e?(e.textContent||'').trim():''};
+    let link='';
+    if(atom){const ls=n.getElementsByTagName('link');for(let i=0;i<ls.length;i++){if((ls[i].getAttribute('rel')||'alternate')==='alternate'){link=ls[i].getAttribute('href')||'';break}}if(!link&&ls[0])link=ls[0].getAttribute('href')||''}
+    else link=tx('link')||tx('guid');
+    return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,thumb:''};
+  }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
+}
+function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
+async function fetchFeed(it){
+  if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}))}
+  if(it.kind==='telegram'&&it.handle)return await fetchTelegram(it.handle);
+  if(it.kind==='rss'&&it.feedUrl)return await fetchRss(it.feedUrl);
+  return null;
+}
+const BRIEF_SLOTS0=[{id:'m',name:'Morning',time:'08:00'},{id:'a',name:'Afternoon',time:'14:00'},{id:'n',name:'Night',time:'20:00'}];
+const BRIEF0={groups:[],items:[],slots:BRIEF_SLOTS0.map(s=>({...s})),done:{key:'',ids:[]},feeds:{},yt:{},seen:{}};
 function extractFirstUrl(text){const m=String(text||'').match(/https?:\/\/[^\s"'<>]+/);return m?m[0]:''}
 function htmlToText(html){const d=document.createElement('div');d.innerHTML=html;return(d.textContent||'').replace(/\s+/g,' ').trim()}
 function countWords(text){const t=String(text||'').trim();return t?t.split(/\s+/).length:0}
@@ -433,20 +637,27 @@ async function fetchViaJina(url){
   return{title,html,text,image,publishedAt,author:''};
 }
 
-const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u)];
-async function fetchRawHtml(url){
-  let lastErr=null;
+const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u)];
+/* Fetch a URL through the proxy pool, trying each in turn. A proxy can return
+   a usable body, an error/consent page, or nothing — so when an `ok` validator
+   is given we keep going until one response actually passes it, remembering the
+   longest body as a last-resort fallback. */
+async function fetchRawAcross(url,ok){
+  let best='',lastErr=null;
   for(const p of PROXIES){
     try{
       const res=await fetchWithTimeout(p(url),{},25000);
-      if(!res.ok)throw new Error('proxy '+res.status);
+      if(!res.ok){lastErr=new Error('proxy '+res.status);continue}
       const text=await res.text();
-      if(text&&text.length>200)return text;
-      throw new Error('empty proxy response');
+      if(!text){lastErr=new Error('empty proxy response');continue}
+      if(!ok||ok(text))return text;
+      if(text.length>best.length)best=text;
     }catch(e){lastErr=e}
   }
+  if(best)return best;
   throw lastErr||new Error('all proxies failed');
 }
+function fetchRawHtml(url){return fetchRawAcross(url,t=>t.length>200)}
 
 const SAN_ALLOW={P:'p',H1:'h2',H2:'h2',H3:'h3',H4:'h4',H5:'h5',H6:'h6',BLOCKQUOTE:'blockquote',UL:'ul',OL:'ol',LI:'li',PRE:'pre',CODE:'code',EM:'em',I:'em',STRONG:'strong',B:'strong',A:'a',IMG:'img',FIGURE:'figure',FIGCAPTION:'figcaption',BR:'br',HR:'hr',MARK:'em',CITE:'cite',SUP:'sup',SUB:'sub'};
 function absUrl(u,base){try{return new URL(u,base).href}catch(e){return''}}
@@ -517,12 +728,54 @@ async function fetchYouTubeMeta(url,id){
   return{title,author,image:'https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'};
 }
 
+/* ---- social posts (X / Instagram / Telegram) saved as link cards ---- */
+const PLATFORM_LABEL={x:'X',instagram:'Instagram',telegram:'Telegram'};
+function socialOf(url){
+  const u=String(url||'');
+  let m;
+  if(m=u.match(/(?:^|\/\/)(?:www\.)?(?:x\.com|twitter\.com|nitter\.[^/]+)\/([A-Za-z0-9_]{1,15})\b/i)){
+    const h=m[1]; if(/^(home|search|explore|i|messages|notifications|settings|hashtag)$/i.test(h))return{platform:'x',handle:''}; return{platform:'x',handle:h};
+  }
+  if(/instagram\.com\/(?:p|reel|reels|tv)\//i.test(u))return{platform:'instagram',handle:''};
+  if(m=u.match(/instagram\.com\/([A-Za-z0-9_.]{1,40})\/?(?:\?|$)/i))return{platform:'instagram',handle:m[1]};
+  if(m=u.match(/(?:t\.me|telegram\.me)\/(?:s\/)?([A-Za-z0-9_]{3,})/i)){
+    if(/^(joinchat|s|share|proxy|addstickers)$/i.test(m[1]))return{platform:'telegram',handle:''}; return{platform:'telegram',handle:m[1]};
+  }
+  return null;
+}
+// Best-effort Open Graph metadata for a social link; degrades to an empty card.
+async function fetchSocialMeta(url){
+  try{
+    const raw=await fetchRawHtml(url);
+    const doc=new DOMParser().parseFromString(raw,'text/html');
+    const meta=sel=>{const el=doc.querySelector(sel);return el?(el.getAttribute('content')||'').trim():''};
+    return{
+      title:meta('meta[property="og:title"]')||meta('meta[name="twitter:title"]')||'',
+      image:safeUrl(absUrl(meta('meta[property="og:image"]')||meta('meta[name="twitter:image"]')||'',url)),
+      desc:meta('meta[property="og:description"]')||meta('meta[name="twitter:description"]')||meta('meta[name="description"]')||''
+    };
+  }catch(e){return{title:'',image:'',desc:''}}
+}
+
 /* returns a full article record (without id/folder) */
 async function fetchArticleData(url){
   const vid=ytIdOf(url);
   if(vid){
     const m=await fetchYouTubeMeta(url,vid);
     return{url,title:m.title,source:'YouTube',author:m.author,image:m.image,html:'',text:'',excerpt:m.author?('Video by '+m.author):'Saved video',words:0,readMin:0,isVideo:true,videoId:vid,publishedAt:0};
+  }
+  const soc=socialOf(url);
+  if(soc){
+    const label=PLATFORM_LABEL[soc.platform]||'Post';
+    const handle=soc.handle?('@'+soc.handle):'';
+    const m=await fetchSocialMeta(url);
+    return{url,
+      title:(m.title||(handle?handle+' on '+label:label+' post')).trim(),
+      source:label,author:handle,
+      image:m.image||'',html:'',text:'',
+      excerpt:(m.desc||'').slice(0,220).trim(),
+      words:0,readMin:0,isVideo:false,videoId:null,
+      isPost:true,platform:soc.platform,publishedAt:0};
   }
   let res=null,err1=null;
   try{res=await fetchViaJina(url)}catch(e){err1=e}
@@ -589,10 +842,48 @@ function loadStore(){
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
   d.sites=Array.isArray(d.sites)?d.sites:[];
+  d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
   d.vault=d.vault&&d.vault.ct?d.vault:null;
+  if(!d.brief||typeof d.brief!=='object')d.brief={};
+  d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
+  d.brief.items=Array.isArray(d.brief.items)?d.brief.items:[];
+  if(!d.brief.seeded&&!d.brief.items.length){ // first run: seed a Social group
+    const gid=uid(),now=Date.now();
+    d.brief.groups=[{id:gid,name:'Social'}].concat(d.brief.groups);
+    d.brief.items=[['YouTube','https://www.youtube.com'],['Telegram','https://web.telegram.org'],['Instagram','https://www.instagram.com'],['X','https://x.com'],['WhatsApp','https://web.whatsapp.com']]
+      .map((s,i)=>({id:uid(),groupId:gid,kind:'link',name:s[0],url:s[1],channelId:'',addedAt:now+i}));
+  }
+  d.brief.seeded=true;
+  if(!Array.isArray(d.brief.slots)||!d.brief.slots.length)d.brief.slots=BRIEF_SLOTS0.map(s=>({...s}));
+  if(!d.brief.done||typeof d.brief.done!=='object'||!('key'in d.brief.done))d.brief.done={key:'',ids:[]};
+  if(!d.brief.yt||typeof d.brief.yt!=='object')d.brief.yt={};
+  if(!d.brief.feeds||typeof d.brief.feeds!=='object')d.brief.feeds={};
   if(!d.seeded){d.articles.unshift(makeSeed());d.seeded=true}
   return d;
 }
+
+/* ============================== media store (IndexedDB) ============================== */
+/* Photos & files are far too large for localStorage, so their blobs + metadata live
+   in IndexedDB. This subsystem is intentionally separate from the article store and is
+   NOT included in the backup export (see Settings). */
+const MEDIA_DB='instapaper-media',MEDIA_VER=1;
+let _mediaDB=null;
+function mediaDB(){
+  if(_mediaDB)return _mediaDB;
+  _mediaDB=new Promise((res,rej)=>{
+    let r;try{r=indexedDB.open(MEDIA_DB,MEDIA_VER)}catch(e){return rej(e)}
+    r.onupgradeneeded=e=>{const db=e.target.result;
+      if(!db.objectStoreNames.contains('media'))db.createObjectStore('media',{keyPath:'id'});
+      if(!db.objectStoreNames.contains('albums'))db.createObjectStore('albums',{keyPath:'id'});
+    };
+    r.onsuccess=e=>res(e.target.result);
+    r.onerror=()=>rej(r.error);
+  });
+  return _mediaDB;
+}
+function idbAll(store){return mediaDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(store,'readonly').objectStore(store).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)}))}
+function idbPut(store,val){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).put(val);t.oncomplete=()=>res(val);t.onerror=()=>rej(t.error)}))}
+function idbDel(store,id){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)}))}
 
 /* ============================== icons ============================== */
 function Svg(props,...kids){
@@ -623,6 +914,10 @@ const Icons={
   bolt:s=>Svg({size:s},P('M13 3 5.5 13.5h5L11 21l7.5-10.5h-5L13 3Z')),
   sort:s=>Svg({size:s},P('M8 5v14M8 5 4.8 8.2M8 5l3.2 3.2'),P('M16 19V5M16 19l-3.2-3.2M16 19l3.2-3.2')),
   filter:s=>Svg({size:s},P('M4 7h16M7 12h10M10 17h4')),
+  calendar:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:15,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 9.5h17M8 3.2v3.6M16 3.2v3.6')),
+  sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 2.6v2.4M12 19v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.6 12h2.4M19 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7')),
+  send:s=>Svg({size:s},h('path',{d:'M21 4 3 11l6 2.4L11 20l3.2-4.6L21 4Z',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M21 4 9.4 13.4')),
+  rss:s=>Svg({size:s},h('circle',{cx:6,cy:18,r:1.6,fill:'currentColor'}),P('M5 11.5a7.5 7.5 0 0 1 7.5 7.5M5 5.5a13.5 13.5 0 0 1 13.5 13.5')),
   checkCircle:(s,fill)=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7,fill:fill?'currentColor':'none'}),fill?P('M8.5 12.2l2.4 2.4 4.6-4.8',{stroke:'#fff',strokeWidth:2}):P('M8.5 12.2l2.4 2.4 4.6-4.8')),
   playlist:s=>Svg({size:s},P('M4 6.5h11M4 11h11M4 15.5h6'),h('circle',{cx:16.7,cy:16.8,r:2.3,stroke:'currentColor',strokeWidth:1.6}),P('M19 16.8V9.5l2.5-.8')),
   trash:s=>Svg({size:s},P('M4.5 6.5h15M9.5 6V4.8c0-.7.6-1.3 1.3-1.3h2.4c.7 0 1.3.6 1.3 1.3V6'),P('M6.3 6.5 7 19c.05.9.8 1.5 1.7 1.5h6.6c.9 0 1.65-.6 1.7-1.5l.7-12.5'),P('M10 10.5v6M14 10.5v6')),
@@ -642,7 +937,13 @@ const Icons={
   blocks:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),h('rect',{x:4,y:13.5,width:9,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),P('M16.5 15.2l3 3M19.5 15.2l-3 3')),
   refresh:s=>Svg({size:s},P('M19.5 12a7.5 7.5 0 1 1-2.2-5.3'),P('M19.6 3.6v3.6h-3.6')),
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
-  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8'))
+  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
+  image:s=>Svg({size:s},h('rect',{x:3.5,y:4.5,width:17,height:15,rx:2.4,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:8.5,cy:9.5,r:1.6,stroke:'currentColor',strokeWidth:1.5}),P('M4 16.5 9 12l3.5 3 3-2.5 4.5 4')),
+  camera:s=>Svg({size:s},P('M3.5 8.5c0-1 .8-1.8 1.8-1.8h2L9 4.5h6L16.7 6.7h2c1 0 1.8.8 1.8 1.8v9c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8v-9Z'),h('circle',{cx:12,cy:12.5,r:3.4,stroke:'currentColor',strokeWidth:1.7})),
+  file:s=>Svg({size:s},P('M6.5 4c0-.8.7-1.5 1.5-1.5h5l4 4V20c0 .8-.7 1.5-1.5 1.5H8c-.8 0-1.5-.7-1.5-1.5V4Z'),P('M13 2.5V6.5h4')),
+  pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
+  crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
+  rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -741,7 +1042,8 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   const prog=a.progress||0;
   const done=prog>=0.97;
   let footer;
-  if(a.isVideo)footer=done?'Watched':'Video';
+  if(a.isPost)footer='Open post';
+  else if(a.isVideo)footer=done?'Watched':'Video';
   else if(done)footer='Completed';
   else if(prog>0.01)footer=Math.round(prog*100)+'% · '+a.readMin+' min read';
   else footer=a.words?a.readMin+' min read':'Saved link';
@@ -759,6 +1061,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
           :(a.excerpt?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.excerpt):null),
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:7,fontSize:11.5,color:T.sub}},
           a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
+          a.addedAt?h('span',{style:{whiteSpace:'nowrap'}},fmtDateShort(a.addedAt)):null,
           h('span',null,footer),
           a.highlights.length?h('span',{style:{display:'flex',alignItems:'center',gap:3}},Icons.highlight(12),String(a.highlights.length)):null,
           a.tags.slice(0,3).map(t=>h('span',{key:t,style:{color:T.accent}},'#'+t))
@@ -787,23 +1090,40 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
     h('span',{style:{fontSize:16.5,fontWeight:active?650:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name));
 }
 
-function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
+function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
   const go=(t,id)=>{onScope({type:t,id});onClose()};
+  const [q,setQ]=useState('');
+  const m=s=>!q.trim()||(s||'').toLowerCase().includes(q.trim().toLowerCase());
+  const NAV=[
+    {key:'home',icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')},
+    {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
+    {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
+    {key:'photos',icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
+    {key:'brief',icon:Icons.sun(22),label:'Daily Brief',active:is('brief'),onClick:()=>go('brief')},
+    {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
+    {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
+    {key:'browse',icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}},
+    {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
+  ];
+  const navF=NAV.filter(n=>m(n.label));
+  const foldersF=folders.filter(f=>m(f.name));
+  const noMatch=q.trim()&&!navF.length&&!foldersF.length;
   return h('div',{style:{position:'fixed',inset:0,zIndex:60}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:T.overlay}}),
     h('div',{className:'slid',style:{position:'absolute',top:0,bottom:0,left:0,width:'min(82vw, 330px)',background:T.bg,color:T.fg,display:'flex',flexDirection:'column',boxShadow:'8px 0 40px rgba(0,0,0,.25)'}},
-      h('div',{style:{paddingTop:'calc(8px + '+SAFE_T+')',flexShrink:0,display:'flex',alignItems:'center',padding:'calc(8px + '+SAFE_T+') 10px 6px'}},
+      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',padding:'calc(8px + '+SAFE_T+') 10px 6px'}},
         h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.menu(24))),
+      h('div',{style:{flexShrink:0,padding:'2px 14px 8px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,borderRadius:11,padding:'9px 12px'}},
+          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
+          h('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Search menu',autoCapitalize:'none',autoCorrect:'off',
+            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
+          q?h('button',{onClick:()=>setQ(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)),
       h('div',{className:'sy',style:{flex:1,overflowY:'auto'}},
-        h(SidebarItem,{T,icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')}),
-        h(SidebarItem,{T,icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')}),
-        h(SidebarItem,{T,icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')}),
-        h(SidebarItem,{T,icon:Icons.video(22),label:'Videos',active:is('videos'),onClick:()=>go('videos')}),
-        h(SidebarItem,{T,icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')}),
-        h(SidebarItem,{T,icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')}),
-        h(SidebarItem,{T,icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}}),
-        folders.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)})),
+        navF.map(n=>h(SidebarItem,{key:n.key,T,icon:n.icon,label:n.label,active:n.active,onClick:n.onClick})),
+        foldersF.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)})),
+        noMatch?h('div',{style:{padding:'18px 22px',color:T.sub,fontSize:14}},'No matches'):null,
         h('div',{style:{height:'calc(20px + '+SAFE_B+')'}})
       )
     ));
@@ -827,8 +1147,6 @@ function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,s
       showListOps?h(Fragment,null,
         row('Sort',Icons.sort(19),()=>setOpen(open==='sort'?null:'sort'),{chev:'sort'}),
         sub(SORTS,'sort',settings.sort),
-        row('Filter',Icons.filter(19),()=>setOpen(open==='filter'?null:'filter'),{chev:'filter'}),
-        sub(FILTERS,'filter',settings.filter),
         row('Select',Icons.checkCircle(19),onSelectMode),
         row('Playlist',Icons.playlist(19),onPlaylistMode)):null,
       row('Settings',Icons.gear(19),onSettings)
@@ -919,18 +1237,34 @@ function ArticleSheet({T,a,onAction,onClose}){
     h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair}},
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
+    h(ARow,{T,icon:Icons.checkCircle(21,(a.progress||0)>=0.97),label:(a.progress||0)>=0.97?(a.isVideo?'Mark as unwatched':'Mark as unread'):(a.isVideo?'Mark as watched':'Mark as read'),onClick:act('read')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
     h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:act('move')}),
     h(ARow,{T,icon:Icons.tag(21),label:'Edit tags…',onClick:act('tags')}),
+    h(ARow,{T,icon:Icons.calendar(21),label:'Edit date',sub:a.addedAt?('Saved '+fmtDate(a.addedAt)):'Set the saved date',onClick:act('date')}),
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.headphones(21),label:'Listen',sub:'Text-to-speech',onClick:act('listen')}):null,
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.bolt(21),label:'Speed read',sub:'Up to 3× faster',onClick:act('speed')}):null,
     !a.isVideo&&a.html?h(ARow,{T,icon:Icons.pencil(21),label:'Edit content',sub:'Remove unwanted parts or edit the text',onClick:act('edit')}):null,
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
+    a.isVideo?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Transcript · Ask · Listen',onClick:act('ai')}):null,
     h(ARow,{T,icon:Icons.share(21),label:'Share…',onClick:act('share')}),
     a.url?h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:act('copy')}):null,
     a.url?h(ARow,{T,icon:Icons.globe(21),label:'Open original',onClick:act('open')}):null,
     h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:act('delete')}));
+}
+
+function DateSheet({T,article,onClose,onSave}){
+  const pad=n=>String(n).padStart(2,'0');
+  const init=article.addedAt?new Date(article.addedAt):new Date();
+  const [val,setVal]=useState(init.getFullYear()+'-'+pad(init.getMonth()+1)+'-'+pad(init.getDate()));
+  return h(Sheet,{T,onClose,title:'Edit date'},
+    h('div',{style:{padding:'4px 20px calc(18px + '+SAFE_B+')'}},
+      h('div',{style:{fontSize:13,color:T.sub,marginBottom:12,lineHeight:1.45}},'The date this entry shows as saved on. Changing it also re-sorts the list when sorted by date.'),
+      h('input',{type:'date',value:val,onChange:e=>setVal(e.target.value),
+        style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:14}}),
+      h('button',{onClick:()=>{const d=val?new Date(val+'T12:00:00'):null;onSave(d&&!isNaN(d.getTime())?d.getTime():(article.addedAt||Date.now()))},className:'act96',
+        style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Save date')));
 }
 
 /* ============================== highlight sheet ============================== */
@@ -1129,7 +1463,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
       tb(Icons.archive(23),()=>onAction('archive')),
       h('button',{onClick:()=>setAaOpen(!aaOpen),className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg,fontFamily:'Georgia,serif',fontSize:19,fontWeight:500})},'Aa'),
-      a.text&&!a.isVideo?tb(Icons.ai(23),()=>onAction('ai')):null,
+      (a.isVideo||a.text)?tb(Icons.ai(23),()=>onAction('ai')):null,
       tb(Icons.dots(23),()=>onAction('sheet'))),
     aaOpen?h(AaPopover,{T,S,update:onAction.update,onClose:()=>setAaOpen(false)}):null
   );
@@ -1258,6 +1592,481 @@ function EmptyState({T,icon,title,sub}){
     h('div',{style:{fontSize:13.5,lineHeight:1.5}},sub));
 }
 
+/* ============================== photos / media ============================== */
+function MediaThumb({T,m,onClick,onLongPress}){
+  const [url,setUrl]=useState('');
+  const lp=useLongPress(onLongPress);
+  useEffect(()=>{
+    if(m.kind!=='image'||!m.blob){setUrl('');return}
+    const u=URL.createObjectURL(m.blob);setUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[m.blob]);
+  return h('div',Object.assign({onClick},lp,{style:{position:'relative',paddingTop:'100%',borderRadius:10,overflow:'hidden',background:T.thumbBg||T.card,cursor:'pointer'}}),
+    m.kind==='image'&&url
+      ?h('img',{src:url,alt:m.caption||m.name,style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}})
+      :h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:6,padding:8,color:T.sub}},
+        Icons.file(30),h('div',{style:{fontSize:10.5,textAlign:'center',overflow:'hidden',maxHeight:28,lineHeight:1.2,wordBreak:'break-word'}},m.name)),
+    m.pinned?h('div',{style:{position:'absolute',top:5,left:5,color:'#fff',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.55))',display:'flex'}},Icons.pin(14,true)):null,
+    m.favorite?h('div',{style:{position:'absolute',top:5,right:5,color:'#fff',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.55))',display:'flex'}},Icons.heart(15,true)):null,
+    m.caption?h('div',{style:{position:'absolute',left:0,right:0,bottom:0,padding:'14px 6px 5px',fontSize:11,color:'#fff',background:'linear-gradient(transparent,rgba(0,0,0,.6))',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.caption):null
+  );
+}
+
+function PhotoEditor({T,m,onSave,onClose}){
+  const isImage=m.kind==='image';
+  const [caption,setCaption]=useState(m.caption||'');
+  const [blob,setBlob]=useState(m.blob);
+  const [url,setUrl]=useState('');
+  const [crop,setCrop]=useState(null); // {x,y,w,h} in displayed px
+  const [busy,setBusy]=useState(false);
+  const imgRef=useRef(null),drag=useRef(null);
+  const dirty=blob!==m.blob||caption!==(m.caption||'');
+  useEffect(()=>{
+    if(!isImage||!blob){setUrl('');return}
+    const u=URL.createObjectURL(blob);setUrl(u);
+    return()=>URL.revokeObjectURL(u);
+  },[blob]);
+  const loadImg=u=>new Promise((res,rej)=>{const i=new Image();i.onload=()=>res(i);i.onerror=rej;i.src=u});
+  const toBlob=cv=>new Promise(res=>cv.toBlob(b=>res(b),m.mime==='image/png'?'image/png':'image/jpeg',0.92));
+  const rotate=async dir=>{ // dir: +1 cw, -1 ccw
+    setBusy(true);
+    try{
+      const u=URL.createObjectURL(blob);const img=await loadImg(u);URL.revokeObjectURL(u);
+      const cv=document.createElement('canvas');cv.width=img.naturalHeight;cv.height=img.naturalWidth;
+      const ctx=cv.getContext('2d');
+      ctx.translate(cv.width/2,cv.height/2);ctx.rotate(dir*Math.PI/2);ctx.drawImage(img,-img.naturalWidth/2,-img.naturalHeight/2);
+      setBlob(await toBlob(cv));setCrop(null);
+    }catch(e){}
+    setBusy(false);
+  };
+  const applyCrop=async()=>{
+    if(!crop||crop.w<10||crop.h<10){setCrop(null);return}
+    setBusy(true);
+    try{
+      const img=imgRef.current,r=img.getBoundingClientRect();
+      const sx=img.naturalWidth/r.width,sy=img.naturalHeight/r.height;
+      const cv=document.createElement('canvas');
+      cv.width=Math.max(1,Math.round(crop.w*sx));cv.height=Math.max(1,Math.round(crop.h*sy));
+      const u=URL.createObjectURL(blob);const im=await loadImg(u);URL.revokeObjectURL(u);
+      cv.getContext('2d').drawImage(im,crop.x*sx,crop.y*sy,crop.w*sx,crop.h*sy,0,0,cv.width,cv.height);
+      setBlob(await toBlob(cv));setCrop(null);
+    }catch(e){}
+    setBusy(false);
+  };
+  const cStart=e=>{const r=imgRef.current.getBoundingClientRect();const p=e.touches?e.touches[0]:e;drag.current={x0:p.clientX-r.left,y0:p.clientY-r.top,r};setCrop({x:drag.current.x0,y:drag.current.y0,w:0,h:0})};
+  const cMove=e=>{if(!drag.current)return;const p=e.touches?e.touches[0]:e,r=drag.current.r;const x=clamp(p.clientX-r.left,0,r.width),y=clamp(p.clientY-r.top,0,r.height),x0=drag.current.x0,y0=drag.current.y0;setCrop({x:Math.min(x,x0),y:Math.min(y,y0),w:Math.abs(x-x0),h:Math.abs(y-y0)})};
+  const cEnd=()=>{drag.current=null;setCrop(c=>c&&(c.w<10||c.h<10)?null:c)};
+  const tbBtn=(icon,label,onClick,disabled)=>h('button',{onClick,disabled,className:'act90',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:4,color:T.fg,fontSize:11,opacity:disabled?.4:1,flex:1,padding:'8px 0'}},icon,label);
+  return h('div',{style:{position:'fixed',inset:0,zIndex:80,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',paddingTop:SAFE_T}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 12px',flexShrink:0}},
+      h('button',{onClick:onClose,className:'act90',style:{color:T.sub,fontSize:15.5,padding:6}},'Cancel'),
+      h('div',{style:{flex:1,textAlign:'center',fontSize:16,fontWeight:600}},'Edit'),
+      h('button',{onClick:()=>onSave({caption,blob:blob!==m.blob?blob:undefined}),disabled:!dirty||busy,className:'act90',style:{color:dirty&&!busy?T.accent:T.sub,fontSize:15.5,fontWeight:600,padding:6}},'Save')),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'0 16px'}},
+      isImage&&url?h('div',{style:{position:'relative',userSelect:'none',touchAction:'none',margin:'4px auto 12px',display:'flex',justifyContent:'center'}},
+        h('div',{style:{position:'relative',display:'inline-block'},onMouseDown:cStart,onMouseMove:cMove,onMouseUp:cEnd,onTouchStart:cStart,onTouchMove:cMove,onTouchEnd:cEnd},
+          h('img',{ref:imgRef,src:url,alt:'',draggable:false,style:{maxWidth:'100%',maxHeight:'52vh',display:'block',borderRadius:8}}),
+          crop?h('div',{style:{position:'absolute',left:crop.x,top:crop.y,width:crop.w,height:crop.h,border:'2px solid #fff',boxShadow:'0 0 0 9999px rgba(0,0,0,.45)',pointerEvents:'none'}}):null)
+      ):h('div',{style:{padding:'40px 0',textAlign:'center',color:T.sub}},Icons.file(46),h('div',{style:{marginTop:10,fontSize:14}},m.name)),
+      busy?h('div',{style:{textAlign:'center',color:T.sub,fontSize:13,marginBottom:10}},'Working…'):null,
+      h('div',{style:{fontSize:12.5,color:T.sub,marginBottom:6,fontWeight:600,letterSpacing:'.03em',textTransform:'uppercase'}},'Caption'),
+      h('input',{value:caption,onChange:e=>setCaption(e.target.value),placeholder:'Add a caption',
+        style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 13px',fontSize:15,marginBottom:16}})),
+    isImage?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,display:'flex',padding:'4px 8px calc(6px + '+SAFE_B+')'}},
+      tbBtn(Icons.rotate(22),'Left',()=>rotate(-1),busy),
+      tbBtn(h('span',{style:{transform:'scaleX(-1)',display:'flex'}},Icons.rotate(22)),'Right',()=>rotate(1),busy),
+      crop&&crop.w>10?tbBtn(Icons.crop(22),'Apply crop',applyCrop,busy):tbBtn(Icons.crop(22),'Drag to crop',()=>{},true)
+    ):h('div',{style:{paddingBottom:SAFE_B}}));
+}
+
+function PhotosView({T,S,media,albums,onPick,onPickToAlbum,onUpdate,onDelete,onAddAlbum,onRenameAlbum,onDeleteAlbum,toastFn}){
+  const [tab,setTab]=useState('all'); // all | albums | favourites
+  const [openAlbum,setOpenAlbum]=useState(null); // albumId being viewed
+  const [actM,setActM]=useState(null); // media for action sheet
+  const [moveM,setMoveM]=useState(null); // media for move-to-album sheet
+  const [editM,setEditM]=useState(null); // media being edited
+  const [mkAlbum,setMkAlbum]=useState(null); // {forMedia?} create-album sheet
+  const [albName,setAlbName]=useState('');
+  const [viewer,setViewer]=useState(null); // media for fullscreen view
+  const [addMenu,setAddMenu]=useState(null); // albumId — "add to album" chooser
+  const [addExisting,setAddExisting]=useState(null); // albumId — pick existing photos
+  const [sel,setSel]=useState({}); // selected media ids in the existing-photo picker
+  const sortP=arr=>arr.slice().sort((a,b)=>(b.pinned?1:0)-(a.pinned?1:0)||(b.addedAt||0)-(a.addedAt||0));
+
+  const tabBtn=(id,label)=>h('button',{onClick:()=>{setTab(id);setOpenAlbum(null)},className:'act95',style:{flex:1,padding:'9px 0',fontSize:14,fontWeight:tab===id?600:500,color:tab===id?T.fg:T.sub,borderBottom:'2px solid '+(tab===id?T.fg:'transparent')}},label);
+  const grid=items=>items.length
+    ?h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,padding:'8px'}},
+      items.map(m=>h(MediaThumb,{key:m.id,T,m,onClick:()=>setViewer(m),onLongPress:()=>setActM(m)})))
+    :h(EmptyState,{T,icon:Icons.image(40),title:'No photos yet',sub:'Tap + and choose Take photo, Photo library, or Upload files to add images and documents here.'});
+
+  let content;
+  if(tab==='all')content=grid(sortP(media));
+  else if(tab==='favourites')content=grid(sortP(media.filter(m=>m.favorite)));
+  else{ // albums
+    if(openAlbum){
+      const al=albums.find(a=>a.id===openAlbum);
+      content=h('div',null,
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'8px 12px'}},
+          h('button',{onClick:()=>setOpenAlbum(null),className:'act90',style:{display:'flex',color:T.fg}},Icons.back(20)),
+          h('div',{style:{fontSize:16,fontWeight:600,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},al?al.name:'Album'),
+          h('button',{onClick:()=>setAddMenu(openAlbum),className:'act90',style:{display:'flex',color:T.accent},title:'Add photos'},Icons.plus(21)),
+          h('button',{onClick:()=>{setAlbName(al?al.name:'');setMkAlbum({rename:openAlbum})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(19)),
+          h('button',{onClick:()=>{onDeleteAlbum(openAlbum);setOpenAlbum(null);toastFn('Album deleted')},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(19))),
+        grid(sortP(media.filter(m=>m.albumId===openAlbum))));
+    }else{
+      content=h('div',null,
+        h('button',{onClick:()=>{setAlbName('');setMkAlbum({})},className:'act98',style:{display:'flex',alignItems:'center',gap:10,width:'calc(100% - 16px)',margin:'10px 8px',padding:'13px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:15,fontWeight:500}},Icons.plus(19),'New album'),
+        albums.length?h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,padding:'2px 8px 8px'}},
+          albums.map(al=>{const ms=sortP(media.filter(m=>m.albumId===al.id));const cover=ms.find(m=>m.kind==='image');
+            return h('button',{key:al.id,onClick:()=>setOpenAlbum(al.id),className:'act96',style:{textAlign:'left',background:'none'}},
+              h('div',{style:{position:'relative',paddingTop:'72%',borderRadius:11,overflow:'hidden',background:T.card}},
+                cover?h(AlbumCover,{m:cover}):h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.image(30))),
+              h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,marginTop:6,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},al.name),
+              h('div',{style:{fontSize:12,color:T.sub}},ms.length+(ms.length===1?' item':' items')));
+          }))
+          :h('div',{style:{padding:'30px 30px',textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5}},'Create an album to group photos. Long-press any photo and choose “Move to album”.'));
+    }
+  }
+  const isImg=actM&&actM.kind==='image';
+  return h('div',null,
+    h('div',{style:{display:'flex',borderBottom:'1px solid '+T.hair,position:'sticky',top:0,background:T.bg,zIndex:2}},
+      tabBtn('all','All photos'),tabBtn('albums','Albums'),tabBtn('favourites','Favourites')),
+    content,
+    h('div',{style:{height:'calc(30px + '+SAFE_B+')'}}),
+
+    viewer?h(MediaViewer,{T,m:viewer,onClose:()=>setViewer(null),onActions:()=>{const mm=viewer;setViewer(null);setActM(mm)}}):null,
+
+    actM?h(Sheet,{T,onClose:()=>setActM(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actM.caption||actM.name),
+      h(ARow,{T,icon:Icons.pin(21,actM.pinned),label:actM.pinned?'Unpin':'Pin to top',onClick:()=>{onUpdate(actM.id,m=>({pinned:!m.pinned}));setActM(null)}}),
+      h(ARow,{T,icon:Icons.heart(21,actM.favorite),label:actM.favorite?'Remove favourite':'Add to favourites',onClick:()=>{onUpdate(actM.id,m=>({favorite:!m.favorite}));setActM(null)}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to album…',onClick:()=>{const mm=actM;setActM(null);setMoveM(mm)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:isImg?'Edit (caption · crop · rotate)':'Edit caption',onClick:()=>{const mm=actM;setActM(null);setEditM(mm)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onDelete(actM.id);setActM(null)}})):null,
+
+    moveM?h(Sheet,{T,title:'Move to album',onClose:()=>setMoveM(null)},
+      h(ARow,{T,icon:Icons.plus(21),label:'New album…',onClick:()=>{const mm=moveM;setMoveM(null);setAlbName('');setMkAlbum({forMedia:mm.id})}}),
+      moveM.albumId?h(ARow,{T,icon:Icons.x(21),label:'Remove from album',onClick:()=>{onUpdate(moveM.id,{albumId:null});setMoveM(null);toastFn('Removed from album')}}):null,
+      albums.map(al=>h(ARow,{key:al.id,T,icon:Icons.folder(21),label:al.name,onClick:()=>{onUpdate(moveM.id,{albumId:al.id});setMoveM(null);toastFn('Moved to '+al.name)}})),
+      albums.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No albums yet — create one above.')):null,
+
+    mkAlbum?h(Sheet,{T,title:mkAlbum.rename?'Rename album':'New album',onClose:()=>setMkAlbum(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:albName,autoFocus:true,onChange:e=>setAlbName(e.target.value),placeholder:'Album name',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:async()=>{const nm=albName.trim()||'New album';
+            if(mkAlbum.rename){onRenameAlbum(mkAlbum.rename,nm)}
+            else{const id=await onAddAlbum(nm);if(mkAlbum.forMedia){onUpdate(mkAlbum.forMedia,{albumId:id});toastFn('Moved to '+nm)}else{setTab('albums');setOpenAlbum(id)}}
+            setMkAlbum(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkAlbum.rename?'Rename':'Create')) ):null,
+
+    editM?h(PhotoEditor,{T,m:editM,onClose:()=>setEditM(null),onSave:patch=>{onUpdate(editM.id,patch.blob?{caption:patch.caption,blob:patch.blob}:{caption:patch.caption});setEditM(null);toastFn('Saved')}}):null,
+
+    addMenu?h(Sheet,{T,title:'Add to album',onClose:()=>setAddMenu(null)},
+      h(ARow,{T,icon:Icons.camera(21),label:'Take photo',sub:'Capture straight into this album',onClick:()=>{const id=addMenu;setAddMenu(null);onPickToAlbum(id,'image/*','environment')}}),
+      h(ARow,{T,icon:Icons.image(21),label:'Upload photos / files',sub:'Add new files to this album',onClick:()=>{const id=addMenu;setAddMenu(null);onPickToAlbum(id,'')}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Add from existing photos',sub:'Pick from photos you already have',onClick:()=>{const id=addMenu;setAddMenu(null);setSel({});setAddExisting(id)}})):null,
+
+    addExisting?(()=>{const avail=sortP(media.filter(m=>m.albumId!==addExisting));const ids=Object.keys(sel).filter(k=>sel[k]);
+      return h(Sheet,{T,maxH:'90%',onClose:()=>setAddExisting(null)},
+        h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'4px 16px 10px',borderBottom:'1px solid '+T.hair}},
+          h('button',{onClick:()=>setAddExisting(null),className:'act90',style:{color:T.sub,fontSize:15,padding:6}},'Cancel'),
+          h('div',{style:{flex:1,textAlign:'center',fontSize:15,fontWeight:600}},'Add photos'),
+          h('button',{onClick:()=>{ids.forEach(id=>onUpdate(id,{albumId:addExisting}));setAddExisting(null);toastFn(ids.length+(ids.length===1?' photo added':' photos added'))},disabled:!ids.length,className:'act90',style:{color:ids.length?T.accent:T.sub,fontSize:15,fontWeight:600,padding:6}},'Add'+(ids.length?' ('+ids.length+')':''))),
+        avail.length?h('div',{className:'sy',style:{overflowY:'auto',maxHeight:'66vh'}},
+          h('div',{style:{display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:5,padding:'8px'}},
+            avail.map(m=>h('div',{key:m.id,style:{position:'relative'}},
+              h(MediaThumb,{T,m,onClick:()=>setSel(s=>Object.assign({},s,{[m.id]:!s[m.id]})),onLongPress:()=>{}}),
+              h('div',{style:{position:'absolute',top:6,right:6,color:sel[m.id]?T.accent:'#fff',filter:'drop-shadow(0 1px 2px rgba(0,0,0,.6))',display:'flex',pointerEvents:'none'}},Icons.checkCircle(20,!!sel[m.id]))))))
+          :h('div',{style:{padding:'30px 24px',textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5}},'No other photos to add. Use Take photo or Upload to add new ones.'));
+    })():null
+  );
+}
+
+function AlbumCover({m}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{if(!m||!m.blob)return;const u=URL.createObjectURL(m.blob);setUrl(u);return()=>URL.revokeObjectURL(u)},[m&&m.blob]);
+  return url?h('img',{src:url,alt:'',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}}):null;
+}
+
+function MediaViewer({T,m,onClose,onActions}){
+  const [url,setUrl]=useState('');
+  const [z,setZ]=useState({s:1,x:0,y:0}); // scale + pan offset (px)
+  const g=useRef({});        // active gesture
+  const lastTap=useRef(0);
+  useEffect(()=>{if(!m||!m.blob)return;const u=URL.createObjectURL(m.blob);setUrl(u);return()=>URL.revokeObjectURL(u)},[m&&m.blob]);
+  useEffect(()=>{setZ({s:1,x:0,y:0})},[m&&m.id]); // reset zoom when the photo changes
+  const isImage=m.kind==='image';
+  const setScale=ns=>setZ(p=>{const s=clamp(ns,1,5);return s<=1?{s:1,x:0,y:0}:{s,x:p.x,y:p.y}});
+  const dist=t=>Math.hypot(t[0].clientX-t[1].clientX,t[0].clientY-t[1].clientY);
+  const tStart=e=>{
+    if(e.touches.length===2)g.current={mode:'pinch',d0:dist(e.touches)||1,s0:z.s};
+    else if(e.touches.length===1)g.current={mode:'pan',x0:e.touches[0].clientX,y0:e.touches[0].clientY,zx:z.x,zy:z.y,moved:false};
+  };
+  const tMove=e=>{
+    const c=g.current;if(!c.mode)return;
+    if(c.mode==='pinch'&&e.touches.length===2){e.preventDefault();setScale(c.s0*dist(e.touches)/c.d0)}
+    else if(c.mode==='pan'&&e.touches.length===1&&z.s>1){e.preventDefault();const dx=e.touches[0].clientX-c.x0,dy=e.touches[0].clientY-c.y0;if(Math.abs(dx)+Math.abs(dy)>4)c.moved=true;setZ(p=>({...p,x:c.zx+dx,y:c.zy+dy}))}
+  };
+  const tEnd=e=>{
+    const c=g.current;g.current={};
+    if(c.mode==='pan'&&!c.moved){ // tap → double-tap toggles zoom
+      const now=Date.now();
+      if(now-lastTap.current<300){lastTap.current=0;setZ(p=>p.s>1?{s:1,x:0,y:0}:{s:2.5,x:0,y:0})}
+      else lastTap.current=now;
+    }
+  };
+  const zoomed=z.s>1.01;
+  const ctlBtn=(label,onClick,dis)=>h('button',{onClick,disabled:dis,className:'act90',style:{color:'#fff',opacity:dis?.35:1,width:34,height:34,display:'flex',alignItems:'center',justifyContent:'center',fontSize:22,fontWeight:500,lineHeight:1}},label);
+  return h('div',{style:{position:'fixed',inset:0,zIndex:78,background:'rgba(0,0,0,.96)',display:'flex',flexDirection:'column',paddingTop:SAFE_T}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 12px'}},
+      h('button',{onClick:onClose,className:'act90',style:{color:'#fff',display:'flex',padding:6}},Icons.x(24)),
+      h('div',{style:{flex:1}}),
+      isImage?ctlBtn('−',()=>setScale(z.s-0.5),!zoomed):null,
+      isImage?ctlBtn('+',()=>setScale(z.s+0.5),z.s>=5):null,
+      h('button',{onClick:onActions,className:'act90',style:{color:'#fff',display:'flex',padding:6}},Icons.dots(24))),
+    h('div',{onClick:()=>{if(!zoomed)onClose()},style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',padding:'0 8px'}},
+      isImage&&url
+        ?h('img',{src:url,alt:m.caption||m.name,onClick:e=>e.stopPropagation(),draggable:false,
+          onTouchStart:tStart,onTouchMove:tMove,onTouchEnd:tEnd,
+          style:{maxWidth:'100%',maxHeight:'100%',objectFit:'contain',touchAction:'none',willChange:'transform',transform:'translate('+z.x+'px,'+z.y+'px) scale('+z.s+')',transition:g.current.mode?'none':'transform .18s ease'}})
+        :h('div',{style:{textAlign:'center',color:'#fff'}},Icons.file(60),h('div',{style:{marginTop:12,fontSize:15}},m.name),
+          url?h('a',{href:url,download:m.name,onClick:e=>e.stopPropagation(),style:{display:'inline-block',marginTop:16,color:'#fff',border:'1px solid rgba(255,255,255,.5)',borderRadius:10,padding:'9px 18px',fontSize:14}},'Open / download'):null)),
+    m.caption&&isImage?h('div',{style:{color:'#fff',textAlign:'center',padding:'10px 20px calc(14px + '+SAFE_B+')',fontSize:14,lineHeight:1.4}},m.caption):h('div',{style:{height:'calc(10px + '+SAFE_B+')'}}));
+}
+
+/* ============================== daily brief ============================== */
+function Ring({T,frac,size}){
+  const r=(size-4)/2,c=2*Math.PI*r;
+  return h('svg',{width:size,height:size,viewBox:'0 0 '+size+' '+size,style:{transform:'rotate(-90deg)',flexShrink:0}},
+    h('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:T.hair,strokeWidth:3}),
+    h('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:T.accent,strokeWidth:3,strokeLinecap:'round',strokeDasharray:c,strokeDashoffset:c*(1-clamp(frac,0,1)),style:{transition:'stroke-dashoffset .3s'}}));
+}
+const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
+function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  const check=h('button',{onClick:e=>{e.stopPropagation();onToggle()},className:'act90',style:{display:'flex',flexShrink:0,color:done?T.accent:T.sub,padding:2,marginTop:1}},Icons.checkCircle(24,done));
+  if(feedy){
+    const es=entries||[],K=BRIEF_KIND[item.kind]||BRIEF_KIND.rss;
+    const card=e=>h('button',{key:e.id,onClick:()=>onEntry(e),className:'act98',style:{display:'flex',gap:e.thumb?0:8,width:'100%',textAlign:'left',background:T.card,borderRadius:10,overflow:'hidden',alignItems:e.thumb?'stretch':'flex-start',padding:e.thumb?0:'8px 10px'}},
+      e.thumb?h('div',{style:{width:92,flexShrink:0,position:'relative',background:T.hair,aspectRatio:'16 / 9'}},
+        h('img',{src:e.thumb,alt:'',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:ev=>{ev.target.style.opacity=0}}),
+        item.kind==='youtube'?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',filter:'drop-shadow(0 1px 3px rgba(0,0,0,.6))'}},Icons.play(18,true)):null)
+        :h('span',{style:{color:K.c,marginTop:1,flexShrink:0,display:'flex'}},K.ic(13)),
+      h('div',{style:{flex:1,minWidth:0,padding:e.thumb?'6px 10px':0}},
+        h('div',{style:{fontSize:12.5,color:T.fg,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.title||'Update'),
+        e.publishedMs?h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},fmtDateShort(e.publishedMs)):null));
+    return h('div',Object.assign({},lp,{style:{display:'flex',gap:8,padding:'10px 4px',alignItems:'flex-start'}}),check,
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{onClick:onOpen,style:{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}},
+          h('span',{style:{color:K.c,display:'flex',flexShrink:0}},K.ic(15)),
+          h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.55:1}},item.name),
+          es.length?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:K.c,borderRadius:5,padding:'2px 6px'}},es.length+' new'):null),
+        es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,6).map(card),
+          es.length>6?h('button',{onClick:onOpen,style:{fontSize:12,color:T.accent,fontWeight:600,textAlign:'left',padding:'2px'}},'+'+(es.length-6)+' more'):null)
+          :h('div',{onClick:onOpen,style:{marginTop:5,fontSize:12,color:T.sub,cursor:'pointer'}},'No new posts since the last brief.')));
+  }
+  return h('div',Object.assign({},lp,{style:{display:'flex',gap:10,padding:'11px 4px',alignItems:'center'}}),check,
+    h('div',{onClick:onOpen,style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:11,cursor:'pointer'}},
+      h('span',{style:{width:32,height:32,borderRadius:9,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0}},
+        h('img',{src:faviconUrl(item.url),alt:'',style:{width:19,height:19},onError:e=>{e.target.style.opacity=0}})),
+      h('div',{style:{minWidth:0}},
+        h('div',{style:{fontSize:14.5,fontWeight:500,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',textDecoration:done?'line-through':'none',opacity:done?.55:1}},item.name),
+        h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(item.url)))),
+    h('span',{onClick:onOpen,style:{color:T.sub,display:'flex',cursor:'pointer',flexShrink:0}},Icons.external(17)));
+}
+const BRIEF_LOG_KEY='insta_brief_log_v1';
+const BRIEF_LASTWIN_KEY='insta_brief_lastwin_v1';
+const LOG_MAX_AGE=14*24*60*60*1000;
+const loadBriefLog=()=>{try{return JSON.parse(localStorage.getItem(BRIEF_LOG_KEY)||'[]')}catch(e){return[]}};
+const saveBriefLog=l=>{try{localStorage.setItem(BRIEF_LOG_KEY,JSON.stringify(l))}catch(e){}};
+const fmtLogDate=ts=>{const d=new Date(ts),now=new Date(),diff=Math.floor((now-d)/86400000);if(diff===0)return'Today';if(diff===1)return'Yesterday';return d.toLocaleDateString('en',{month:'short',day:'numeric'})};
+function BriefView({T,brief,onBrief,toastFn}){
+  const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
+  const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  const now=new Date();
+  const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
+  const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
+  const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Brief',time:'00:00'};
+  const doneIds=(brief.done&&brief.done.key===win.key&&win.key)?brief.done.ids:[];
+  const [act,setAct]=useState(null);
+  const [moveIt,setMoveIt]=useState(null);
+  const [edit,setEdit]=useState(null);
+  const [grp,setGrp]=useState(null);
+  const [gName,setGName]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [slotSheet,setSlotSheet]=useState(false);
+  // Per-group collapse for the brief; persisted so it survives reloads.
+  const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_brief_collapsed')||'[]'))}catch(e){return new Set()}});
+  const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_brief_collapsed',JSON.stringify([...n]))}catch(e){}return n});
+  const [briefLog,setBriefLog]=useState(loadBriefLog);
+  useEffect(()=>{
+    if(!win.key)return;
+    let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
+    if(stored&&stored.key&&stored.key!==win.key){
+      const oldDoneIds=(brief.done&&brief.done.key===stored.key)?brief.done.ids:[];
+      const missed=[];
+      for(const it of items){
+        if(oldDoneIds.includes(it.id)||!hasFeed(it))continue;
+        const c=feeds[it.id];if(!c||!c.entries)continue;
+        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end);
+        if(!es.length)continue;
+        const g=groups.find(x=>x.id===it.groupId);
+        missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs}))});
+      }
+      if(missed.length){
+        const entry={id:uid(),windowKey:stored.key,slotName:stored.slotName,snapshotAt:Date.now(),start:stored.start,end:stored.end,items:missed};
+        const cutoff=Date.now()-LOG_MAX_AGE;
+        const newLog=[entry,...briefLog].filter(e=>e.snapshotAt>cutoff).slice(0,300);
+        setBriefLog(newLog);saveBriefLog(newLog);
+      }
+    }
+    try{localStorage.setItem(BRIEF_LASTWIN_KEY,JSON.stringify({key:win.key,start:win.start,end:win.end,slotName:curSlot.name}))}catch(e){}
+  },[win.key]);
+  useEffect(()=>{ // best-effort refresh of each feed's recent items
+    let live=true;
+    (async()=>{for(const it of items){
+      if(!hasFeed(it))continue;
+      const c=feeds[it.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
+      try{const es=await fetchFeed(it);if(es&&live)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}
+    }})();
+    return()=>{live=false};
+  },[]);
+  const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
+  const toggle=id=>{if(!win.key)return;onBrief(b=>{const cur=(b.done&&b.done.key===win.key)?b.done.ids:[];const ids=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:{key:win.key,ids}}})};
+  const open=it=>{const u=normalizeUrl(it.url)||it.url;if(u)openExternalUrl(u)};
+  const openEntry=e=>{if(e&&e.url)openExternalUrl(e.url)};
+  const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
+  const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
+  const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
+  const saveItem=f=>{
+    const raw=(f.url||'').trim();if(!raw){toastFn('Enter a link or handle');return}
+    const patch={kind:f.kind,channelId:f.channelId||'',handle:'',feedUrl:'',url:''};
+    if(f.kind==='youtube'){patch.url=patch.channelId?'https://www.youtube.com/channel/'+patch.channelId:(ytTargetUrl(raw)||raw)}
+    else if(f.kind==='telegram'){patch.handle=tgHandle(raw);patch.url=patch.handle?'https://t.me/'+patch.handle:(normalizeUrl(raw)||raw)}
+    else if(f.kind==='rss'){patch.feedUrl=normalizeUrl(raw)||raw;patch.url=patch.feedUrl}
+    else{patch.url=normalizeUrl(raw)||raw}
+    let ytName='';if(f.kind==='youtube'){const hm=raw.match(/@([\w.\-]+)/)||(/^[\w.\-]+$/.test(raw)&&!/youtu/i.test(raw)?[null,raw]:null);if(hm)ytName='@'+hm[1]}
+    patch.name=(f.name||'').trim()||(patch.handle?'@'+patch.handle:'')||ytName||domainOf(patch.url)||'Item';
+    if(f.kind==='telegram'&&!patch.handle)toastFn('Couldn’t read that Telegram handle');
+    // Add/patch the item immediately — never block the sheet on the network.
+    let itemId=f.id;
+    if(f.id)onBrief(b=>({...b,items:b.items.map(x=>x.id===f.id?{...x,...patch}:x)}));
+    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>({...b,items:b.items.concat([ni])}))}
+    setEdit(null);
+    // Resolve a YouTube channel id (if needed) and fetch the first feed batch in
+    // the background, patching the item once they arrive.
+    (async()=>{
+      let cid=patch.channelId;
+      if(f.kind==='youtube'&&!cid){
+        try{cid=await resolveYtChannelId(raw)}catch(e){}
+        if(cid)onBrief(b=>({...b,items:b.items.map(x=>x.id===itemId?{...x,channelId:cid,url:'https://www.youtube.com/channel/'+cid}:x)}));
+        else toastFn('Couldn’t find that channel — it’ll still open as a link');
+      }
+      const probe={kind:patch.kind,channelId:cid,handle:patch.handle,feedUrl:patch.feedUrl};
+      if(hasFeed(probe)){try{const es=await fetchFeed(probe);if(es)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[itemId]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}}
+    })();
+  };
+  const total=items.length,doneN=items.filter(i=>doneIds.includes(i.id)).length;
+  const newCount=win.future?0:items.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+  const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
+  const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
+  if(ungrouped.length)sections.push({g:null,list:ungrouped});
+  const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it)});
+  const sectionHead=(g,list)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);return h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'14px 4px 4px'}},
+    h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:3,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(15)),
+    h('div',{onClick:()=>toggleCollapse(key),style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},(g?g.name:'Other')+' · '+list.filter(i=>doneIds.includes(i.id)).length+'/'+list.length+(groupNew?' · '+groupNew+' new':'')),
+    g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:3}},Icons.pencil(16)):null,
+    g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null,
+    h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:3}},Icons.plus(18)));};
+  // Brief history as a collapsible section (open when '_history' is in the set).
+  const histMissed=briefLog.reduce((n,e)=>n+e.items.reduce((m,i)=>m+i.entries.length,0),0);
+  const historySection=()=>{const isOpen=collapsed.has('_history');return h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'14px 4px 4px'}},
+      h('button',{onClick:()=>toggleCollapse('_history'),className:'act90','aria-label':isOpen?'Collapse history':'Expand history',style:{display:'flex',color:T.sub,padding:3,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(15)),
+      h('div',{onClick:()=>toggleCollapse('_history'),style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},'History'+(histMissed?' · '+histMissed+' missed':'')),
+      briefLog.length?h('button',{onClick:()=>{setBriefLog([]);saveBriefLog([])},className:'act90','aria-label':'Clear history',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null),
+    isOpen?(briefLog.length===0
+      ?h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px',lineHeight:1.5}},'Updates you miss are saved here automatically for 14 days, so you can catch up later.')
+      :h('div',null,briefLog.map(entry=>h('div',{key:entry.id,style:{padding:'8px 2px 10px',borderBottom:'1px solid '+T.hair}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4}},
+          h('div',{style:{flex:1,fontSize:12.5,fontWeight:600,color:T.fg}},entry.slotName+' · '+fmtLogDate(entry.snapshotAt)),
+          h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px'}},entry.items.reduce((n,i)=>n+i.entries.length,0)+' missed')),
+        entry.items.map(it=>h('div',{key:it.id,style:{padding:'2px 0 6px'}},
+          h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:3}},it.name+(it.groupName?' · '+it.groupName:'')),
+          it.entries.map(e=>h('div',{key:e.url||e.publishedMs,onClick:()=>openExternalUrl(e.url),style:{display:'flex',gap:10,padding:'4px 0',cursor:'pointer',alignItems:'flex-start'}},
+            h('span',{style:{fontSize:11,color:T.meta,flexShrink:0,paddingTop:2}},new Date(e.publishedMs).toLocaleTimeString('en',{hour:'numeric',minute:'2-digit'})),
+            h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
+
+  return h('div',null,
+    h('div',{className:'sx',style:{display:'flex',gap:7,overflowX:'auto',padding:'8px 14px 2px'}},
+      slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',style:{flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-start',gap:1,padding:'7px 13px',borderRadius:11,border:'1px solid '+(s.id===win.sel?T.accent:T.hair),background:s.id===win.sel?T.card:'transparent'}},
+        h('span',{style:{fontSize:13,fontWeight:600,color:s.id===win.sel?T.fg:T.sub}},s.name+(s.id===win.activeSlotId?' •':'')),
+        h('span',{style:{fontSize:10.5,color:T.sub}},fmtClock(s.time)))),
+      h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 6px'}},Icons.calendar(18))),
+    h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'6px 16px 4px'}},
+      h('div',{style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center'}},
+        h(Ring,{T,frac:total?doneN/total:0,size:46}),
+        h('div',{style:{position:'absolute',fontSize:12,fontWeight:700,color:T.fg}},doneN+'/'+(total||0))),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg}},curSlot.name+' brief'),
+        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:1}},win.future?('Starts at '+fmtClock(curSlot.time)+' today'):(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done')+(newCount?' · '+newCount+' new since '+(win.start?fmtClock(new Date(win.start).getHours()+':'+String(new Date(win.start).getMinutes()).padStart(2,'0')):'last brief'):''):'Add the sites, apps and channels you check.'))),
+      newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
+    h('div',{style:{padding:'2px 14px 0'}},
+      win.future?h('div',{style:{fontSize:12.5,color:T.sub,background:T.card,borderRadius:10,padding:'10px 12px',margin:'6px 2px',lineHeight:1.45}},'This brief begins at '+fmtClock(curSlot.time)+'. New videos since your last brief will appear here then.'):null,
+      total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px'}},'Nothing here yet — tap + to add.'))))
+        :h(EmptyState,{T,icon:Icons.sun(40),title:'Your daily brief',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
+      h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
+      h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:10,padding:'11px 14px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},Icons.plus(18),'Add item'),
+      historySection(),
+      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+
+    slotSheet?h(Sheet,{T,title:'Brief times',maxH:'90%',onClose:()=>setSlotSheet(false)},
+      h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 12px',lineHeight:1.45}},'Each brief shows everything new since the previous one. Add as many as you like.'),
+        slots.map(s=>h('div',{key:s.id,style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
+          h('input',{value:s.name,onChange:e=>setSlot(s.id,{name:e.target.value}),placeholder:'Name',
+            style:{flex:1,minWidth:0,border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:14.5}}),
+          h('input',{type:'time',value:s.time,onChange:e=>setSlot(s.id,{time:e.target.value||s.time}),
+            style:{border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 10px',fontSize:14.5,colorScheme:(T.id==='dark'||T.id==='black')?'dark':'light'}}),
+          (brief.slots||[]).length>1?h('button',{onClick:()=>{if(sel===s.id)setSel(null);onBrief(b=>({...b,slots:(b.slots||[]).filter(x=>x.id!==s.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(18)):null)),
+        h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Brief',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a brief'))):null,
+
+    act?h(Sheet,{T,onClose:()=>setAct(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},act.name),
+      h(ARow,{T,icon:Icons.external(21),label:act.kind==='youtube'?'Open channel':'Open',onClick:()=>{const it=act;setAct(null);open(it)}}),
+      hasFeed(act)&&feeds[act.id]&&feeds[act.id].entries&&feeds[act.id].entries[0]?h(ARow,{T,icon:Icons.play(21,true),label:'Open latest',onClick:()=>{const e=feeds[act.id].entries[0];setAct(null);openEntry(e)}}):null,
+      h(ARow,{T,icon:Icons.checkCircle(21,doneIds.includes(act.id)),label:doneIds.includes(act.id)?'Mark not done':'Mark done',onClick:()=>{toggle(act.id);setAct(null)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const it=act;setAct(null);setEdit({id:it.id,groupId:it.groupId,kind:it.kind,name:it.name,url:it.url,channelId:it.channelId})}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to group…',onClick:()=>{const it=act;setAct(null);setMoveIt(it)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{removeItem(act.id);setAct(null)}})):null,
+
+    moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
+      h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{setItemGroup(moveIt.id,null);setMoveIt(null)}}),
+      groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
+      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with “New group”.')):null,
+
+    grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:gName,autoFocus:true,onChange:e=>setGName(e.target.value),placeholder:'Group name (e.g. Social, Markets)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onBrief(b=>({...b,groups:b.groups.map(g=>g.id===grp.rename?{...g,name:nm}:g)}));else onBrief(b=>({...b,groups:b.groups.concat([{id:uid(),name:nm}])}));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
+
+    edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}},
+          [['link','Site / app'],['youtube','YouTube'],['telegram','Telegram'],['rss','RSS / News']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
+        h('input',{value:edit.name,onChange:e=>setEdit({...edit,name:e.target.value}),placeholder:'Name (optional)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+        h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value,channelId:'',handle:'',feedUrl:''}),placeholder:edit.kind==='youtube'?'@handle, channel link, or name':edit.kind==='telegram'?'t.me/durov or @durov':edit.kind==='rss'?'https://…/feed.xml':'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:6}}),
+        h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},
+          edit.kind==='youtube'?'Paste a channel URL, an @handle, or just the handle name (youtube.com/@handle, @handle, or /channel/…). The brief shows its new videos.'
+          :edit.kind==='telegram'?'Public channel only (t.me/<name> or @name). The brief shows its new posts.'
+          :edit.kind==='rss'?'Any RSS/Atom feed — a news site, blog, Substack, subreddit (.../.rss), or an X/Instagram bridge URL.'
+          :'A site or app shortcut — opens in your browser. Use this for accounts with no public feed (Instagram, X, WhatsApp).'),
+        h('button',{onClick:()=>saveItem(edit),disabled:busy,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600,opacity:busy?.6:1}},busy?h(Spinner,{T,size:15}):null,busy?'Fetching…':(edit.id?'Save':'Add')))):null);
+}
+
 function NotesList({T,articles,onOpenArticle,onOpenHighlight}){
   const items=[];
   for(const a of articles)for(const hl of a.highlights)items.push({a,hl});
@@ -1340,6 +2149,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const outLang=S.aiLang||'English';
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
+  const isVid=!!(ctx&&ctx.isVideo); // videos are summarised/transcribed via Gemini's video understanding
 
   const run=async(label,fn)=>{
     setError('');setBusy(label);
@@ -1347,10 +2157,16 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     setBusy('');
   };
   const doSummarize=()=>run('Summarizing…',async()=>{
-    const out=await aiChat(S,[
-      {role:'system',content:'You are a precise reading assistant.'},
-      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
+    const out=isVid
+      ?await aiVideo(S,'Summarize this video as 5–8 concise bullet points covering the key ideas, followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.',ctx.url,1600,setBusy)
+      :await aiChat(S,[
+        {role:'system',content:'You are a precise reading assistant.'},
+        {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
+  });
+  const doTranscript=()=>run('Transcribing…',async()=>{
+    const out=await aiVideo(S,'Transcribe everything spoken in this video into clean, readable text. Use natural paragraphs. Do NOT add timestamps, speaker labels, or any commentary — output only the spoken words'+(outLang!=='English'?', translated into '+outLang:'')+'.',ctx.url,8192,setBusy);
+    setResult({kind:'Transcript',text:out,lang:outLang,transcript:true});setView('result');
   });
   const doTranslate=lang=>run('Translating…',async()=>{
     const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
@@ -1372,10 +2188,15 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
   });
   const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
-    const msgs=ctx
-      ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
-      :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
-    const out=await aiChat(S,msgs,2000,setBusy);
+    let out;
+    if(isVid){
+      out=await aiVideo(S,'Answer this question about the video. Be concise and concrete, using only what the video actually says. Respond in '+outLang+'.\n\nQuestion: '+q,ctx.url,2000,setBusy);
+    }else{
+      const msgs=ctx
+        ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
+        :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
+      out=await aiChat(S,msgs,2000,setBusy);
+    }
     setResult({kind:'Answer',text:out,lang:outLang});setView('result');
   })};
 
@@ -1437,7 +2258,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
           h('button',{onClick:()=>{copyText(result.text);toastFn('Copied')},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.copy(20),'Copy'),
           h('button',{onClick:()=>shareText(ctx?ctx.title:'AI',result.text,ctx?ctx.url:''),className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.share(20),'Share'),
           ctx?h('button',{onClick:()=>{onSaveNote(ctx,result.kind,result.text);},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.note(20),'To Notes'):null),
-        (result.translation||result.rewrite)&&ctx?h(PrimaryBtn,{T,style:{margin:'16px 0 0',width:'100%'},label:'Save as new article',onClick:()=>onSaveCopy(ctx,result)}):null));
+        (result.translation||result.rewrite||result.transcript)&&ctx?h(PrimaryBtn,{T,style:{margin:'16px 0 0',width:'100%'},label:'Save as new article',onClick:()=>onSaveCopy(ctx,result)}):null));
   }else if(view==='langs'){
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px 4px',fontSize:14,color:T.meta}},'Translate this article into:'),
@@ -1469,10 +2290,16 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
         h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
           ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
-      h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
-      h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
-      h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
-      h(ARow,{T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')}));
+      isVid?[
+        h(ARow,{key:'sum',T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+        h(ARow,{key:'tr',T,icon:Icons.headphones(20),label:'Full transcript',sub:'Speech-to-text · save & listen',onClick:doTranscript}),
+        h(ARow,{key:'ask',T,icon:Icons.ai(20),label:'Ask about this video',sub:'Any question, answered from the video',onClick:()=>setView('ask')})
+      ]:[
+        h(ARow,{key:'sum',T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+        h(ARow,{key:'tl',T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
+        h(ARow,{key:'rw',T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
+        h(ARow,{key:'ask',T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')})
+      ]);
   }
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
@@ -1600,54 +2427,116 @@ function SitesManager({T,sites,onSites,onOpen}){
 }
 
 /* ============================== in-app browser ============================== */
-function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose}){
-  const [url,setUrl]=useState(initialUrl||'');
-  const [input,setInput]=useState(initialUrl||'');
-  const [frameKey,setFrameKey]=useState(0);
+function BookmarkTile({T,site,onOpen,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  return h('button',Object.assign({onClick:onOpen},lp,{className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,minWidth:0,background:'none'}}),
+    h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
+      h('img',{src:faviconUrl(site.url),alt:'',style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
+    h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},site.name));
+}
+
+function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
+  const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
-  const [addForm,setAddForm]=useState(null);
-  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
-  const tbtn=(icon,onClick)=>h('button',{onClick,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
+  const [addForm,setAddForm]=useState(null); // {name,url,folderId}
+  const [openFolder,setOpenFolder]=useState(null); // folderId being viewed
+  const [actSite,setActSite]=useState(null); // bookmark long-press action sheet
+  const [moveSite,setMoveSite]=useState(null); // move-to-folder sheet
+  const [editSite,setEditSite]=useState(null); // rename bookmark sheet
+  const [mkFolder,setMkFolder]=useState(null); // {} new · {rename:id} · {forSite:id}
+  const [fName,setFName]=useState('');
+  const open=t=>{const u=browserTarget(t);if(u)openExternalUrl(u)};
+  useEffect(()=>{if(initialUrl)open(initialUrl)},[]); // launched with a target → open it in the system browser
+  const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
+  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
+  const addBtn=(onClick)=>h('button',{onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
+    h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
+    h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
+  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>open(st.url),onLongPress:()=>setActSite(st)});
+  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
+  const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
+  const curFolder=openFolder?folders.find(f=>f.id===openFolder):null;
+
+  let body;
+  if(curFolder){
+    const fSites=sites.filter(s=>s.folderId===curFolder.id);
+    body=h('div',null,
+      h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'0 2px 14px'}},
+        h('button',{onClick:()=>setOpenFolder(null),className:'act90',style:{display:'flex',color:T.fg}},Icons.back(20)),
+        h('div',{style:{fontSize:16,fontWeight:600,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},curFolder.name),
+        h('button',{onClick:()=>{setFName(curFolder.name);setMkFolder({rename:curFolder.id})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(18)),
+        h('button',{onClick:()=>{onSites(list=>list.map(s=>s.folderId===curFolder.id?{...s,folderId:null}:s));onFolders(list=>list.filter(f=>f.id!==curFolder.id));setOpenFolder(null)},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(18))),
+      grid([...fSites.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:curFolder.id}))]),
+      fSites.length?null:h('div',{style:{fontSize:12.5,color:T.sub,marginTop:18,textAlign:'center',lineHeight:1.5}},'No bookmarks here yet. Tap Add, or long-press a bookmark elsewhere and move it in.'));
+  }else{
+    body=h('div',null,
+      folders.length?h('div',null,
+        h('div',{style:lblS},'Folders'),
+        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:20}},
+          folders.map(f=>{const n=sites.filter(s=>s.folderId===f.id).length;
+            return h('button',{key:f.id,onClick:()=>setOpenFolder(f.id),className:'act96',style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:12,background:T.card,textAlign:'left',minWidth:0}},
+              h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.folder(22)),
+              h('span',{style:{minWidth:0}},
+                h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+                h('span',{style:{display:'block',fontSize:11.5,color:T.sub}},n+(n===1?' site':' sites'))));
+          }))):null,
+      h('div',{style:lblS},'Bookmarks'),
+      grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
+      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
+      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tapping a site or entering an address opens it in your browser.'));
+  }
+
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
       h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
-        h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-          onKeyDown:e=>{if(e.key==='Enter')go(input)},
+        h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          onKeyDown:e=>{if(e.key==='Enter'){open(input);setInput('')}},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
-      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
-      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
-      tbtn(Icons.key(19),()=>setVaultOpen(true))),
-    url?h(Fragment,null,
-      h('iframe',{key:url+'|'+frameKey,src:url,
-        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
-        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
-      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},'Blank page? The site may block embedding.'),
-        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
-    :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},
-      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'}},'Your sites'),
-      h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},
-        sites.map(st=>h('button',{key:st.id,onClick:()=>go(st.url),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,minWidth:0}},
-          h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
-            h('img',{src:faviconUrl(st.url),alt:'',style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
-          h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.name))),
-        h('button',{onClick:()=>setAddForm({name:'',url:''}),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
-          h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
-          h('span',{style:{fontSize:11.5,color:T.sub}},'Add'))),
-      addForm?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:16}},
-        h('input',{value:addForm.name,onChange:e=>setAddForm({...addForm,name:e.target.value}),placeholder:'Name',
-          style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-        h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-          style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-        h('div',{style:{display:'flex',gap:10,marginTop:10}},
-          h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u}]));setAddForm(null)},className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Add site'),
-          h('button',{onClick:()=>setAddForm(null),className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Cancel'))):null,
-      h('div',{style:{fontSize:12,color:T.sub,marginTop:18,lineHeight:1.5}},'Reorder, rename, or remove sites in Settings → Logged-In Sites. Tap the key icon to copy a saved password while logging in.')),
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
+      h('button',{onClick:()=>setVaultOpen(true),className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.key(19))),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},body),
+
+    actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
+      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);open(s.url)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Rename',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:()=>{const s=actSite;setActSite(null);setMoveSite(s)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onSites(list=>list.filter(x=>x.id!==actSite.id));setActSite(null)}})):null,
+
+    moveSite?h(Sheet,{T,title:'Move to folder',onClose:()=>setMoveSite(null)},
+      h(ARow,{T,icon:Icons.plus(21),label:'New folder…',onClick:()=>{const s=moveSite;setMoveSite(null);setFName('');setMkFolder({forSite:s.id})}}),
+      moveSite.folderId?h(ARow,{T,icon:Icons.x(21),label:'Remove from folder',onClick:()=>{setSiteFolder(moveSite.id,null);setMoveSite(null)}}):null,
+      folders.map(f=>h(ARow,{key:f.id,T,icon:Icons.folder(21),label:f.name,onClick:()=>{setSiteFolder(moveSite.id,f.id);setMoveSite(null)}})),
+      folders.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No folders yet — create one above.')):null,
+
+    mkFolder?h(Sheet,{T,title:mkFolder.rename?'Rename folder':'New folder',onClose:()=>setMkFolder(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:fName,autoFocus:true,onChange:e=>setFName(e.target.value),placeholder:'Folder name',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const nm=fName.trim()||'New folder';
+            if(mkFolder.rename){onFolders(list=>list.map(f=>f.id===mkFolder.rename?{...f,name:nm}:f))}
+            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id);else setOpenFolder(id)}
+            setMkFolder(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkFolder.rename?'Rename':'Create'))):null,
+
+    editSite?h(Sheet,{T,title:'Edit bookmark',onClose:()=>setEditSite(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:editSite.name,onChange:e=>setEditSite({...editSite,name:e.target.value}),placeholder:'Name',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+        h('input',{value:editSite.url,onChange:e=>setEditSite({...editSite,url:e.target.value}),placeholder:'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const u=normalizeUrl(editSite.url);if(!u)return;onSites(list=>list.map(x=>x.id===editSite.id?{...x,name:editSite.name.trim()||domainOf(u),url:u}:x));setEditSite(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Save'))):null,
+
+    addForm?h(Sheet,{T,title:'Add bookmark',onClose:()=>setAddForm(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:addForm.name,autoFocus:true,onChange:e=>setAddForm({...addForm,name:e.target.value}),placeholder:'Name (optional)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+        h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',enterKeyHint:'done',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add'+(curFolder?' to '+curFolder.name:'')))):null,
+
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
         h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null);
@@ -1859,6 +2748,8 @@ function scopeTitle(scope,folders){
     case 'liked':return 'Liked';
     case 'archive':return 'Archive';
     case 'videos':return 'Videos';
+    case 'photos':return 'Photos';
+    case 'brief':return 'Daily Brief';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'tag':return '#'+scope.id;
@@ -1879,8 +2770,9 @@ const EMPTY_STATES={
 class Boundary extends React.Component{
   constructor(p){super(p);this.state={err:null}}
   static getDerivedStateFromError(e){return{err:e}}
+  componentDidCatch(){try{const s=document.getElementById('spl');if(s)s.classList.add('hide')}catch(e){}}
   render(){
-    if(this.state.err)return ce('div',{style:{minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
+    if(this.state.err)return ce('div',{style:{position:'fixed',inset:0,zIndex:300,minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
       ce('div',{style:{fontFamily:WORDMARK,fontSize:24,fontWeight:600}},'Instapaper'),
       ce('div',{style:{fontSize:14,color:'#76767c'}},'Something went wrong. Your articles are safe.'),
       ce('button',{onClick:()=>location.reload(),style:{padding:'12px 26px',borderRadius:11,background:'#1c1c1e',color:'#fff',fontSize:15,fontWeight:600}},'Reload'));
@@ -1925,9 +2817,68 @@ function App(){
   const [voices,setVoices]=useState([]);
   const [aiOpen,setAiOpen]=useState(null); // {articleId?} — header AI works on any page
   const [browserO,setBrowserO]=useState(null); // {url} — in-app browser
+  const [filterMenu,setFilterMenu]=useState(false); // reader list type-filter dropdown
+  const [sortMenu,setSortMenu]=useState(false); // reader list sort dropdown
+  const [media,setMedia]=useState([]); // {id,kind,mime,name,caption,albumId,favorite,pinned,addedAt,blob}
+  const [albums,setAlbums]=useState([]); // {id,name,createdAt}
+  const fileInputRef=useRef(null); // hidden <input> reused for take-photo / library / files
+  const pendingAlbumRef=useRef(null); // when set, the next upload lands straight in this album
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
+  const listScrollRef=useRef(null); // main list scroller — used to jump to top from the wordmark
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
+
+  /* ---------- media (photos & files) — declared after toastFn so its useCallback deps resolve ---------- */
+  useEffect(()=>{ // load media + albums from IndexedDB once
+    let live=true;
+    Promise.all([idbAll('media').catch(()=>[]),idbAll('albums').catch(()=>[])]).then(([m,al])=>{
+      if(!live)return;
+      m.sort((a,b)=>(b.addedAt||0)-(a.addedAt||0));
+      setMedia(m);setAlbums(al);
+    });
+    return()=>{live=false};
+  },[]);
+  const addFiles=useCallback(async(fileList)=>{
+    const files=Array.from(fileList||[]);if(!files.length)return;
+    const tgt=pendingAlbumRef.current||null;pendingAlbumRef.current=null;
+    const recs=[];
+    for(const f of files){
+      const rec={id:uid(),kind:f.type.startsWith('image/')?'image':'file',mime:f.type||'application/octet-stream',name:f.name||'Untitled',caption:'',albumId:tgt,favorite:false,pinned:false,addedAt:Date.now()+recs.length,blob:f};
+      try{await idbPut('media',rec);recs.push(rec)}catch(e){}
+    }
+    if(recs.length){setMedia(prev=>[...recs.reverse(),...prev]);toastFn(recs.length+(recs.length>1?' items added':' item added'))}
+  },[toastFn]);
+  const updateMedia=useCallback(async(id,patch)=>{
+    let updated=null;
+    setMedia(prev=>prev.map(m=>{if(m.id!==id)return m;updated={...m,...(typeof patch==='function'?patch(m):patch)};return updated}));
+    if(updated)try{await idbPut('media',updated)}catch(e){}
+  },[]);
+  const deleteMedia=useCallback(async ids=>{
+    const arr=Array.isArray(ids)?ids:[ids];
+    setMedia(prev=>prev.filter(m=>!arr.includes(m.id)));
+    for(const id of arr)try{await idbDel('media',id)}catch(e){}
+    toastFn(arr.length>1?arr.length+' items deleted':'Deleted');
+  },[toastFn]);
+  const addAlbum=useCallback(async name=>{
+    const al={id:uid(),name:name||'New album',createdAt:Date.now()};
+    setAlbums(prev=>[...prev,al]);try{await idbPut('albums',al)}catch(e){}
+    return al.id;
+  },[]);
+  const renameAlbum=useCallback(async(id,name)=>{
+    let updated=null;
+    setAlbums(prev=>prev.map(a=>{if(a.id!==id)return a;updated={...a,name};return updated}));
+    if(updated)try{await idbPut('albums',updated)}catch(e){}
+  },[]);
+  const deleteAlbum=useCallback(async id=>{ // album removed; its photos stay (albumId cleared)
+    setAlbums(prev=>prev.filter(a=>a.id!==id));
+    try{await idbDel('albums',id)}catch(e){}
+    setMedia(prev=>prev.map(m=>{if(m.albumId!==id)return m;const u={...m,albumId:null};idbPut('media',u).catch(()=>{});return u}));
+  },[]);
+  const pickFiles=useCallback((accept,capture)=>{
+    const el=fileInputRef.current;if(!el)return;
+    el.value='';el.accept=accept||'';if(capture)el.setAttribute('capture',capture);else el.removeAttribute('capture');
+    el.click();
+  },[]);
 
   useEffect(()=>{ // splash + launch params (?url= from share target, ?action=add)
     const spl=document.getElementById('spl');if(spl)spl.classList.add('hide');
@@ -1940,10 +2891,22 @@ function App(){
     }catch(e){}
   },[]);
 
+  useEffect(()=>{ // host (Naz Trades) can deep-link into a section via postMessage
+    const onNav=e=>{const d=e&&e.data;if(!d||d.type!=='reader-nav')return;
+      setSidebar(false);setMenuOpen(false);
+      if(d.scope==='browse'){setBrowserO({url:''})}
+      else{setBrowserO(null);setScope({type:d.scope||'home'})}
+    };
+    window.addEventListener('message',onNav);
+    return()=>window.removeEventListener('message',onNav);
+  },[]);
+
   useEffect(()=>{ // keep system chrome in sync with theme
     document.body.style.background=T.bg;
     const m=document.querySelector('meta[name="theme-color"]');
     if(m)m.setAttribute('content',T.statusbar);
+    // Tell the host app (Naz Trades) so the iOS status bar matches the reader theme.
+    if(EMBEDDED){try{window.parent.postMessage({type:'instapaper-theme',color:T.statusbar},'*')}catch(e){}}
   },[T]);
 
   useEffect(()=>{ // speech voices load async on most platforms
@@ -2016,11 +2979,22 @@ function App(){
   const addByUrl=async(url,folderId)=>{
     const dup=dataRef.current.articles.find(a=>a.url===url);
     if(dup){setAddS(null);toastFn('Already in your list');return}
+    // Social posts save instantly as link cards — enrich Open Graph data later.
+    const soc=socialOf(url);
+    if(soc){
+      const id=uid();const label=PLATFORM_LABEL[soc.platform]||'Post';const handle=soc.handle?('@'+soc.handle):'';
+      const base=handle?handle+' on '+label:label+' post';
+      const article={id,url,title:base,source:label,author:handle,image:'',html:'',text:'',excerpt:'',words:0,readMin:0,isVideo:false,videoId:null,isPost:true,platform:soc.platform,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:folderId||null,tags:[],progress:0,opens:0,highlights:[]};
+      update(d=>({...d,articles:[article,...d.articles]}));
+      setAddS(null);toastFn(label+' post saved');
+      (async()=>{const m=await fetchSocialMeta(url);if(m&&(m.title||m.image||m.desc))patchArticle(id,x=>({title:(x.title===base&&m.title)?m.title:x.title,image:x.image||m.image||'',excerpt:x.excerpt||(m.desc?m.desc.slice(0,220).trim():'')}))})();
+      return;
+    }
     const rec=await fetchArticleData(url); // throws on failure -> AddSheet shows error
     const article=Object.assign(rec,{id:uid(),addedAt:Date.now(),liked:false,archived:false,folderId:folderId||null,tags:[],progress:0,opens:0,highlights:[]});
     update(d=>({...d,articles:[article,...d.articles]}));
     setAddS(null);
-    toastFn(article.isVideo?'Video saved':'Saved — '+article.readMin+' min read');
+    toastFn(article.isPost?(article.source+' post saved'):article.isVideo?'Video saved':'Saved — '+article.readMin+' min read');
   };
   const saveStub=(url,folderId)=>{
     if(!url)return;
@@ -2044,15 +3018,17 @@ function App(){
     if(st.queue.some(id=>ids.includes(id)))ttsStop();
     setSheet(null);setSelecting(null);toastFn('Deleted');
   };
-  const openArticle=id=>{patchArticle(id,a=>({opens:(a.opens||0)+1}));setReadingId(id)};
+  const openArticle=id=>{const a=byId(id);patchArticle(id,x=>({opens:(x.opens||0)+1}));if(a&&a.isPost){if(a.url)openExternalUrl(a.url);return}setReadingId(id)};
   const doAction=(id,key)=>{
     const a=byId(id);if(!a&&key!=='close')return;
     switch(key){
       case 'close':setReadingId(null);break;
+      case 'read':{const now=(a.progress||0)<0.97;patchArticle(id,{progress:now?1:0});toastFn(now?(a.isVideo?'Marked as watched':'Marked as read'):(a.isVideo?'Marked as unwatched':'Marked as unread'));setSheet(null);break}
       case 'like':patchArticle(id,x=>({liked:!x.liked}));break;
       case 'archive':{const now=!a.archived;patchArticle(id,{archived:now});toastFn(now?'Archived':'Moved to Home');setSheet(null);break}
       case 'move':setSheet({type:'move',ids:[id]});break;
       case 'tags':setSheet({type:'tags',id});break;
+      case 'date':setSheet({type:'date',id});break;
       case 'listen':setSheet(null);startTts([id]);break;
       case 'speed':setSheet(null);setSpeedId(id);break;
       case 'share':setSheet(null);shareText(a.title,'',a.url||'');break;
@@ -2083,7 +3059,7 @@ function App(){
     const html=paras.map(p=>'<p>'+escapeHtml(p).replace(/\n/g,'<br/>')+'</p>').join('\n');
     const text=htmlToText(html);
     const words=countWords(text);
-    update(d=>({...d,articles:[{id:uid(),url:orig.url,title,source:orig.source,author:orig.author,image:orig.image||'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:orig.folderId||null,tags:[...new Set([...orig.tags,result.translation?'translated':'rewritten'])],progress:0,opens:0,highlights:[],lang:LANG_CODES[result.lang]||''},...d.articles]}));
+    update(d=>({...d,articles:[{id:uid(),url:orig.url,title,source:orig.source,author:orig.author,image:orig.image||'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:orig.folderId||null,tags:[...new Set([...orig.tags,result.translation?'translated':result.transcript?'transcript':'rewritten'])],progress:0,opens:0,highlights:[],lang:LANG_CODES[result.lang]||''},...d.articles]}));
     setAiOpen(null);toastFn('Saved as new article');
   };
   const saveAiNote=(orig,kind,text)=>{
@@ -2149,6 +3125,7 @@ function App(){
       d.folders=Array.isArray(d.folders)?d.folders:[];
       d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
       d.sites=Array.isArray(d.sites)?d.sites:[];
+  d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
       update(()=>d);setScope({type:'home'});toastFn('Backup restored — '+d.articles.length+' articles');
@@ -2167,15 +3144,15 @@ function App(){
     if(q){arr=data.articles.filter(a=>((a.title||'')+' '+(a.author||'')+' '+(a.source||'')+' '+a.tags.join(' ')+' '+(a.text||'')).toLowerCase().includes(q))}
     else{
       arr=data.articles.filter(a=>inScope(a,scope));
-      const f=S.filter;
-      if(f==='unread')arr=arr.filter(a=>(a.progress||0)<0.97);
-      else if(f==='liked')arr=arr.filter(a=>a.liked);
-      else if(f==='articles')arr=arr.filter(a=>!a.isVideo);
-      else if(f==='videos')arr=arr.filter(a=>a.isVideo);
-      else if(f==='completed')arr=arr.filter(a=>(a.progress||0)>=0.97);
+      // Type and read-status are independent filters.
+      if(S.typeFilter==='article')arr=arr.filter(a=>!a.isVideo&&!a.isPost);
+      else if(S.typeFilter==='video')arr=arr.filter(a=>a.isVideo);
+      else if(S.typeFilter==='post')arr=arr.filter(a=>a.isPost);
+      if(S.readFilter==='unread')arr=arr.filter(a=>(a.progress||0)<0.97);
+      else if(S.readFilter==='read')arr=arr.filter(a=>(a.progress||0)>=0.97);
     }
     return sortArticles(arr,S.sort);
-  },[data,scope,q,S.sort,S.filter]);
+  },[data,scope,q,S.sort,S.typeFilter,S.readFilter]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -2187,7 +3164,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
 
   const readerAction=k=>doAction(readingId,k);
@@ -2195,6 +3172,14 @@ function App(){
 
   /* ---------- header ---------- */
   const headerBtn=(icon,onClick)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg})},icon);
+  // Tapping the wordmark returns Home and scrolls the list back to the top.
+  const goHome=()=>{
+    setQuery('');
+    setScope({type:'home'});
+    const el=listScrollRef.current;
+    if(el)el.scrollTo({top:0,behavior:'smooth'});
+    requestAnimationFrame(()=>{const e2=listScrollRef.current;if(e2)e2.scrollTop=0});
+  };
   let header;
   if(selecting){
     header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px 6px 4px',flexShrink:0}},
@@ -2205,16 +3190,20 @@ function App(){
   }else{
     header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0,position:'relative'}},
       headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
-      h('div',{style:{position:'absolute',left:'50%',transform:'translateX(-50%)',maxWidth:'40%',textAlign:'center',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',pointerEvents:'none'}},scopeTitle(scope,data.folders)),
+      h('button',{onClick:goHome,className:'act90','aria-label':'Go to top of Home',style:{marginLeft:2,padding:'2px 6px',textAlign:'left',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',color:T.fg,background:'none',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'52%'}},scopeTitle(scope,data.folders)),
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
+      headerBtn(Icons.sun(22),()=>{setScope({type:'brief'});setQuery('')}),
       headerBtn(Icons.contrast(22),cycleTheme),
-      headerBtn(Icons.dots(22),()=>setMenuOpen(true)));
+      headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
+      EMBEDDED?headerBtn(Icons.back(23),exitToHost):null);
   }
 
   /* ---------- main area ---------- */
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
+  else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
+  else if(scope.type==='brief')body=h(BriefView,{T,brief:{...BRIEF0,...(data.brief||{})},onBrief:fn=>update(d=>({...d,brief:fn({...BRIEF0,...(d.brief||{})})})),toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
@@ -2242,8 +3231,33 @@ function App(){
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
-      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
+          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
+        (!q&&scope.type!=='archive')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 11px',cursor:'pointer',whiteSpace:'nowrap'});
+          const setS=patch=>update(d=>({...d,settings:{...d.settings,...patch}}));
+          const TYPES=[['all','All'],['article','Article'],['video','Video'],['post','Post']];
+          const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
+          const curSort=(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
+          return h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}},
+            h('div',{style:{position:'relative'}},
+              h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all')},Icons.filter(14),curType,Icons.chevD?Icons.chevD(13):null),
+              filterMenu?h(Fragment,null,
+                h('div',{onClick:()=>setFilterMenu(false),style:{position:'fixed',inset:0,zIndex:29}}),
+                h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:170,boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
+                  TYPES.map(([v,l])=>h('button',{key:v,onClick:()=>{setS({typeFilter:v});setFilterMenu(false)},className:'act98',
+                    style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.typeFilter?600:400,background:'transparent',textAlign:'left'}},
+                    l,v===S.typeFilter?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null),
+            h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:chip(true),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread'),
+            h('div',{style:{flex:1,minWidth:6}}),
+            h('div',{style:{position:'relative'}},
+              h('button',{onClick:()=>{setFilterMenu(false);setSortMenu(v=>!v)},className:'act90',style:chip(true),title:'Sort'},Icons.sort(14),curSort,Icons.chevD?Icons.chevD(13):null),
+              sortMenu?h(Fragment,null,
+                h('div',{onClick:()=>setSortMenu(false),style:{position:'fixed',inset:0,zIndex:29}}),
+                h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:180,boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
+                  SORTS.map(([v,l])=>h('button',{key:v,onClick:()=>{setS({sort:v});setSortMenu(false)},className:'act98',
+                    style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.sort?600:400,background:'transparent',textAlign:'left'}},
+                    l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
+        })():null):null,
+      h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
@@ -2263,6 +3277,7 @@ function App(){
 
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
       onBrowse:()=>setBrowserO({url:''}),
+      onSettings:()=>setSettingsOpen(true),
       onFolderLongPress:f=>{setSidebar(false);setSheet({type:'folder',folder:f})}}):null,
 
     menuOpen?h(MenuPopover,{T,settings:S,showListOps:isArticleScope,onClose:()=>setMenuOpen(false),
@@ -2271,11 +3286,17 @@ function App(){
       onPlaylistMode:()=>{setMenuOpen(false);setSelecting({mode:'playlist',ids:[]});toastFn('Tap articles to build your playlist')},
       onSettings:()=>{setMenuOpen(false);setSettingsOpen(true)}}):null,
 
+    h('input',{ref:fileInputRef,type:'file',multiple:true,style:{display:'none'},
+      onChange:e=>{const fs=e.target.files;if(fs&&fs.length){addFiles(fs);if(scope.type!=='photos')setScope({type:'photos'})}}}),
+
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
     sheet&&sheet.type==='plus'?h(Sheet,{T,onClose:()=>setSheet(null)},
       h(ARow,{T,icon:Icons.link(21),label:'Save a link',sub:'Article, video, or any web page',onClick:()=>{setSheet(null);setAddS({prefill:''})}}),
+      h(ARow,{T,icon:Icons.camera(21),label:'Take photo',sub:'Capture with the camera',onClick:()=>{setSheet(null);pickFiles('image/*','environment')}}),
+      h(ARow,{T,icon:Icons.image(21),label:'Photo library',sub:'Choose photos from your device',onClick:()=>{setSheet(null);pickFiles('image/*')}}),
+      h(ARow,{T,icon:Icons.file(21),label:'Upload files',sub:'Images, PDFs, or any file',onClick:()=>{setSheet(null);pickFiles('')}}),
       h(ARow,{T,icon:Icons.folder(21),label:'New folder',sub:'Organize your reading',onClick:()=>setSheet({type:'folder'})})):null,
 
     sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
@@ -2286,6 +3307,9 @@ function App(){
 
     sheet&&sheet.type==='tags'?(()=>{const a=byId(sheet.id);return a?h(TagsSheet,{T,article:a,allTags,onClose:()=>setSheet(null),
       onSave:tags=>{patchArticle(sheet.id,{tags});setSheet(null);toastFn('Tags saved')}}):null})():null,
+
+    sheet&&sheet.type==='date'?(()=>{const a=byId(sheet.id);return a?h(DateSheet,{T,article:a,onClose:()=>setSheet(null),
+      onSave:ts=>{patchArticle(sheet.id,{addedAt:ts});setSheet(null);toastFn('Date updated')}}):null})():null,
 
     sheet&&sheet.type==='folder'?h(FolderEditSheet,{T,folder:sheet.folder||null,onClose:()=>setSheet(null),
       onSave:name=>{if(name)saveFolder(name,sheet.folder||null,sheet.afterMoveIds)},
@@ -2333,6 +3357,8 @@ function App(){
 
     browserO?h(Browser,{T,sites:data.sites||[],
       onSites:fn=>update(d=>({...d,sites:fn(d.sites||[])})),
+      folders:data.siteFolders||[],
+      onFolders:fn=>update(d=>({...d,siteFolders:fn(d.siteFolders||[])})),
       vault:data.vault||null,
       onChangeVault:blob=>update(d=>({...d,vault:blob})),
       session:vaultSess,
