@@ -20,12 +20,28 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import
 
+**Photos & files**
+- 📷 **Photos section** (sidebar → Photos) — add images and files via the **+** button: **Take photo**, **Photo library**, or **Upload files** (images, PDFs, anything)
+- 🗂 Three tabs — **All photos**, **Albums**, and **Favourites**; **pin** photos to the top, group them into **albums**, and **favourite** the best ones
+- ✂️ **Edit** any photo — add a caption, **crop**, and **rotate**; **move**, edit, or delete from any tab
+- Photos are stored privately on-device in IndexedDB (kept out of the backup file so backups stay small)
+
+**Reading state & auto-archive**
+- Articles and videos track a **read / watched** state. Finishing an article (scrolling to the end, or finishing TTS / Speed Read) or marking a video watched **auto-moves it to Archive**, keeping Home and Videos as clean "to-do" lists. Nothing is deleted — find everything you've finished under Archive or the **Read** filter.
+- **Filter & sort pills** — quick **Filter** (All / Unread / Liked / Articles / Videos / Completed) and **Sort** (Newest / Oldest / Longest / Shortest / Popular) chips sit right under the search bar on every list.
+- **Mark videos as watched** — right in the video player, or via long-press → Mark as watched.
+
+**AI for videos**
+- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
+
 **Content editing**
-- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
+- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **Browser & Logged-In Sites**
 - 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
+- 💾 **Save / Share from the browser** — reading any page in the built-in browser? Tap **Save** to download & clean it straight into your reading list, or **Share** to send the link out via the system share sheet
+- 📥 **Share into Instapaper** — once installed to your home screen, Instapaper appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
