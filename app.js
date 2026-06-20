@@ -1100,10 +1100,8 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
     {key:'photos',icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
-    {key:'brief',icon:Icons.sun(22),label:'Daily Brief',active:is('brief'),onClick:()=>go('brief')},
     {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
     {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
-    {key:'browse',icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}},
     {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
   ];
   const navF=NAV.filter(n=>m(n.label));
