@@ -3231,25 +3231,26 @@ function App(){
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
-        (!q&&scope.type!=='archive')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 11px',cursor:'pointer',whiteSpace:'nowrap'});
+        (!q&&scope.type!=='archive')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:4,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 9px',cursor:'pointer',whiteSpace:'nowrap'});
           const setS=patch=>update(d=>({...d,settings:{...d.settings,...patch}}));
           const TYPES=[['all','All'],['article','Article'],['video','Video'],['post','Post']];
           const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
-          const curSort=(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
-          return h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:8,flexWrap:'wrap'}},
-            h('div',{style:{position:'relative'}},
-              h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all')},Icons.filter(14),curType,Icons.chevD?Icons.chevD(13):null),
+          const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular'};
+          const curSort=SORT_SHORT[S.sort]||(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
+          return h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:8,flexWrap:'nowrap'}},
+            h('div',{style:{position:'relative',flexShrink:0}},
+              h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all')},Icons.filter(14),curType),
               filterMenu?h(Fragment,null,
                 h('div',{onClick:()=>setFilterMenu(false),style:{position:'fixed',inset:0,zIndex:29}}),
                 h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:170,boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
                   TYPES.map(([v,l])=>h('button',{key:v,onClick:()=>{setS({typeFilter:v});setFilterMenu(false)},className:'act98',
                     style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.typeFilter?600:400,background:'transparent',textAlign:'left'}},
                     l,v===S.typeFilter?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null),
-            h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:chip(true),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread'),
-            h('div',{style:{flex:1,minWidth:6}}),
-            h('button',{onClick:()=>setSelecting({mode:'select',ids:[]}),className:'act90',style:chip(false),title:'Select multiple'},Icons.checkCircle(14),'Select'),
-            h('div',{style:{position:'relative'}},
-              h('button',{onClick:()=>{setFilterMenu(false);setSortMenu(v=>!v)},className:'act90',style:chip(true),title:'Sort'},Icons.sort(14),curSort,Icons.chevD?Icons.chevD(13):null),
+            h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:Object.assign({},chip(true),{flexShrink:0}),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread'),
+            h('button',{onClick:()=>setSelecting({mode:'select',ids:[]}),className:'act90',style:Object.assign({},chip(false),{flexShrink:0}),title:'Select multiple'},Icons.checkCircle(14),'Select'),
+            h('div',{style:{flex:1,minWidth:0}}),
+            h('div',{style:{position:'relative',flexShrink:0}},
+              h('button',{onClick:()=>{setFilterMenu(false);setSortMenu(v=>!v)},className:'act90',style:chip(true),title:'Sort'},Icons.sort(14),curSort),
               sortMenu?h(Fragment,null,
                 h('div',{onClick:()=>setSortMenu(false),style:{position:'fixed',inset:0,zIndex:29}}),
                 h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 6px)',right:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:180,boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
