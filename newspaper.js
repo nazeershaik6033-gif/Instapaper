@@ -158,6 +158,7 @@
      Both routed through public CORS proxies with graceful fallback.
      ===================================================================== */
   var PROXIES = [
+    function (u) { return "https://api.codetabs.com/v1/proxy/?quest=" + encodeURIComponent(u); },
     function (u) { return "https://api.allorigins.win/raw?url=" + encodeURIComponent(u); },
     function (u) { return "https://corsproxy.io/?url=" + encodeURIComponent(u); },
     function (u) { return "https://thingproxy.freeboard.io/fetch/" + u; }
@@ -234,53 +235,88 @@
     });
   }
 
-  /* ---- Google News RSS: breadth + freshness, great for custom topics  */
+  /* ---- Google News RSS: breadth + freshness, great for custom topics.
+     Tries rss2json (direct CORS, no proxy) first, then a proxied raw feed. */
   function fetchGoogleNews(topic) {
-    var url = "https://news.google.com/rss/search?q=" + encodeURIComponent(topic) +
+    var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(topic) +
               "&hl=en-US&gl=US&ceid=US:en";
-    return proxiedFetch(url).then(function (txt) {
-      var doc = new DOMParser().parseFromString(txt, "text/xml");
-      var items = doc.querySelectorAll("item");
-      var out = [];
-      Array.prototype.slice.call(items, 0, 16).forEach(function (it) {
-        var titleRaw = (it.querySelector("title") || {}).textContent || "";
-        var link = (it.querySelector("link") || {}).textContent || "";
-        var pub = (it.querySelector("pubDate") || {}).textContent || "";
-        var descRaw = (it.querySelector("description") || {}).textContent || "";
-        var sourceTag = it.querySelector("source");
-        var source = sourceTag ? sourceTag.textContent : "";
-        var title = titleRaw;
-        // Google formats titles as "Headline - Source"
-        if (!source && / - /.test(titleRaw)) {
-          var parts = titleRaw.split(" - ");
-          source = parts.pop();
-          title = parts.join(" - ");
-        } else if (source && title.indexOf(" - " + source) > -1) {
-          title = title.replace(" - " + source, "");
-        }
-        var summary = stripTags(decodeEntities(descRaw)).slice(0, 240);
-        out.push({
-          title: decodeEntities(title).trim(),
-          url: link.trim(),
-          source: (source || "Google News").trim(),
-          date: pub ? new Date(pub) : new Date(),
-          image: "",
-          score: 0,
-          topic: topic,
-          summary: summary
+    return timedFetch("https://api.rss2json.com/v1/api.json?count=16&rss_url=" +
+        encodeURIComponent(rss), 6500)
+      .then(function (txt) {
+        var j = JSON.parse(txt);
+        if (!j.items || !j.items.length) throw new Error("empty");
+        return j.items.map(function (it) {
+          var src = "", title = (it.title || "");
+          if (/ - /.test(title)) { var p = title.split(" - "); src = p.pop(); title = p.join(" - "); }
+          var img = it.thumbnail || (it.enclosure && it.enclosure.link) || "";
+          return {
+            title: decodeEntities(title).trim(),
+            url: (it.link || "").trim(),
+            source: (src || "Google News").trim(),
+            date: it.pubDate ? new Date(it.pubDate.replace(" ", "T")) : new Date(),
+            image: /^https?:/.test(img) ? img : "",
+            score: 0, topic: topic,
+            summary: stripTags(decodeEntities(it.description || it.content || "")).slice(0, 240)
+          };
         });
-      });
-      return out;
-    });
+      })
+      .catch(function () { return proxiedFetch(rss).then(function (txt) { return parseGoogleRss(topic, txt); }); });
   }
 
-  /* ---- fetch one topic: both sources in parallel, merge, dedupe, rank */
+  function parseGoogleRss(topic, txt) {
+    var doc = new DOMParser().parseFromString(txt, "text/xml");
+    var items = doc.querySelectorAll("item");
+    var out = [];
+    Array.prototype.slice.call(items, 0, 16).forEach(function (it) {
+      var titleRaw = (it.querySelector("title") || {}).textContent || "";
+      var link = (it.querySelector("link") || {}).textContent || "";
+      var pub = (it.querySelector("pubDate") || {}).textContent || "";
+      var descRaw = (it.querySelector("description") || {}).textContent || "";
+      var sourceTag = it.querySelector("source");
+      var source = sourceTag ? sourceTag.textContent : "";
+      var title = titleRaw;
+      if (!source && / - /.test(titleRaw)) { var parts = titleRaw.split(" - "); source = parts.pop(); title = parts.join(" - "); }
+      else if (source && title.indexOf(" - " + source) > -1) { title = title.replace(" - " + source, ""); }
+      out.push({
+        title: decodeEntities(title).trim(),
+        url: link.trim(),
+        source: (source || "Google News").trim(),
+        date: pub ? new Date(pub) : new Date(),
+        image: "", score: 0, topic: topic,
+        summary: stripTags(decodeEntities(descRaw)).slice(0, 240)
+      });
+    });
+    return out;
+  }
+
+  /* ---- Hacker News (Algolia): direct CORS, no proxy, very reliable ---- */
+  function fetchHN(topic) {
+    return timedFetch("https://hn.algolia.com/api/v1/search?query=" +
+        encodeURIComponent(topic) + "&tags=story&hitsPerPage=12", 6000)
+      .then(function (txt) {
+        var j = JSON.parse(txt);
+        return (j.hits || []).filter(function (h) { return h.url && h.title; }).map(function (h) {
+          var host = "Hacker News";
+          try { host = new URL(h.url).hostname.replace(/^www\./, ""); } catch (e) {}
+          return {
+            title: h.title, url: h.url, source: host,
+            date: new Date(h.created_at), image: "",
+            score: h.points || 0, topic: topic,
+            summary: stripTags(decodeEntities(h.story_text || "")).slice(0, 240)
+          };
+        });
+      });
+  }
+
+
+  /* ---- fetch one topic: all sources in parallel, merge, dedupe, rank */
   function fetchTopic(topic) {
     return Promise.all([
+      fetchGoogleNews(topic).catch(function () { return []; }),
       fetchReddit(topic).catch(function () { return []; }),
-      fetchGoogleNews(topic).catch(function () { return []; })
+      fetchHN(topic).catch(function () { return []; })
     ]).then(function (parts) {
-        var results = parts[0].concat(parts[1]);
+        var results = parts[0].concat(parts[1]).concat(parts[2]);
         // dedupe by normalized title
         var seen = {}, merged = [];
         results.forEach(function (a) {
@@ -595,7 +631,7 @@
     var loader = showLoading();
     app.appendChild(loader);
     isRefreshing = true;
-    fetchAll(prefs.topics, 8000).then(function (sections) {
+    fetchAll(prefs.topics, 10000).then(function (sections) {
       isRefreshing = false;
       var nonEmpty = sections.filter(function (s) { return s.articles.length; });
       if (!nonEmpty.length) { renderError(loader); return; }
