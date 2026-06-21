@@ -639,6 +639,7 @@ const Icons={
   upload:s=>Svg({size:s},P('M12 15V4M8 7.8 12 3.8 16 7.8'),P('M4.5 16.5v2c0 1 .8 1.8 1.8 1.8h11.4c1 0 1.8-.8 1.8-1.8v-2')),
   ai:s=>Svg({size:s},P('M11 3.8 12.7 8.6 17.5 10.3 12.7 12 11 16.8 9.3 12 4.5 10.3 9.3 8.6 11 3.8Z'),P('M18 14.5l.8 2.2 2.2.8-2.2.8-.8 2.2-.8-2.2-2.2-.8 2.2-.8.8-2.2Z',{strokeWidth:1.4})),
   contrast:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M12 3.5a8.5 8.5 0 0 1 0 17V3.5Z',fill:'currentColor'})),
+  phone:s=>Svg({size:s},h('rect',{x:6.5,y:2.5,width:11,height:19,rx:2.6,stroke:'currentColor',strokeWidth:1.7}),P('M10.5 18.6h3')),
   blocks:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),h('rect',{x:4,y:13.5,width:9,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),P('M16.5 15.2l3 3M19.5 15.2l-3 3')),
   refresh:s=>Svg({size:s},P('M19.5 12a7.5 7.5 0 1 1-2.2-5.3'),P('M19.6 3.6v3.6h-3.6')),
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
@@ -1712,6 +1713,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         'Instapaper \u00b7 v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
+      h('div',{style:{padding:'14px 20px 0',fontSize:14.5,fontWeight:600}},'Theme'),
       h('div',{style:{display:'flex',justifyContent:'space-around',padding:'10px 20px 4px'}},
         Object.values(THEMES).map(t=>h('button',{key:t.id,onClick:()=>set({theme:t.id}),className:'act90 trt',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:6}},
           h('span',{style:{width:44,height:44,borderRadius:'50%',background:t.swatch,border:S.theme===t.id?('2.5px solid '+T.accent):('1.5px solid '+(t.id==='light'?'#d5d5d8':T.hair)),display:'flex',alignItems:'center',justifyContent:'center',color:t.fg,fontFamily:'Georgia,serif',fontSize:16}},'A'),
@@ -1725,7 +1727,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize-1,15,26)}),className:'act95',style:{padding:'8px 16px',borderRadius:9,background:T.card,color:T.fg,fontSize:13,fontFamily:'Georgia,serif'}},'A'),
         h('span',{style:{fontSize:13,color:T.meta,width:40,textAlign:'center'}},S.fontSize+'px'),
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize+1,15,26)}),className:'act95',style:{padding:'5px 16px',borderRadius:9,background:T.card,color:T.fg,fontSize:19,fontFamily:'Georgia,serif'}},'A')),
-      h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Line spacing and per-article tweaks live in the Aa menu inside the reader. The header moon/sun icon cycles all four themes.'));
+      h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Pick your theme above. Line spacing and per-article tweaks live in the Aa menu inside the reader.'));
   }else if(page==='behavior'){
     content=h(Fragment,null,
       head('Speed reading'),
@@ -2064,11 +2066,9 @@ function App(){
       case 'ai':setSheet(null);setAiOpen({articleId:id});break;
     }
   };
-  const cycleTheme=()=>{
-    const order=['light','sepia','dark','black'];
-    const next=order[(order.indexOf(S.theme)+1)%order.length];
-    update(d=>({...d,settings:{...d.settings,theme:next}}));
-    toastFn(THEMES[next].label+' theme');
+  const openNewspaper=()=>{
+    // route to The Daily Brief — the personalized newspaper (latest build)
+    window.location.href=new URL('newspaper.html',window.location.href).href;
   };
   const saveEditedContent=(id,title,html)=>{
     const text=htmlToText(html);
@@ -2208,7 +2208,7 @@ function App(){
       h('div',{style:{position:'absolute',left:'50%',transform:'translateX(-50%)',maxWidth:'40%',textAlign:'center',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',pointerEvents:'none'}},scopeTitle(scope,data.folders)),
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
-      headerBtn(Icons.contrast(22),cycleTheme),
+      headerBtn(Icons.phone(22),openNewspaper),
       headerBtn(Icons.dots(22),()=>setMenuOpen(true)));
   }
 
