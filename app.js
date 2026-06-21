@@ -3036,6 +3036,7 @@ function App(){
     header=h('div',{style:{display:'flex',alignItems:'center',padding:'6px 8px',flexShrink:0}},
       headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
       h('div',{onClick:()=>listRef.current&&listRef.current.scrollTo({top:0,behavior:'smooth'}),className:'act90',style:{fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,cursor:'pointer',paddingLeft:2}},scopeTitle(scope,data.folders)),
+      headerBtn(Icons.sun(22),()=>setScope({type:'brief'})),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.contrast(22),cycleTheme),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
