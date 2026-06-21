@@ -15,6 +15,17 @@
 <link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='7' fill='%23141416'/%3E%3Crect x='12' y='8' width='12' height='2.6' fill='%23f8f8f6'/%3E%3Crect x='16' y='8' width='4' height='20' fill='%23f8f8f6'/%3E%3Crect x='12' y='25.4' width='12' height='2.6' fill='%23f8f8f6'/%3E%3C/svg%3E"/>
 <title>Instapaper</title>
 <script>
+/* If ever embedded in another app inside an iframe, iOS Safari mis-applies
+   "maximum-scale" / "viewport-fit=cover" and renders zoomed-in. Normalise the
+   viewport so it lays out 1:1 with the frame. No effect when running standalone. */
+try{
+  if(window.self!==window.top){
+    var _vp=document.querySelector('meta[name="viewport"]');
+    if(_vp)_vp.setAttribute('content','width=device-width, initial-scale=1.0');
+  }
+}catch(e){}
+</script>
+<script>
 /* paint the saved theme before anything renders to avoid a flash */
 try{
   var _s=JSON.parse(localStorage.getItem('instapaper_v1')||'{}').settings;
@@ -93,6 +104,10 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 <body>
 <div class="spl" id="spl">Instapaper</div>
 <div id="root"></div>
+<script>
+/* failsafe: never let the splash hang forever if app.js fails to load/run */
+setTimeout(function(){var s=document.getElementById('spl');if(s)s.classList.add('hide')},8000);
+</script>
 <script src="app.js"></script>
 <script>
 if('serviceWorker' in navigator){
