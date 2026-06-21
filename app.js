@@ -31,19 +31,19 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'meta-llama/llama-3.3-70b-instruct:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
 
 /* ============================== AI (OpenRouter) ============================== */
 const AI_MODELS=[
-  ['deepseek/deepseek-r1-0528:free','DeepSeek R1 0528 (free)'],
-  ['deepseek/deepseek-r1-0528-qwen3-8b:free','DeepSeek R1 0528 Qwen3 8B (free)'],
-  ['meta-llama/llama-3.3-70b-instruct:free','Llama 3.3 70B (free)'],
+  ['meta-llama/llama-3.3-70b-instruct:free','Llama 3.3 70B (free, fast)'],
+  ['mistralai/mistral-small-3.1-24b-instruct:free','Mistral Small 3.1 (free, fast)'],
+  ['google/gemini-2.0-flash-exp:free','Gemini 2.0 Flash (free, fast)'],
   ['qwen/qwen3-235b-a22b:free','Qwen3 235B (free)'],
-  ['google/gemini-2.0-flash-exp:free','Gemini 2.0 Flash (free)'],
-  ['mistralai/mistral-small-3.1-24b-instruct:free','Mistral Small 3.1 (free)'],
+  ['deepseek/deepseek-r1-0528:free','DeepSeek R1 0528 (free, reasoning · slower)'],
+  ['deepseek/deepseek-r1-0528-qwen3-8b:free','DeepSeek R1 0528 Qwen3 8B (free, reasoning · slower)'],
   ['deepseek/deepseek-chat-v3-0324','DeepSeek V3 (paid)'],
   ['openai/gpt-4o-mini','GPT-4o mini (paid)'],
   ['anthropic/claude-3.5-haiku','Claude 3.5 Haiku (paid)'],
@@ -61,13 +61,40 @@ const INDIC_TTS_LANGS=[
 ];
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
-async function openRouterChat(key,model,messages,maxTokens,onWait){
+
+/* hide reasoning chatter (R1 <think> blocks) — also while it streams in unclosed */
+function stripThink(s){return String(s||'').replace(/<think>[\s\S]*?<\/think>/gi,'').replace(/<think>[\s\S]*$/i,'').trim()}
+
+/* read a Server-Sent-Events stream and hand each parsed JSON chunk to onChunk */
+async function readSSE(res,onChunk){
+  const reader=res.body.getReader();
+  const dec=new TextDecoder();
+  let buf='';
+  for(;;){
+    const{done,value}=await reader.read();
+    if(done)break;
+    buf+=dec.decode(value,{stream:true});
+    let nl;
+    while((nl=buf.indexOf('\n'))>=0){
+      const line=buf.slice(0,nl).trim();buf=buf.slice(nl+1);
+      if(!line||line[0]===':'||!line.startsWith('data:'))continue;
+      const data=line.slice(5).trim();
+      if(data==='[DONE]')return;
+      try{onChunk(JSON.parse(data))}catch(e){}
+    }
+  }
+}
+
+async function openRouterChat(key,model,messages,maxTokens,onWait,onToken){
+  const stream=!!(onToken&&typeof ReadableStream!=='undefined');
+  const body={model,messages,max_tokens:maxTokens||2048,temperature:0.4,reasoning:{exclude:true}};
+  if(stream)body.stream=true;
   let res;
   for(let attempt=0;;attempt++){
     res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
       method:'POST',
       headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
-      body:JSON.stringify({model,messages,max_tokens:maxTokens||2048,temperature:0.4})
+      body:JSON.stringify(body)
     },120000);
     if(res.status===429&&attempt<2){ // free tiers burst-limit easily — back off and retry
       const wait=(attempt+1)*6;
@@ -86,11 +113,22 @@ async function openRouterChat(key,model,messages,maxTokens,onWait){
     if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can’t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
     throw new Error(msg);
   }
+  if(stream&&res.body){
+    let full='';
+    await readSSE(res,j=>{
+      const d=j&&j.choices&&j.choices[0]&&j.choices[0].delta;
+      const t=d&&(d.content||d.reasoning_content||'');
+      if(t){full+=t;onToken(stripThink(full))}
+    });
+    full=stripThink(full);
+    if(!full)throw new Error('Empty AI response — try another model.');
+    return full;
+  }
   const j=await res.json();
   const m=j&&j.choices&&j.choices[0]&&j.choices[0].message;
   let out=m&&m.content;
   if(!out||!String(out).trim())out=m&&m.reasoning; // some reasoning models put text here
-  out=String(out||'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim(); // strip R1 thinking blocks
+  out=stripThink(out);
   if(!out)throw new Error('Empty AI response — try another model.');
   return out;
 }
@@ -102,15 +140,20 @@ const GEMINI_MODELS=[
   ['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite (fastest)'],
   ['gemini-2.0-flash','Gemini 2.0 Flash']
 ];
-async function geminiChat(key,model,messages,maxTokens,onWait){
+async function geminiChat(key,model,messages,maxTokens,onWait,onToken,fileUri){
   const sys=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
   const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+  // attach a video (e.g. a YouTube URL) to the final user turn so Gemini can watch it natively
+  if(fileUri&&contents.length)contents[contents.length-1].parts.push({fileData:{fileUri}});
   const body={contents,generationConfig:{maxOutputTokens:maxTokens||2048,temperature:0.4}};
   if(sys)body.systemInstruction={parts:[{text:sys}]};
+  const stream=!!(onToken&&typeof ReadableStream!=='undefined');
+  const method=stream?'streamGenerateContent?alt=sse&':'generateContent?';
+  const url='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':'+method+'key='+encodeURIComponent(key);
+  const timeout=fileUri?300000:120000; // watching a video takes longer than plain text
   let res;
   for(let attempt=0;;attempt++){
-    res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
-      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},120000);
+    res=await fetchWithTimeout(url,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},timeout);
     if(res.status===429&&attempt<2){
       const wait=(attempt+1)*6;
       if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
@@ -126,6 +169,16 @@ async function geminiChat(key,model,messages,maxTokens,onWait){
     else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
     else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or switch provider in Settings → AI.';
     throw new Error(msg);
+  }
+  if(stream&&res.body){
+    let full='';
+    await readSSE(res,j=>{
+      const cand=j&&j.candidates&&j.candidates[0];
+      const t=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||'').join(''):'';
+      if(t){full+=t;onToken(full)}
+    });
+    if(!full.trim())throw new Error('Empty Gemini response — try another model.');
+    return full.trim();
   }
   const j=await res.json();
   const cand=j&&j.candidates&&j.candidates[0];
@@ -160,9 +213,9 @@ async function fetchOpenRouterModels(){
 }
 
 /* one entry point for every AI feature — routes to the chosen provider */
-function aiChat(S,messages,maxTokens,onWait){
-  if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens,onWait);
-  return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens,onWait);
+function aiChat(S,messages,maxTokens,onWait,onToken,fileUri){
+  if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens,onWait,onToken,fileUri);
+  return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens,onWait,onToken);
 }
 const aiReady=S=>S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
 function aiModelLabel(S){
@@ -517,6 +570,55 @@ async function fetchYouTubeMeta(url,id){
   return{title,author,image:'https://i.ytimg.com/vi/'+id+'/hqdefault.jpg'};
 }
 
+/* ---------- YouTube transcripts ---------- */
+/* parse a caption file (timedtext XML or YouTube json3) into one clean text blob */
+function parseTimedText(raw){
+  if(!raw)return'';
+  const s=raw.trim();
+  if(s[0]==='{'){ // json3 format
+    try{
+      const j=JSON.parse(s),parts=[];
+      (j.events||[]).forEach(e=>{(e.segs||[]).forEach(g=>{if(g.utf8)parts.push(g.utf8)})});
+      return parts.join('').replace(/\s+/g,' ').trim();
+    }catch(e){}
+  }
+  const doc=new DOMParser().parseFromString(s,'text/xml');
+  const nodes=doc.querySelectorAll('text,p');
+  const parts=[];
+  nodes.forEach(n=>{const t=unescapeEnt((n.textContent||'').replace(/\s+/g,' ')).trim();if(t)parts.push(t)});
+  return parts.join(' ').replace(/\s+/g,' ').trim();
+}
+
+/* fetch a video's real captions client-side via the CORS proxies.
+   returns {text,lang} or null when the video has no captions we can reach. */
+async function fetchYouTubeTranscript(videoId){
+  const watch='https://www.youtube.com/watch?v='+videoId+'&hl=en&bpctr=9999999999';
+  let raw='';
+  try{raw=await fetchRawHtml(watch)}catch(e){}
+  let tracks=null;
+  if(raw){
+    const m=raw.match(/"captionTracks":(\[.*?\])/);
+    if(m){try{tracks=JSON.parse(m[1].replace(/\\u0026/g,'&').replace(/\\"/g,'"'))}catch(e){}}
+  }
+  if(tracks&&tracks.length){
+    const pick=tracks.find(t=>/^en/i.test(t.languageCode)&&t.kind!=='asr')
+            ||tracks.find(t=>/^en/i.test(t.languageCode))
+            ||tracks.find(t=>t.kind!=='asr')||tracks[0];
+    if(pick&&pick.baseUrl){
+      const base=pick.baseUrl.replace(/\\u0026/g,'&').replace(/\\\//g,'/');
+      const variants=[base.replace(/&fmt=\w+/,'')+'&fmt=json3',base.replace(/&fmt=\w+/,''),base];
+      for(const v of variants){
+        try{
+          const cap=await fetchRawHtml(v);
+          const text=parseTimedText(cap);
+          if(text&&text.length>40)return{text,lang:pick.languageCode||''};
+        }catch(e){}
+      }
+    }
+  }
+  return null;
+}
+
 /* returns a full article record (without id/folder) */
 async function fetchArticleData(url){
   const vid=ytIdOf(url);
@@ -553,7 +655,7 @@ const WELCOME_HTML=[
 '<p>Tap the round <strong>+</strong> button on the home screen and paste any link. The article is downloaded, stripped of clutter, and stored on your device so you can read it <strong>offline</strong> — on airplanes, subways, elevators, anywhere. If a page still has unwanted bits, long-press it and choose <strong>Edit content</strong> to remove blocks or edit the text.</p>',
 '<h2>AI superpowers</h2>',
 '<p>Tap the <strong>✦ AI</strong> icon in the header (or inside any article) to <strong>summarize</strong>, <strong>translate</strong> into Telugu, Hindi and many other languages, <strong>rewrite</strong>, or <strong>ask questions</strong> about an article — powered by your own free OpenRouter API key (DeepSeek, Llama, and more). Translations can be saved as new articles and even read aloud in తెలుగు or हिन्दी.</p>',
-'<p>YouTube links are saved as <strong>Videos</strong> with their thumbnail, ready to watch from the Videos folder.</p>',
+'<p>YouTube links are saved as <strong>Videos</strong> with their thumbnail, ready to watch from the Videos folder. Open one and tap <strong>✦ AI</strong> to pull its <strong>transcript</strong>, then summarize, translate, or ask questions about it.</p>',
 '<h2>A reading experience you control</h2>',
 '<p>Inside any article tap <strong>Aa</strong> to choose fonts, text size, line spacing, and four color themes — Light, Sepia, Dark, and Black.</p>',
 '<h2>Highlights &amp; notes — unlimited</h2>',
@@ -926,7 +1028,7 @@ function ArticleSheet({T,a,onAction,onClose}){
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.headphones(21),label:'Listen',sub:'Text-to-speech',onClick:act('listen')}):null,
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.bolt(21),label:'Speed read',sub:'Up to 3× faster',onClick:act('speed')}):null,
     !a.isVideo&&a.html?h(ARow,{T,icon:Icons.pencil(21),label:'Edit content',sub:'Remove unwanted parts or edit the text',onClick:act('edit')}):null,
-    !a.isVideo&&a.text?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
+    a.isVideo||a.text?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:a.isVideo&&!a.text?'Transcript · Summarize · Ask':'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
     h(ARow,{T,icon:Icons.share(21),label:'Share…',onClick:act('share')}),
     a.url?h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:act('copy')}):null,
     a.url?h(ARow,{T,icon:Icons.globe(21),label:'Open original',onClick:act('open')}):null,
@@ -1129,7 +1231,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
       tb(Icons.archive(23),()=>onAction('archive')),
       h('button',{onClick:()=>setAaOpen(!aaOpen),className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg,fontFamily:'Georgia,serif',fontSize:19,fontWeight:500})},'Aa'),
-      a.text&&!a.isVideo?tb(Icons.ai(23),()=>onAction('ai')):null,
+      a.text||a.isVideo?tb(Icons.ai(23),()=>onAction('ai')):null,
       tb(Icons.dots(23),()=>onAction('sheet'))),
     aaOpen?h(AaPopover,{T,S,update:onAction.update,onClose:()=>setAaOpen(false)}):null
   );
@@ -1332,6 +1434,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const [question,setQuestion]=useState('');
   const [keyDraft,setKeyDraft]=useState('');
   const [speaking,setSpeaking]=useState(false);
+  const [stream,setStream]=useState(''); // live text while the model is still generating
   const sess=useRef(0);
   const speakingRef=useRef(false);
   useEffect(()=>()=>{sess.current++;if(speakingRef.current){try{speechSynthesis.cancel()}catch(e){}}},[]);
@@ -1339,17 +1442,41 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const ready=aiReady(S);
   const outLang=S.aiLang||'English';
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
-  const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
+  // Gemini has a huge context window, so feed it the whole transcript/article; cap tighter for free OpenRouter models
+  const ctxCap=S.aiProvider==='gemini'?120000:15000;
+  const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,ctxCap):'';
 
   const run=async(label,fn)=>{
-    setError('');setBusy(label);
+    setError('');setBusy(label);setStream('');
     try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
-    setBusy('');
+    setBusy('');setStream('');
   };
+  // pull a video transcript (real captions first, Gemini as a fallback), then store it on the article
+  const doTranscript=()=>run('Fetching transcript…',async()=>{
+    let text='',via='';
+    try{const r=await fetchYouTubeTranscript(ctx.videoId);if(r&&r.text){text=r.text;via='captions'}}catch(e){}
+    if((!text||text.trim().length<40)&&S.aiProvider==='gemini'&&ctx.url){
+      setBusy('Transcribing with Gemini…');setStream('');
+      text=await aiChat(S,[
+        {role:'system',content:'You transcribe videos into clean, readable text.'},
+        {role:'user',content:'Transcribe the spoken content of this video into clear paragraphs in its original language. Output ONLY the transcript — no timestamps, no commentary.'}
+      ],8000,setBusy,setStream,ctx.url);
+      via='gemini';
+    }
+    text=String(text||'').trim();
+    if(text.length<40)throw new Error('Couldn’t get a transcript — this video may have captions disabled.'+(S.aiProvider!=='gemini'?' Tip: switch to Google Gemini in Settings → AI to transcribe videos that have no captions.':''));
+    const html='<p>'+escapeHtml(text).replace(/\n{2,}/g,'</p><p>').replace(/\n/g,' ')+'</p>';
+    const words=countWords(text);
+    const patch={text,html,excerpt:text.slice(0,220),words,readMin:readMinutes(words),hasTranscript:true,transcriptVia:via};
+    update(d=>({...d,articles:d.articles.map(a=>a.id===ctx.id?{...a,...patch}:a)}));
+    setCtx(c=>({...c,...patch}));
+    setView('menu');toastFn('Transcript ready');
+  });
   const doSummarize=()=>run('Summarizing…',async()=>{
+    const kind=ctx&&ctx.isVideo?'this video transcript':'the following article';
     const out=await aiChat(S,[
       {role:'system',content:'You are a precise reading assistant.'},
-      {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
+      {role:'user',content:'Summarize '+kind+' as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy,setStream);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
   });
   const doTranslate=lang=>run('Translating…',async()=>{
@@ -1360,7 +1487,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
       setBusy('Translating part '+(i+1)+' of '+chunks.length+'…');
       out.push(await aiChat(S,[
         {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. Keep the same paragraphs, separated by blank lines. Output ONLY the translation, no commentary.'},
-        {role:'user',content:chunks[i]}],4000,setBusy));
+        {role:'user',content:chunks[i]}],4000,setBusy,setStream));
       if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
@@ -1368,14 +1495,14 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are an expert editor.'},
-      {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000,setBusy);
+      {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000,setBusy,setStream);
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
   });
   const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
     const msgs=ctx
-      ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
+      ?[{role:'system',content:'Answer using the '+(ctx.isVideo?'video transcript':'article')+' below. Be concise and concrete. Respond in '+outLang+'.\n\n'+(ctx.isVideo?'TRANSCRIPT':'ARTICLE')+':\n'+ctxText},{role:'user',content:q}]
       :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
-    const out=await aiChat(S,msgs,2000,setBusy);
+    const out=await aiChat(S,msgs,2000,setBusy,setStream);
     setResult({kind:'Answer',text:out,lang:outLang});setView('result');
   })};
 
@@ -1422,11 +1549,18 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
         style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
       h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,[isGem?'geminiKey':'aiKey']:keyDraft.trim()}}));toastFn('AI connected')}}));
   }else if(busy){
-    body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
-      h(Spinner,{T,size:26}),
-      h('div',{style:{fontSize:14.5,color:T.meta}},busy),
-      h('div',{style:{fontSize:12,color:T.sub}},aiModelLabel(S)),
-      h('button',{onClick:onClose,className:'act95',style:{marginTop:6,color:T.danger,fontSize:14,fontWeight:500,padding:'8px 18px'}},'Cancel'));
+    body=stream
+      ? h('div',{style:{padding:'2px 20px 0'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:10,marginBottom:10}},
+            h(Spinner,{T,size:18}),
+            h('div',{style:{fontSize:13.5,color:T.meta,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},busy),
+            h('button',{onClick:onClose,className:'act95',style:{color:T.danger,fontSize:13,fontWeight:500,flexShrink:0}},'Cancel')),
+          h('div',{className:'rc',style:{fontFamily:fontCss(S.font),fontSize:16,lineHeight:1.62,color:T.fg,whiteSpace:'pre-wrap',maxHeight:'52vh',overflowY:'auto',padding:'14px 16px',background:T.card,borderRadius:12,userSelect:'text',WebkitUserSelect:'text'}},stream))
+      : h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
+          h(Spinner,{T,size:26}),
+          h('div',{style:{fontSize:14.5,color:T.meta}},busy),
+          h('div',{style:{fontSize:12,color:T.sub}},aiModelLabel(S)),
+          h('button',{onClick:onClose,className:'act95',style:{marginTop:6,color:T.danger,fontSize:14,fontWeight:500,padding:'8px 18px'}},'Cancel'));
   }else if(view==='result'&&result){
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px'}},
@@ -1454,25 +1588,37 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
           style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
         h(PrimaryBtn,{T,label:'Ask AI',disabled:!question.trim(),style:{margin:'12px 0 0',width:'100%'},onClick:doAsk})));
   }else if(!ctx){
-    const pick=articles.filter(a=>!a.isVideo&&a.text).slice(0,15);
+    const pick=articles.filter(a=>a.text||a.isVideo).slice(0,15);
     body=h('div',null,
-      h('div',{style:{padding:'0 20px 6px',fontSize:14,color:T.meta}},'Pick an article to work with:'),
-      pick.length?pick.map(a=>h(ARow,{key:a.id,T,icon:Icons.notes(19),label:a.title,sub:(a.source||'')+(a.readMin?' · '+a.readMin+' min':''),onClick:()=>setCtx(a)})):h('div',{style:{padding:'10px 20px',fontSize:13.5,color:T.sub}},'No readable articles saved yet.'),
+      h('div',{style:{padding:'0 20px 6px',fontSize:14,color:T.meta}},'Pick something to work with:'),
+      pick.length?pick.map(a=>h(ARow,{key:a.id,T,icon:a.isVideo?Icons.ai(19):Icons.notes(19),label:a.title,sub:(a.source||'')+(a.isVideo&&!a.text?' · video':a.readMin?' · '+a.readMin+' min':''),onClick:()=>setCtx(a)})):h('div',{style:{padding:'10px 20px',fontSize:13.5,color:T.sub}},'Nothing saved yet.'),
       h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat without an article',onClick:()=>setView('ask')}));
   }else{
+    const isVid=!!ctx.isVideo;
+    const needsTranscript=isVid&&!ctx.text;
     body=h('div',null,
       h('div',{style:{padding:'0 20px 10px'}},
         h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:15.5,fontWeight:600,lineHeight:1.35}},ctx.title),
-        article?null:h('button',{onClick:()=>setCtx(null),style:{fontSize:12.5,color:T.accent,marginTop:4}},'Choose a different article')),
-      h('div',{style:{padding:'0 20px 12px'}},
-        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:7}},'Reply language'),
-        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
-          ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
-      error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
-      h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
-      h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
-      h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
-      h(ARow,{T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')}));
+        article?null:h('button',{onClick:()=>setCtx(null),style:{fontSize:12.5,color:T.accent,marginTop:4}},'Choose something else')),
+      needsTranscript
+        ? h('div',{style:{padding:'0 20px'}},
+            h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},
+              S.aiProvider==='gemini'
+                ?'Get this video’s transcript — from its captions, or transcribed by Gemini when there are none — then summarize, translate, or ask about it.'
+                :'Pull this video’s captions as a transcript, then summarize, translate, or ask about it.'),
+            error?h('div',{style:{marginBottom:12,padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
+            h(PrimaryBtn,{T,label:'Get transcript',style:{margin:0,width:'100%'},onClick:doTranscript}))
+        : h('div',null,
+            h('div',{style:{padding:'0 20px 12px'}},
+              h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:7}},'Reply language'),
+              h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
+                ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
+            error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
+            isVid?h('div',{style:{margin:'0 20px 6px',fontSize:12,color:T.sub}},'Working from the video transcript'+(ctx.transcriptVia==='gemini'?' (transcribed by Gemini)':'')):null,
+            h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+            h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
+            h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
+            h(ARow,{T,icon:Icons.ai(20),label:'Ask about this '+(isVid?'video':'article'),sub:'Any question, answered from the '+(isVid?'transcript':'text'),onClick:()=>setView('ask')})));
   }
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
