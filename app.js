@@ -1879,7 +1879,21 @@ const BRIEF_LASTWIN_KEY='insta_brief_lastwin_v1';
 const LOG_MAX_AGE=14*24*60*60*1000;
 const loadBriefLog=()=>{try{return JSON.parse(localStorage.getItem(BRIEF_LOG_KEY)||'[]')}catch(e){return[]}};
 const saveBriefLog=l=>{try{localStorage.setItem(BRIEF_LOG_KEY,JSON.stringify(l))}catch(e){}};
-const fmtLogDate=ts=>{const d=new Date(ts),now=new Date(),diff=Math.floor((now-d)/86400000);if(diff===0)return'Today';if(diff===1)return'Yesterday';return d.toLocaleDateString('en',{month:'short',day:'numeric'})};
+const fmtLogDate=ts=>{const d=new Date(ts),now=new Date(),diff=Math.floor((now-d)/86400000);const ds=d.toLocaleDateString('en',{month:'short',day:'numeric'});if(diff===0)return'Today · '+ds;if(diff===1)return'Yesterday · '+ds;return ds};
+/* brief "done" is a map of windowKey -> [itemIds] so checking items off in one
+   time-slot is never wiped by another. Reads tolerate the old {key,ids} shape. */
+function normalizeDone(done){
+  const src=(done&&Array.isArray(done.ids)&&typeof done.key==='string')?(done.key?{[done.key]:done.ids}:{}):(done||{});
+  const cutoff=ymd(new Date(Date.now()-30*86400000));const m={};
+  for(const k in src){if(!Array.isArray(src[k]))continue;if((k.split('#')[0]||'')>=cutoff)m[k]=src[k].slice()}
+  return m;
+}
+function briefDoneIds(done,key){
+  if(!done||!key)return[];
+  if(Array.isArray(done[key]))return done[key];
+  if(done.key===key&&Array.isArray(done.ids))return done.ids;
+  return[];
+}
 function BriefView({T,brief,onBrief,toastFn}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
@@ -1887,7 +1901,7 @@ function BriefView({T,brief,onBrief,toastFn}){
   const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
   const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
   const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Routine',time:'00:00'};
-  const doneIds=(brief.done&&brief.done.key===win.key&&win.key)?brief.done.ids:[];
+  const doneIds=briefDoneIds(brief.done,win.key);
   const [act,setAct]=useState(null);
   const [moveIt,setMoveIt]=useState(null);
   const [edit,setEdit]=useState(null);
@@ -1903,12 +1917,13 @@ function BriefView({T,brief,onBrief,toastFn}){
     if(!win.key)return;
     let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
     if(stored&&stored.key&&stored.key!==win.key){
-      const oldDoneIds=(brief.done&&brief.done.key===stored.key)?brief.done.ids:[];
+      const oldDoneIds=briefDoneIds(brief.done,stored.key);
+      const seenMap=brief.seen||{};
       const missed=[];
       for(const it of items){
         if(oldDoneIds.includes(it.id)||!hasFeed(it))continue;
         const c=feeds[it.id];if(!c||!c.entries)continue;
-        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end);
+        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end&&!seenMap[e.url]);
         if(!es.length)continue;
         const g=groups.find(x=>x.id===it.groupId);
         missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs}))});
@@ -1932,9 +1947,10 @@ function BriefView({T,brief,onBrief,toastFn}){
     return()=>{live=false};
   },[]);
   const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
-  const toggle=id=>{if(!win.key)return;onBrief(b=>{const cur=(b.done&&b.done.key===win.key)?b.done.ids:[];const ids=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:{key:win.key,ids}}})};
+  const toggle=id=>{if(!win.key)return;onBrief(b=>{const map=normalizeDone(b.done);const cur=map[win.key]||[];map[win.key]=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:map}})};
+  const markSeen=urls=>{const list=(urls||[]).filter(Boolean);if(!list.length)return;onBrief(b=>{const s=Object.assign({},b.seen||{});const t=Date.now();list.forEach(u=>{s[u]=t});const cut=t-30*86400000;for(const k in s){if(s[k]<cut)delete s[k]}return{...b,seen:s}})};
   const open=it=>{const u=normalizeUrl(it.url)||it.url;if(u)openExternalUrl(u)};
-  const openEntry=e=>{if(e&&e.url)openExternalUrl(e.url)};
+  const openEntry=e=>{if(e&&e.url){markSeen([e.url]);openExternalUrl(e.url)}};
   const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
   const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
   const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
