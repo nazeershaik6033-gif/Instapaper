@@ -917,6 +917,7 @@ const Icons={
   calendar:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:15,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 9.5h17M8 3.2v3.6M16 3.2v3.6')),
   sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 2.6v2.4M12 19v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.6 12h2.4M19 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7')),
   newspaper:s=>Svg({size:s},P('M4 5.5h12.5v13H5.3c-.7 0-1.3-.6-1.3-1.3V5.5Z'),P('M16.5 8.5H19c.6 0 1 .4 1 1v7.7c0 .7-.6 1.3-1.3 1.3'),P('M6.8 8.5h6.9M6.8 11.5h6.9M6.8 14.5h4.4')),
+  phone:s=>Svg({size:s},h('rect',{x:6.5,y:2.5,width:11,height:19,rx:2.6,stroke:'currentColor',strokeWidth:1.7}),P('M10.5 18.6h3')),
   send:s=>Svg({size:s},h('path',{d:'M21 4 3 11l6 2.4L11 20l3.2-4.6L21 4Z',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M21 4 9.4 13.4')),
   rss:s=>Svg({size:s},h('circle',{cx:6,cy:18,r:1.6,fill:'currentColor'}),P('M5 11.5a7.5 7.5 0 0 1 7.5 7.5M5 5.5a13.5 13.5 0 0 1 13.5 13.5')),
   checkCircle:(s,fill)=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7,fill:fill?'currentColor':'none'}),fill?P('M8.5 12.2l2.4 2.4 4.6-4.8',{stroke:'#fff',strokeWidth:2}):P('M8.5 12.2l2.4 2.4 4.6-4.8')),
@@ -2600,6 +2601,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         'Instapaper \u00b7 v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
+      h('div',{style:{padding:'14px 20px 0',fontSize:14.5,fontWeight:600}},'Theme'),
       h('div',{style:{display:'flex',justifyContent:'space-around',padding:'10px 20px 4px'}},
         Object.values(THEMES).map(t=>h('button',{key:t.id,onClick:()=>set({theme:t.id}),className:'act90 trt',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:6}},
           h('span',{style:{width:44,height:44,borderRadius:'50%',background:t.swatch,border:S.theme===t.id?('2.5px solid '+T.accent):('1.5px solid '+(t.id==='light'?'#d5d5d8':T.hair)),display:'flex',alignItems:'center',justifyContent:'center',color:t.fg,fontFamily:'Georgia,serif',fontSize:16}},'A'),
@@ -2613,7 +2615,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize-1,15,26)}),className:'act95',style:{padding:'8px 16px',borderRadius:9,background:T.card,color:T.fg,fontSize:13,fontFamily:'Georgia,serif'}},'A'),
         h('span',{style:{fontSize:13,color:T.meta,width:40,textAlign:'center'}},S.fontSize+'px'),
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize+1,15,26)}),className:'act95',style:{padding:'5px 16px',borderRadius:9,background:T.card,color:T.fg,fontSize:19,fontFamily:'Georgia,serif'}},'A')),
-      h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Line spacing and per-article tweaks live in the Aa menu inside the reader. The header moon/sun icon cycles all four themes.'));
+      h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Pick your theme above. Line spacing and per-article tweaks live in the Aa menu inside the reader.'));
   }else if(page==='behavior'){
     content=h(Fragment,null,
       head('Speed reading'),
@@ -3039,11 +3041,9 @@ function App(){
       case 'ai':setSheet(null);setAiOpen({articleId:id});break;
     }
   };
-  const cycleTheme=()=>{
-    const order=['light','sepia','dark','black'];
-    const next=order[(order.indexOf(S.theme)+1)%order.length];
-    update(d=>({...d,settings:{...d.settings,theme:next}}));
-    toastFn(THEMES[next].label+' theme');
+  const openNewspaper=()=>{
+    // route to The Daily Brief — the personalized newspaper (latest build)
+    window.location.href=new URL('newspaper.html',window.location.href).href;
   };
   const saveEditedContent=(id,title,html)=>{
     const text=htmlToText(html);
@@ -3193,7 +3193,7 @@ function App(){
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.newspaper(22),()=>{setScope({type:'brief'});setQuery('')}),
-      headerBtn(Icons.contrast(22),cycleTheme),
+      headerBtn(Icons.phone(22),openNewspaper),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
       EMBEDDED?headerBtn(Icons.back(23),exitToHost):null);
   }
