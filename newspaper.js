@@ -339,7 +339,10 @@
     gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 1 1-2.83 2.83l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-4 0v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 1 1-2.83-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1 0-4h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 1 1 2.83-2.83l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 4 0v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 1 1 2.83 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 0 4h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>',
     refresh: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M23 4v6h-6"/><path d="M1 20v-6h6"/><path d="M3.51 9a9 9 0 0 1 14.85-3.36L23 10M1 14l4.64 4.36A9 9 0 0 0 20.49 15"/></svg>',
     phone: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="2" width="12" height="20" rx="2.5"/><line x1="10.5" y1="18.5" x2="13.5" y2="18.5"/></svg>',
-    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>'
+    back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
+    pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
+    check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
   };
 
   /* go back to the Instapaper reading app */
@@ -380,36 +383,80 @@
     var h1 = el("div", "step-head ui", '<span class="n">1.</span> Select your topics');
     s1.appendChild(h1);
     s1.appendChild(el("div", "rule"));
-    var chips = el("div", "chips");
-    s1.appendChild(chips);
+    var editing = -1; // index of the topic currently being renamed
+    function dupTopic(name, skipIdx) {
+      return draft.topics.some(function (x, i) { return i !== skipIdx && x.toLowerCase() === name.toLowerCase(); });
+    }
 
-    function renderChips() {
-      chips.innerHTML = "";
-      // presets first
-      PRESET_TOPICS.forEach(function (t) {
-        var on = draft.topics.some(function (x) { return x.toLowerCase() === t.toLowerCase(); });
-        var c = el("button", "chip ui" + (on ? " on" : ""), esc(t));
-        c.onclick = function () { toggleTopic(t); };
-        chips.appendChild(c);
-      });
-      // custom topics not in presets
-      draft.topics.forEach(function (t) {
-        if (PRESET_TOPICS.some(function (p) { return p.toLowerCase() === t.toLowerCase(); })) return;
-        var c = el("button", "chip on ui", esc(t) + ' <span class="x">×</span>');
-        c.onclick = function () { toggleTopic(t); };
-        chips.appendChild(c);
+    // ---- your topics: each one can be edited or deleted ----
+    s1.appendChild(el("div", "sublabel ui", "Your topics"));
+    var pills = el("div", "tpills");
+    s1.appendChild(pills);
+
+    function renderTopics() {
+      pills.innerHTML = "";
+      if (!draft.topics.length) {
+        pills.appendChild(el("div", "tempty ui", "No topics yet — add one below or tap a suggestion."));
+        return;
+      }
+      draft.topics.forEach(function (t, i) {
+        if (editing === i) {
+          var ed = el("div", "tpill editing");
+          var ein = el("input", "ui"); ein.type = "text"; ein.value = t;
+          var save = el("button", "tbtn save", ICON.check); save.title = "Save";
+          function commit() {
+            var v = ein.value.trim();
+            if (v && !dupTopic(v, i)) draft.topics[i] = v;
+            editing = -1; renderTopics(); renderSuggest(); updateCta();
+          }
+          save.onclick = commit;
+          ein.addEventListener("keydown", function (e) {
+            if (e.key === "Enter") { e.preventDefault(); commit(); }
+            else if (e.key === "Escape") { editing = -1; renderTopics(); }
+          });
+          ed.appendChild(ein); ed.appendChild(save);
+          pills.appendChild(ed);
+          setTimeout(function () { ein.focus(); ein.select(); }, 0);
+          return;
+        }
+        var pill = el("div", "tpill");
+        pill.appendChild(el("span", "tname", esc(t)));
+        var edit = el("button", "tbtn", ICON.pencil); edit.title = "Edit topic";
+        edit.onclick = function () { editing = i; renderTopics(); };
+        var del = el("button", "tbtn del", ICON.close); del.title = "Delete topic";
+        del.onclick = function () {
+          draft.topics.splice(i, 1); editing = -1;
+          renderTopics(); renderSuggest(); updateCta();
+        };
+        pill.appendChild(edit); pill.appendChild(del);
+        pills.appendChild(pill);
       });
     }
-    function toggleTopic(t) {
-      var idx = -1;
-      draft.topics.forEach(function (x, i) { if (x.toLowerCase() === t.toLowerCase()) idx = i; });
-      if (idx > -1) draft.topics.splice(idx, 1);
-      else draft.topics.push(t);
-      renderChips(); updateCta();
-    }
-    renderChips();
 
-    // add custom
+    // ---- suggestions: preset topics you haven't added yet ----
+    var sugLbl = el("div", "sublabel ui", "Suggested");
+    s1.appendChild(sugLbl);
+    var suggest = el("div", "chips");
+    s1.appendChild(suggest);
+    function renderSuggest() {
+      suggest.innerHTML = "";
+      var avail = PRESET_TOPICS.filter(function (p) {
+        return !draft.topics.some(function (t) { return t.toLowerCase() === p.toLowerCase(); });
+      });
+      var none = !avail.length;
+      sugLbl.style.display = none ? "none" : "";
+      suggest.style.display = none ? "none" : "";
+      avail.forEach(function (p) {
+        var c = el("button", "chip ui", '<span class="plus">+</span> ' + esc(p));
+        c.onclick = function () { draft.topics.push(p); renderTopics(); renderSuggest(); updateCta(); };
+        suggest.appendChild(c);
+      });
+    }
+
+    renderTopics();
+    renderSuggest();
+
+    // ---- add a custom topic ----
     var addrow = el("div", "addrow");
     var inp = el("input", "ui");
     inp.type = "text"; inp.placeholder = "Add another topic…";
@@ -417,10 +464,8 @@
     function addCustom() {
       var v = inp.value.trim();
       if (!v) return;
-      if (!draft.topics.some(function (x) { return x.toLowerCase() === v.toLowerCase(); })) {
-        draft.topics.push(v);
-      }
-      inp.value = ""; renderChips(); updateCta(); inp.focus();
+      if (!dupTopic(v, -1)) draft.topics.push(v);
+      inp.value = ""; renderTopics(); renderSuggest(); updateCta(); inp.focus();
     }
     addbtn.onclick = addCustom;
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addCustom(); } });
