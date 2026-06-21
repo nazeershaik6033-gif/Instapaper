@@ -145,7 +145,9 @@ async function geminiChat(key,model,messages,maxTokens,onWait,onToken,fileUri){
   const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
   // attach a video (e.g. a YouTube URL) to the final user turn so Gemini can watch it natively
   if(fileUri&&contents.length)contents[contents.length-1].parts.push({fileData:{fileUri}});
-  const body={contents,generationConfig:{maxOutputTokens:maxTokens||2048,temperature:0.4}};
+  const gc={maxOutputTokens:maxTokens||2048,temperature:0.4};
+  if(/flash/i.test(model))gc.thinkingConfig={thinkingBudget:0}; // 2.5 Flash "thinks" by default — turn it off for instant replies
+  const body={contents,generationConfig:gc};
   if(sys)body.systemInstruction={parts:[{text:sys}]};
   const stream=!!(onToken&&typeof ReadableStream!=='undefined');
   const method=stream?'streamGenerateContent?alt=sse&':'generateContent?';
@@ -1446,6 +1448,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   const ctxCap=S.aiProvider==='gemini'?120000:15000;
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,ctxCap):'';
 
+  const curModel=()=>S.aiProvider==='gemini'?(S.geminiModel||'gemini-2.5-flash'):S.aiModel;
   const run=async(label,fn)=>{
     setError('');setBusy(label);setStream('');
     try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
@@ -1472,23 +1475,31 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     setCtx(c=>({...c,...patch}));
     setView('menu');toastFn('Transcript ready');
   });
-  const doSummarize=()=>run('Summarizing…',async()=>{
-    const kind=ctx&&ctx.isVideo?'this video transcript':'the following article';
-    const out=await aiChat(S,[
-      {role:'system',content:'You are a precise reading assistant.'},
-      {role:'user',content:'Summarize '+kind+' as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy,setStream);
-    setResult({kind:'Summary',text:out,lang:outLang});setView('result');
-  });
+  const doSummarize=force=>{
+    // instant replay of a cached summary (same article, language and model)
+    const c=ctx&&ctx.aiSummary;
+    if(!force&&c&&c.lang===outLang&&c.model===curModel()){setResult({kind:'Summary',text:c.text,lang:outLang,cached:true});setView('result');return}
+    run('Summarizing…',async()=>{
+      const kind=ctx&&ctx.isVideo?'this video transcript':'the following article';
+      const out=await aiChat(S,[
+        {role:'system',content:'You are a precise reading assistant.'},
+        {role:'user',content:'Summarize '+kind+' as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy,setStream);
+      if(ctx&&ctx.id){const sum={lang:outLang,model:curModel(),text:out};update(d=>({...d,articles:d.articles.map(a=>a.id===ctx.id?{...a,aiSummary:sum}:a)}));setCtx(x=>({...x,aiSummary:sum}))}
+      setResult({kind:'Summary',text:out,lang:outLang});setView('result');
+    });
+  };
   const doTranslate=lang=>run('Translating…',async()=>{
     const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
-    const chunks=chunkParas(paras,2400);
+    // Gemini's huge context lets us translate in one big pass instead of many throttled calls
+    const big=S.aiProvider==='gemini';
+    const chunks=chunkParas(paras,big?12000:2400);
     const out=[];
     for(let i=0;i<chunks.length;i++){
-      setBusy('Translating part '+(i+1)+' of '+chunks.length+'…');
+      setBusy(chunks.length>1?('Translating part '+(i+1)+' of '+chunks.length+'…'):'Translating…');
       out.push(await aiChat(S,[
         {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. Keep the same paragraphs, separated by blank lines. Output ONLY the translation, no commentary.'},
-        {role:'user',content:chunks[i]}],4000,setBusy,setStream));
-      if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
+        {role:'user',content:chunks[i]}],big?8000:4000,setBusy,setStream));
+      if(i<chunks.length-1&&!big)await sleep(1200); // free OpenRouter tiers burst-limit; Gemini doesn't need this
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
   });
@@ -1564,7 +1575,9 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   }else if(view==='result'&&result){
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:8}},result.kind+(result.lang?' · '+result.lang:'')),
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:8}},
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1}},result.kind+(result.lang?' · '+result.lang:'')+(result.cached?' · saved':'')),
+          result.kind==='Summary'?h('button',{onClick:()=>doSummarize(true),className:'act95',style:{fontSize:12.5,color:T.accent,fontWeight:500,flexShrink:0}},'↻ Regenerate'):null),
         h('div',{className:'rc',style:{fontFamily:fontCss(S.font),fontSize:16,lineHeight:1.62,color:T.fg,whiteSpace:'pre-wrap',maxHeight:'46vh',overflowY:'auto',padding:'14px 16px',background:T.card,borderRadius:12,userSelect:'text',WebkitUserSelect:'text'}},result.text),
         h('div',{style:{display:'flex',justifyContent:'space-around',marginTop:14}},
           h('button',{onClick:listen,className:'act95',style:{color:speaking?T.accent:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},speaking?Icons.pause(20):Icons.headphones(20),speaking?'Stop':'Listen'),
@@ -1615,7 +1628,7 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
                 ['English','Telugu','Hindi'].concat(AI_LANGS.filter(l=>!['English','Telugu','Hindi'].includes(l)).slice(0,4)).map(l=>chip(l,outLang===l,()=>setLang(l))))),
             error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
             isVid?h('div',{style:{margin:'0 20px 6px',fontSize:12,color:T.sub}},'Working from the video transcript'+(ctx.transcriptVia==='gemini'?' (transcribed by Gemini)':'')):null,
-            h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
+            h(ARow,{T,icon:Icons.notes(20),label:'Summarize',sub:(ctx.aiSummary&&ctx.aiSummary.lang===outLang&&ctx.aiSummary.model===curModel())?'Saved — opens instantly':'Key points + takeaway in '+outLang,onClick:()=>doSummarize(false)}),
             h(ARow,{T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
             h(ARow,{T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
             h(ARow,{T,icon:Icons.ai(20),label:'Ask about this '+(isVid?'video':'article'),sub:'Any question, answered from the '+(isVid?'transcript':'text'),onClick:()=>setView('ask')})));
