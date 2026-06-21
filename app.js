@@ -1886,7 +1886,7 @@ function BriefView({T,brief,onBrief,toastFn}){
   const now=new Date();
   const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
   const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
-  const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Brief',time:'00:00'};
+  const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Routine',time:'00:00'};
   const doneIds=(brief.done&&brief.done.key===win.key&&win.key)?brief.done.ids:[];
   const [act,setAct]=useState(null);
   const [moveIt,setMoveIt]=useState(null);
@@ -2012,9 +2012,9 @@ function BriefView({T,brief,onBrief,toastFn}){
         h('div',{style:{fontSize:12.5,color:T.sub,marginTop:1}},win.future?('Starts at '+fmtClock(curSlot.time)+' today'):(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done')+(newCount?' · '+newCount+' new since '+(win.start?fmtClock(new Date(win.start).getHours()+':'+String(new Date(win.start).getMinutes()).padStart(2,'0')):'last brief'):''):'Add the sites, apps and channels you check.'))),
       newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
     h('div',{style:{padding:'2px 14px 0'}},
-      win.future?h('div',{style:{fontSize:12.5,color:T.sub,background:T.card,borderRadius:10,padding:'10px 12px',margin:'6px 2px',lineHeight:1.45}},'This brief begins at '+fmtClock(curSlot.time)+'. New videos since your last brief will appear here then.'):null,
+      win.future?h('div',{style:{fontSize:12.5,color:T.sub,background:T.card,borderRadius:10,padding:'10px 12px',margin:'6px 2px',lineHeight:1.45}},'This routine begins at '+fmtClock(curSlot.time)+'. New videos since your last check will appear here then.'):null,
       total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px'}},'Nothing here yet — tap + to add.'))))
-        :h(EmptyState,{T,icon:Icons.sun(40),title:'Your daily brief',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
+        :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
       h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
       h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:10,padding:'11px 14px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},Icons.plus(18),'Add item'),
       historySection(),
@@ -2029,7 +2029,7 @@ function BriefView({T,brief,onBrief,toastFn}){
           h('input',{type:'time',value:s.time,onChange:e=>setSlot(s.id,{time:e.target.value||s.time}),
             style:{border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 10px',fontSize:14.5,colorScheme:(T.id==='dark'||T.id==='black')?'dark':'light'}}),
           (brief.slots||[]).length>1?h('button',{onClick:()=>{if(sel===s.id)setSel(null);onBrief(b=>({...b,slots:(b.slots||[]).filter(x=>x.id!==s.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(18)):null)),
-        h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Brief',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a brief'))):null,
+        h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Routine',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a routine'))):null,
 
     act?h(Sheet,{T,onClose:()=>setAct(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},act.name),
@@ -2750,7 +2750,7 @@ function scopeTitle(scope,folders){
     case 'archive':return 'Archive';
     case 'videos':return 'Videos';
     case 'photos':return 'Photos';
-    case 'brief':return 'Daily Brief';
+    case 'brief':return 'My Routine';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'tag':return '#'+scope.id;
