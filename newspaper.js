@@ -163,17 +163,32 @@
     function (u) { return "https://thingproxy.freeboard.io/fetch/" + u; }
   ];
 
-  function proxiedFetch(url) {
-    var i = 0;
-    function attempt() {
-      if (i >= PROXIES.length) return Promise.reject(new Error("all proxies failed"));
-      var px = PROXIES[i++](url);
-      return fetch(px, { method: "GET" }).then(function (r) {
-        if (!r.ok) throw new Error("status " + r.status);
-        return r.text();
-      }).catch(function () { return attempt(); });
-    }
-    return attempt();
+  // one fetch with a hard timeout so a hung proxy can never freeze the app
+  function timedFetch(u, timeoutMs) {
+    var ctrl = new AbortController();
+    var to = setTimeout(function () { ctrl.abort(); }, timeoutMs);
+    return fetch(u, { method: "GET", signal: ctrl.signal }).then(function (r) {
+      if (!r.ok) throw new Error("status " + r.status);
+      return r.text();
+    }).then(function (t) {
+      clearTimeout(to);
+      if (!t) throw new Error("empty");
+      return t;
+    }, function (e) { clearTimeout(to); throw e; });
+  }
+
+  // race ALL proxies in parallel, take the first that succeeds (fast + resilient)
+  function proxiedFetch(url, timeoutMs) {
+    timeoutMs = timeoutMs || 6500;
+    var attempts = PROXIES.map(function (mk) { return timedFetch(mk(url), timeoutMs); });
+    if (Promise.any) return Promise.any(attempts);
+    // fallback for older engines without Promise.any
+    return new Promise(function (resolve, reject) {
+      var left = attempts.length;
+      attempts.forEach(function (p) {
+        p.then(resolve, function () { if (--left === 0) reject(new Error("all proxies failed")); });
+      });
+    });
   }
 
   /* ---- Reddit: best for images + a real "importance" score ---------- */
@@ -259,13 +274,13 @@
     });
   }
 
-  /* ---- fetch one topic: merge both sources, dedupe, rank ------------ */
+  /* ---- fetch one topic: both sources in parallel, merge, dedupe, rank */
   function fetchTopic(topic) {
-    var results = [];
-    return fetchReddit(topic).catch(function () { return []; })
-      .then(function (r) { results = results.concat(r); return fetchGoogleNews(topic).catch(function () { return []; }); })
-      .then(function (g) {
-        results = results.concat(g);
+    return Promise.all([
+      fetchReddit(topic).catch(function () { return []; }),
+      fetchGoogleNews(topic).catch(function () { return []; })
+    ]).then(function (parts) {
+        var results = parts[0].concat(parts[1]);
         // dedupe by normalized title
         var seen = {}, merged = [];
         results.forEach(function (a) {
@@ -292,11 +307,19 @@
     if (h < 6) return 30; if (h < 24) return 18; if (h < 72) return 8; return 0;
   }
 
-  function fetchAll(topics) {
-    return Promise.all(topics.map(function (t) {
-      return fetchTopic(t).then(function (arts) { return { topic: t, articles: arts }; })
-        .catch(function () { return { topic: t, articles: [] }; });
-    }));
+  // fetch every topic in parallel, but never wait longer than deadlineMs —
+  // whatever has arrived by then is rendered (partial results are fine)
+  function fetchAll(topics, deadlineMs) {
+    return new Promise(function (resolve) {
+      var out = topics.map(function (t) { return { topic: t, articles: [] }; });
+      var done = 0, settled = false;
+      function finish() { if (!settled) { settled = true; clearTimeout(timer); resolve(out); } }
+      var timer = setTimeout(finish, deadlineMs || 8000);
+      topics.forEach(function (t, i) {
+        fetchTopic(t).then(function (arts) { out[i].articles = arts; }, function () {})
+          .then(function () { if (++done === topics.length) finish(); });
+      });
+    });
   }
 
   /* =====================================================================
@@ -515,11 +538,14 @@
     function updateCta() { cta.disabled = draft.topics.length === 0; }
     cta.onclick = function () {
       if (!draft.topics.length) return;
+      // if topics changed, drop the old cache so we don't flash stale sections
+      var changed = !existing ||
+        existing.topics.join("|").toLowerCase() !== draft.topics.join("|").toLowerCase();
       prefs = {
         topics: draft.topics.slice(),
         style: draft.style,
-        lastRefresh: 0,
-        cache: (existing && existing.cache) ? existing.cache : null,
+        lastRefresh: changed ? 0 : (existing.lastRefresh || 0),
+        cache: (existing && existing.cache && !changed) ? existing.cache : null,
         edition: editionNo()
       };
       savePrefs();
@@ -553,36 +579,49 @@
      ===================================================================== */
   function buildAndRender(forceFetch) {
     app.innerHTML = "";
-    var fresh = forceFetch || !prefs.cache ||
+    var hasCache = !!(prefs.cache && prefs.cache.length);
+    var stale = forceFetch || !hasCache ||
       (Date.now() - (prefs.lastRefresh || 0) > SIX_HOURS);
 
-    if (!fresh && prefs.cache) {
+    // INSTANT: if we have a cached edition, show it immediately — no spinner.
+    if (hasCache) {
       renderPaper(reviveCache(prefs.cache));
       scheduleAutoRefresh();
+      if (stale) backgroundRefresh();   // quietly fetch newer stories
       return;
     }
 
+    // First ever load: show the loader, but fetch fast with a hard deadline.
     var loader = showLoading();
     app.appendChild(loader);
     isRefreshing = true;
-
-    fetchAll(prefs.topics).then(function (sections) {
+    fetchAll(prefs.topics, 8000).then(function (sections) {
       isRefreshing = false;
-      // keep only sections that returned something; if everything failed, surface a friendly state
       var nonEmpty = sections.filter(function (s) { return s.articles.length; });
-      if (!nonEmpty.length) {
-        renderError(loader);
-        return;
-      }
+      if (!nonEmpty.length) { renderError(loader); return; }
       prefs.lastRefresh = Date.now();
       prefs.cache = serializeCache(sections);
       savePrefs();
       renderPaper(sections);
       scheduleAutoRefresh();
-    }).catch(function () {
+    }).catch(function () { isRefreshing = false; renderError(loader); });
+  }
+
+  // refresh in the background without blocking the page; swap in when ready
+  function backgroundRefresh() {
+    if (isRefreshing) return;
+    isRefreshing = true;
+    fetchAll(prefs.topics, 12000).then(function (sections) {
       isRefreshing = false;
-      renderError(loader);
-    });
+      var nonEmpty = sections.filter(function (s) { return s.articles.length; });
+      if (!nonEmpty.length) return;   // network down — keep the cached edition
+      prefs.lastRefresh = Date.now();
+      prefs.cache = serializeCache(sections);
+      savePrefs();
+      renderPaper(sections);
+      scheduleAutoRefresh();
+      toast("Updated with the latest.");
+    }, function () { isRefreshing = false; });
   }
 
   function serializeCache(sections) {
