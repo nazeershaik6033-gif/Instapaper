@@ -41,6 +41,30 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Ask** questions about any article (or chat freely without one)
 - AI results can be copied, shared, spoken aloud, or saved to Notes
 
+## The Daily Brief — your personalized newspaper
+
+A second, standalone app lives at **`newspaper.html`**: a personalized digital
+newspaper that reads like a real broadsheet.
+
+- **Setup once** — pick your topics (Tech, AI, Cricket, Finance… or type your own)
+  and a reading style: **Serious** (broadsheet), **Punchy** (snappy), or **gen z**
+  (casual slang). The whole paper's tone bends to your choice.
+- **Live news** — headlines are pulled from real sources (Reddit's top posts for
+  ranking + images, and Google News RSS for breadth), merged, de-duplicated, and
+  ranked by importance and freshness.
+- **Real newspaper layout** — bold masthead, a lead hero story with image, an
+  "Also in the news" rail, multi-column sections with section dividers, pull
+  quotes, kickers, bylines, and proper serif typography.
+- **Auto-refreshes every 6 hours** (and on return to the tab), shows the last
+  refresh time, and a manual **Refresh** button.
+- **Remembers you** — preferences and the last edition are stored in the browser,
+  so it loads instantly (and shows your last edition if you're offline).
+- **Settings (⚙) anytime**, fully mobile responsive, installable to your phone's
+  home screen (📱 icon in the header).
+
+Open `newspaper.html` directly, or add it as a home-screen app the same way as
+below.
+
 ## How to install on your iPhone
 
 1. Enable GitHub Pages for this repository: **Settings → Pages → Deploy from a branch → select your branch and `/ (root)` → Save**
