@@ -342,13 +342,22 @@
     back: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M15 18l-6-6 6-6"/></svg>',
     pencil: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 20h9"/><path d="M16.5 3.5a2.12 2.12 0 0 1 3 3L7 19l-4 1 1-4Z"/></svg>',
     check: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6 9 17l-5-5"/></svg>',
-    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>'
+    close: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M18 6 6 18M6 6l12 12"/></svg>',
+    home: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11.5 12 4l9 7.5"/><path d="M5.5 9.8V20h13V9.8"/></svg>'
   };
 
-  /* go back to the Instapaper reading app */
+  /* go back to the Instapaper reading app — works in the browser and in the
+     standalone PWA (where history.back() may have nowhere to go) */
   function backToApp() {
-    if (document.referrer && /index\.html|\/$/.test(document.referrer)) { history.back(); return; }
-    window.location.href = new URL("index.html", window.location.href).href;
+    var target = new URL("index.html", window.location.href).href;
+    var here = window.location.href;
+    if (window.history.length > 1) {
+      window.history.back();
+      // if back() didn't navigate (no in-app history), force it
+      setTimeout(function () { if (window.location.href === here) window.location.href = target; }, 300);
+    } else {
+      window.location.href = target;
+    }
   }
 
   /* =====================================================================
@@ -364,12 +373,18 @@
     var root = el("div", "setup");
     var inner = el("div", "setup-inner");
 
-    // back to the Instapaper app
+    // top bar: back to the Instapaper app + (when a paper already exists) home
     var backRow = el("div", "setup-back");
     var backBtn = el("button", "backbtn", ICON.back + "<span>Instapaper</span>");
     backBtn.title = "Back to Instapaper";
     backBtn.onclick = backToApp;
     backRow.appendChild(backBtn);
+    if (existing && existing.cache) {
+      var homeBtn = el("button", "backbtn", "<span>Daily Brief</span>" + ICON.home);
+      homeBtn.title = "Back to your paper";
+      homeBtn.onclick = function () { buildAndRender(false); };
+      backRow.appendChild(homeBtn);
+    }
     inner.appendChild(backRow);
 
     // masthead
@@ -674,7 +689,10 @@
     m.appendChild(top);
 
     var title = el("div", "mast-title");
-    title.appendChild(el("h1", "disp", "THE DAILY BRIEF"));
+    var h1 = el("h1", "disp masthome", "THE DAILY BRIEF");
+    h1.title = "Back to the front page";
+    h1.onclick = function () { window.scrollTo({ top: 0, behavior: "smooth" }); };
+    title.appendChild(h1);
     var sub = el("div", "mast-sub");
     sub.appendChild(el("div", "curated", tagline()));
     var ed = el("div", "edition");
