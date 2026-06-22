@@ -20,6 +20,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import
 
+**Daily Brief**
+- 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
+- 🌐 **Pick your region** — switch between **Global** and **India** (plus the US, UK, Australia, Canada, Singapore, and UAE) right from the top of the brief
+- 🗂️ **Pick a category** — Top stories, World, National, Business, Technology, Science, Health, Sports, or Entertainment
+- Tap any headline to save the full article for **offline reading**; your region and category choices are remembered
+
 **Content editing**
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version

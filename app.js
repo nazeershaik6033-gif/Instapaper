@@ -31,7 +31,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:''};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -256,6 +256,12 @@ const clamp=(v,a,b)=>Math.min(b,Math.max(a,v));
 function debounce(fn,ms){let t;return(...a)=>{clearTimeout(t);t=setTimeout(()=>fn(...a),ms)}}
 function domainOf(url){try{return new URL(url).hostname.replace(/^www\./,'')}catch(e){return''}}
 function fmtDate(ts){if(!ts)return'';const d=new Date(ts);return d.toLocaleDateString(undefined,{month:'long',day:'numeric',year:'numeric'})}
+function timeAgo(ts){if(!ts)return'';const s=Math.max(0,(Date.now()-ts)/1000);
+  if(s<60)return'just now';
+  if(s<3600)return Math.floor(s/60)+'m ago';
+  if(s<86400)return Math.floor(s/3600)+'h ago';
+  if(s<604800)return Math.floor(s/86400)+'d ago';
+  return fmtDate(ts);}
 function escapeHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;')}
 function unescapeEnt(s){const d=document.createElement('textarea');d.innerHTML=s;return d.value}
 function safeUrl(u){u=String(u||'').trim();return/^https?:\/\//i.test(u)?u:''}
@@ -546,6 +552,65 @@ async function fetchArticleData(url){
   };
 }
 
+/* ============================== daily brief (news) ============================== */
+/* Regions to read the brief from — "Global" and "India" are the two headline
+   regions; the rest let you pick any other country. */
+const BRIEF_REGIONS=[
+  {id:'global',label:'Global',flag:'🌐',hl:'en-US',gl:'US',ceid:'US:en'},
+  {id:'IN',label:'India',flag:'🇮🇳',hl:'en-IN',gl:'IN',ceid:'IN:en'},
+  {id:'US',label:'United States',flag:'🇺🇸',hl:'en-US',gl:'US',ceid:'US:en'},
+  {id:'GB',label:'United Kingdom',flag:'🇬🇧',hl:'en-GB',gl:'GB',ceid:'GB:en'},
+  {id:'AU',label:'Australia',flag:'🇦🇺',hl:'en-AU',gl:'AU',ceid:'AU:en'},
+  {id:'CA',label:'Canada',flag:'🇨🇦',hl:'en-CA',gl:'CA',ceid:'CA:en'},
+  {id:'SG',label:'Singapore',flag:'🇸🇬',hl:'en-SG',gl:'SG',ceid:'SG:en'},
+  {id:'AE',label:'UAE',flag:'🇦🇪',hl:'en-AE',gl:'AE',ceid:'AE:en'}
+];
+/* News categories — empty topic id means Google News "Top stories". */
+const BRIEF_CATEGORIES=[
+  {id:'',label:'Top stories'},
+  {id:'WORLD',label:'World'},
+  {id:'NATION',label:'National'},
+  {id:'BUSINESS',label:'Business'},
+  {id:'TECHNOLOGY',label:'Technology'},
+  {id:'SCIENCE',label:'Science'},
+  {id:'HEALTH',label:'Health'},
+  {id:'SPORTS',label:'Sports'},
+  {id:'ENTERTAINMENT',label:'Entertainment'}
+];
+const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
+function briefFeedUrl(region,topic){
+  const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+encodeURIComponent(region.ceid);
+  return topic
+    ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
+    :'https://news.google.com/rss?'+qs;
+}
+/* Fetch + parse a Google News RSS feed into clean headline items. */
+async function fetchBrief(regionId,topic){
+  const region=briefRegion(regionId);
+  const xml=await fetchRawHtml(briefFeedUrl(region,topic)); // through CORS proxies
+  const doc=new DOMParser().parseFromString(xml,'text/xml');
+  if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
+  const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
+  const items=[];
+  const nodes=doc.getElementsByTagName('item');
+  for(let i=0;i<nodes.length;i++){
+    const it=nodes[i];
+    const link=childText(it,'link');
+    let title=childText(it,'title');
+    if(!link||!title)continue;
+    const srcEl=it.getElementsByTagName('source')[0];
+    let source=srcEl?srcEl.textContent.trim():'';
+    // Google News titles read "Headline - Source"; split the source off the end.
+    if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
+    else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim();source=m[2].trim()}}
+    const pub=childText(it,'pubDate');
+    let publishedAt=0;if(pub){const d=Date.parse(pub);if(!isNaN(d))publishedAt=d}
+    items.push({title,url:link,source,publishedAt});
+  }
+  if(!items.length)throw new Error('No stories found for this region');
+  return items;
+}
+
 /* ============================== seed content ============================== */
 const WELCOME_HTML=[
 '<p><em>Welcome! This is your own premium reading app — every feature unlocked, no subscription, forever free.</em></p>',
@@ -642,7 +707,8 @@ const Icons={
   blocks:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),h('rect',{x:4,y:13.5,width:9,height:6.5,rx:1.5,stroke:'currentColor',strokeWidth:1.7}),P('M16.5 15.2l3 3M19.5 15.2l-3 3')),
   refresh:s=>Svg({size:s},P('M19.5 12a7.5 7.5 0 1 1-2.2-5.3'),P('M19.6 3.6v3.6h-3.6')),
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
-  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8'))
+  key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
+  news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -802,6 +868,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
         h(SidebarItem,{T,icon:Icons.video(22),label:'Videos',active:is('videos'),onClick:()=>go('videos')}),
         h(SidebarItem,{T,icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')}),
         h(SidebarItem,{T,icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')}),
+        h(SidebarItem,{T,icon:Icons.news(22),label:'Daily Brief',active:is('brief'),onClick:()=>go('brief')}),
         h(SidebarItem,{T,icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}}),
         folders.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)})),
         h('div',{style:{height:'calc(20px + '+SAFE_B+')'}})
@@ -1248,6 +1315,75 @@ function SpeedReader({a,T,S,onClose,onFinish,saveWpm}){
         h('input',{type:'range',min:150,max:700,step:10,value:wpm,onChange:e=>{const v=+e.target.value;setWpm(v);saveWpm(v)},style:{flex:1,accentColor:T.accent}}),
         h('div',{style:{fontSize:12.5,color:T.meta,width:104,textAlign:'right',flexShrink:0}},wpm+' wpm · ~'+minLeft+' min')))
   );
+}
+
+/* ============================== daily brief view ============================== */
+function BriefChips({T,options,selected,onSelect}){
+  return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'2px 16px 10px',flexShrink:0}},
+    options.map(o=>{
+      const active=o.id===selected;
+      return h('button',{key:o.id||'_top',onClick:()=>onSelect(o.id),className:'act95 trc',
+        style:{flexShrink:0,padding:'7px 14px',borderRadius:18,fontSize:13.5,fontWeight:active?600:500,whiteSpace:'nowrap',
+          background:active?T.fg:T.card,color:active?T.bg:T.fg,border:'1px solid '+(active?T.fg:T.hair)}},
+        (o.flag?o.flag+' ':'')+o.label);
+    }));
+}
+function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
+  const [items,setItems]=useState(null); // null = loading
+  const [err,setErr]=useState('');
+  const [busyUrl,setBusyUrl]=useState('');
+  const reqRef=useRef(0);
+  const load=useCallback(()=>{
+    const id=++reqRef.current;
+    setItems(null);setErr('');
+    fetchBrief(regionId,category)
+      .then(r=>{if(id===reqRef.current)setItems(r)})
+      .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
+  },[regionId,category]);
+  useEffect(load,[load]);
+  const region=briefRegion(regionId);
+  const open=async it=>{
+    if(busyUrl)return;
+    setBusyUrl(it.url);
+    try{await onOpenItem(it)}finally{setBusyUrl('')}
+  };
+  let body;
+  if(items===null){
+    body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
+      h(Spinner,{T,size:24}),
+      h('div',{style:{fontSize:14}},'Gathering today’s '+region.label+' headlines…'));
+  }else if(err){
+    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.news(40)),
+      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn’t load the brief'),
+      h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
+      h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
+  }else{
+    body=h('div',null,
+      items.map((it,i)=>{
+        const busy=busyUrl===it.url;
+        return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
+          style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'15px 16px 14px',borderBottom:'1px solid '+T.hair,color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
+            h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
+              it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
+              it.source&&it.publishedAt?h('span',null,'·'):null,
+              it.publishedAt?h('span',{style:{flexShrink:0}},timeAgo(it.publishedAt)):null)),
+          h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
+            busy?h(Spinner,{T,size:17}):Icons.download(18)));
+      }),
+      h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
+        'Tap a story to save it for offline reading. Headlines via Google News.'));
+  }
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
+      h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'),
+      h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
+    h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}),
+    h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
+    h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
+    h('div',{style:{borderTop:'1px solid '+T.hair}},body));
 }
 
 /* ============================== notes & tags views ============================== */
@@ -1861,6 +1997,7 @@ function scopeTitle(scope,folders){
     case 'videos':return 'Videos';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
+    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -2034,6 +2171,26 @@ function App(){
     patchArticle(id,{title:rec.title,source:rec.source,author:rec.author,image:rec.image,html:rec.html,text:rec.text,excerpt:rec.excerpt,words:rec.words,readMin:rec.readMin,isVideo:rec.isVideo,videoId:rec.videoId,publishedAt:rec.publishedAt});
     toastFn('Article downloaded');
   };
+  /* save a Daily Brief headline for offline reading, then open it */
+  const addBriefItem=async it=>{
+    const dup=dataRef.current.articles.find(a=>a.url===it.url);
+    if(dup){openArticle(dup.id);return}
+    try{
+      const rec=await fetchArticleData(it.url);
+      const article=Object.assign(rec,{
+        title:rec.title||it.title,
+        source:it.source||rec.source,
+        publishedAt:rec.publishedAt||it.publishedAt||0,
+        id:uid(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:1,highlights:[]
+      });
+      update(d=>({...d,articles:[article,...d.articles]}));
+      setReadingId(article.id);
+      toastFn('Saved — '+article.readMin+' min read');
+    }catch(e){
+      toastFn('Couldn’t fetch that story — opening it instead');
+      setBrowserO({url:it.url});
+    }
+  };
 
   /* ---------- article actions ---------- */
   const deleteArticles=ids=>{
@@ -2187,7 +2344,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags'].includes(scope.type);
+  const isArticleScope=!['notes','tags','brief'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
 
   const readerAction=k=>doAction(readingId,k);
@@ -2216,6 +2373,8 @@ function App(){
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
+  else if(scope.type==='brief')body=h(DailyBrief,{T,regionId:S.briefRegion||'IN',category:S.briefCategory||'',
+    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
