@@ -19,6 +19,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 📁 Folders, tags, and sorting by date / length / popularity
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import — with **automatic backup reminders**: pick a schedule (off / 3 days / weekly / 2 weeks / monthly) in **Settings → Syncing & Backup** and the home screen nudges you to export a fresh backup with one tap when one is due
+<<<<<<< HEAD
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
@@ -39,6 +40,8 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 
 **AI for videos**
 - Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
+=======
+>>>>>>> 97fe567 (Add automatic backup reminders)
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
