@@ -18,7 +18,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - ⚡ **Speed reading** — words flashed one at a time at up to 700 wpm, with smart pacing
 - 📁 Folders, tags, and sorting by date / length / popularity
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
-- 💾 Full backup export / import
+- 💾 Full backup export / import — with **automatic backup reminders**: pick a schedule (off / 3 days / weekly / 2 weeks / monthly) in **Settings → Syncing & Backup** and the home screen nudges you to export a fresh backup with one tap when one is due
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
@@ -57,7 +57,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 ## Notes
 
 - Saving a **new** article needs an internet connection (the page is fetched through public read-it-later proxies). Reading everything you've already saved works fully offline.
-- All data lives in your browser's local storage on the device. Use **Settings → Export backup** regularly if your library is precious to you.
+- All data lives in your browser's local storage on the device. Turn on **automatic backup reminders** (Settings → Syncing & Backup) and export regularly — your backup file is the only copy if your library is precious to you. Deleting/reinstalling the app can wipe its local storage, so keep a recent backup file somewhere safe.
 
 ## Files
 

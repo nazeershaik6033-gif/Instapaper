@@ -31,7 +31,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:''};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -763,6 +763,17 @@ function Toast({T,toast}){
 function Spinner({T,size}){
   const s=size||18;
   return h('span',{className:'spin',style:{width:s,height:s,borderRadius:'50%',border:'2.5px solid '+T.hair,borderTopColor:T.fg,display:'inline-block',flexShrink:0}});
+}
+
+/* gentle home-screen nudge to export a backup when one is due */
+function BackupBanner({T,never,onExport,onLater}){
+  return h('div',{className:'fdin',style:{margin:'0 16px 10px',padding:'12px 14px',borderRadius:12,background:T.card,border:'1px solid '+T.hair,display:'flex',alignItems:'center',gap:12}},
+    h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.download(22)),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{fontSize:14,fontWeight:600}},never?'Back up your library':'Time to back up'),
+      h('div',{style:{fontSize:12,color:T.meta,marginTop:1,lineHeight:1.4}},'Your reading lives only on this device. Save a backup file so you never lose it.')),
+    h('button',{onClick:onExport,className:'act95',style:{flexShrink:0,padding:'9px 14px',borderRadius:9,background:T.fg,color:T.bg,fontSize:13,fontWeight:600}},'Export'),
+    h('button',{onClick:onLater,'aria-label':'Remind me later',className:'act90',style:{flexShrink:0,padding:'8px',color:T.sub,display:'flex'}},Icons.x(16)));
 }
 
 /* ============================== article row ============================== */
@@ -1957,6 +1968,13 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
       h(ARow,{T,icon:Icons.download(20),label:'Export backup',sub:'Articles, notes, highlights, sites, settings \u2014 and your encrypted vault',onClick:onExport}),
       h(ARow,{T,icon:Icons.upload(20),label:'Import backup',sub:'Restore from an exported file',onClick:()=>{if(fileRef.current)fileRef.current.click()}}),
       h('input',{ref:fileRef,type:'file',accept:'.json,application/json',style:{display:'none'},onChange:e=>{const f=e.target.files&&e.target.files[0];if(f)onImport(f);e.target.value=''}}),
+      head('Automatic backups'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'4px 20px 6px'}},
+        h('span',{style:{fontSize:14.5,flex:1}},'Remind me to back up'),
+        h('select',{value:String(S.backupEvery||0),onChange:e=>set({backupEvery:+e.target.value}),style:{padding:'9px 12px',borderRadius:9,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+          [['0','Off'],['3','Every 3 days'],['7','Weekly'],['14','Every 2 weeks'],['30','Monthly']].map(([v,l])=>h('option',{key:v,value:v},l)))),
+      h('div',{style:{padding:'2px 20px 12px',fontSize:12,color:T.sub,lineHeight:1.5}},
+        'Last backup: '+(S.lastBackupAt?timeAgo(S.lastBackupAt):'never')+'. When one is due, a reminder with a one-tap Export appears on the home screen.'),
       archivedCount?h(ARow,{T,icon:Icons.archive(20),label:'Clear archive',sub:archivedCount+' archived article'+(archivedCount>1?'s':''),onClick:onClearArchived}):null,
       h(ARow,{T,icon:Icons.trash(20),label:'Erase everything',danger:true,onClick:onEraseAll}));
   }
@@ -2295,8 +2313,11 @@ function App(){
     const blob=new Blob([JSON.stringify(dataRef.current,null,1)],{type:'application/json'});
     const url=URL.createObjectURL(blob);const aEl=document.createElement('a');
     aEl.href=url;aEl.download='instapaper-backup-'+new Date().toISOString().slice(0,10)+'.json';aEl.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);toastFn('Backup downloaded');
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    update(d=>({...d,settings:{...d.settings,lastBackupAt:Date.now(),backupSnoozeUntil:0}}));
+    toastFn('Backup downloaded');
   };
+  const snoozeBackup=()=>update(d=>({...d,settings:{...d.settings,backupSnoozeUntil:Date.now()+(d.settings.backupEvery||7)*86400000}}));
   const importBackup=async file=>{
     try{
       const d=JSON.parse(await file.text());
@@ -2346,6 +2367,16 @@ function App(){
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','brief'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
+  /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
+  const backupNever=!S.lastBackupAt;
+  const backupDue=useMemo(()=>{
+    const every=S.backupEvery||0;
+    if(!every)return false;
+    if(!data.articles.some(a=>a.id!=='welcome'))return false; // nothing worth backing up yet
+    const now=Date.now();
+    if(now<(S.backupSnoozeUntil||0))return false;
+    return backupNever||now-S.lastBackupAt>=every*86400000;
+  },[data.articles,S.backupEvery,S.lastBackupAt,S.backupSnoozeUntil,backupNever]);
 
   const readerAction=k=>doAction(readingId,k);
   readerAction.update=update;
@@ -2402,6 +2433,7 @@ function App(){
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
+      backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
       h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
