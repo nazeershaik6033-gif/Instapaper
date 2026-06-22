@@ -3208,8 +3208,8 @@ function App(){
       h('button',{onClick:goHome,className:'act90','aria-label':'Go to top of Home',style:{marginLeft:2,padding:'2px 6px',textAlign:'left',fontFamily:WORDMARK,fontSize:21,fontWeight:600,letterSpacing:'.2px',color:T.fg,background:'none',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'52%'}},scopeTitle(scope,data.folders)),
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
-      headerBtn(Icons.newspaper(22),()=>{setScope({type:'brief'});setQuery('')}),
-      headerBtn(Icons.phone(22),openNewspaper),
+      headerBtn(Icons.phone(22),()=>{setScope({type:'brief'});setQuery('')}),
+      headerBtn(Icons.newspaper(22),openNewspaper),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
       EMBEDDED?headerBtn(Icons.back(23),exitToHost):null);
   }
