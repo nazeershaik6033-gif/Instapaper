@@ -7,6 +7,7 @@
   "use strict";
 
   var STORE_KEY = "dailybrief_v1";
+  var CACHE_VER = 2; // bump when ranking/shape changes so old editions refetch
   var SIX_HOURS = 6 * 60 * 60 * 1000;
   var app = document.getElementById("app");
   var toastEl = document.getElementById("toast");
@@ -57,6 +58,8 @@
     for (var i = 0; i < REGIONS.length; i++) if (REGIONS[i].id === id) return REGIONS[i];
     return REGIONS[0];
   }
+  // a specific country (not "Global") is selected → bias the paper toward its edition
+  function isRegional() { return !!(prefs && prefs.region && prefs.region !== "global"); }
 
   /* gen-z reaction openers used to flavour deks (deterministic pick) */
   var GENZ_OPENERS = [
@@ -100,6 +103,7 @@
       var p = JSON.parse(raw);
       if (!p.topics || !p.topics.length) return null;
       if (!p.region) p.region = DEFAULT_REGION; // older papers had no region
+      if (p.cacheVer !== CACHE_VER) { p.cache = null; p.lastRefresh = 0; } // drop pre-region editions
       return p;
     } catch (e) { return null; }
   }
@@ -276,7 +280,7 @@
             source: (src || "Google News").trim(),
             date: it.pubDate ? new Date(it.pubDate.replace(" ", "T")) : new Date(),
             image: /^https?:/.test(img) ? img : "",
-            score: 0, topic: topic,
+            score: 0, topic: topic, regional: isRegional(),
             summary: stripTags(decodeEntities(it.description || it.content || "")).slice(0, 240)
           };
         });
@@ -303,7 +307,7 @@
         url: link.trim(),
         source: (source || "Google News").trim(),
         date: pub ? new Date(pub) : new Date(),
-        image: "", score: 0, topic: topic,
+        image: "", score: 0, topic: topic, regional: isRegional(),
         summary: stripTags(decodeEntities(descRaw)).slice(0, 240)
       });
     });
@@ -350,8 +354,9 @@
           }
           seen[k] = a; merged.push(a);
         });
-        // rank: images + score + recency
+        // rank: when a country is selected, its edition leads; then images + score + recency
         merged.sort(function (a, b) {
+          if (!!a.regional !== !!b.regional) return (b.regional ? 1 : 0) - (a.regional ? 1 : 0);
           var sa = (a.image ? 50 : 0) + Math.min(a.score, 5000) / 50 + recencyBoost(a.date);
           var sb = (b.image ? 50 : 0) + Math.min(b.score, 5000) / 50 + recencyBoost(b.date);
           return sb - sa;
@@ -624,6 +629,7 @@
         region: draft.region,
         lastRefresh: changed ? 0 : (existing.lastRefresh || 0),
         cache: (existing && existing.cache && !changed) ? existing.cache : null,
+        cacheVer: CACHE_VER,
         edition: editionNo()
       };
       savePrefs();
@@ -679,6 +685,7 @@
       if (!nonEmpty.length) { renderError(loader); return; }
       prefs.lastRefresh = Date.now();
       prefs.cache = serializeCache(sections);
+      prefs.cacheVer = CACHE_VER;
       savePrefs();
       renderPaper(sections);
       scheduleAutoRefresh();
@@ -695,6 +702,7 @@
       if (!nonEmpty.length) return;   // network down — keep the cached edition
       prefs.lastRefresh = Date.now();
       prefs.cache = serializeCache(sections);
+      prefs.cacheVer = CACHE_VER;
       savePrefs();
       renderPaper(sections);
       scheduleAutoRefresh();
@@ -707,7 +715,7 @@
       return {
         topic: s.topic,
         articles: s.articles.map(function (a) {
-          return [a.title, a.url, a.source, a.date.getTime(), a.image, a.score, a.summary];
+          return [a.title, a.url, a.source, a.date.getTime(), a.image, a.score, a.summary, a.regional ? 1 : 0];
         })
       };
     });
@@ -717,7 +725,7 @@
       return {
         topic: s.topic,
         articles: s.articles.map(function (a) {
-          return { title: a[0], url: a[1], source: a[2], date: new Date(a[3]), image: a[4], score: a[5], topic: s.topic, summary: a[6] };
+          return { title: a[0], url: a[1], source: a[2], date: new Date(a[3]), image: a[4], score: a[5], topic: s.topic, summary: a[6], regional: !!a[7] };
         })
       };
     });
@@ -756,6 +764,7 @@
     /* -------- lead / hero block -------- */
     // choose the strongest story (prefer image + score) as the lead
     var ranked = allArts.slice().sort(function (a, b) {
+      if (!!a.regional !== !!b.regional) return (b.regional ? 1 : 0) - (a.regional ? 1 : 0);
       return ((b.image ? 100 : 0) + b.score) - ((a.image ? 100 : 0) + a.score);
     });
     var used = {};
