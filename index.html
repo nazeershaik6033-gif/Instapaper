@@ -105,8 +105,26 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 <div class="spl" id="spl">Instapaper</div>
 <div id="root"></div>
 <script>
-/* failsafe: never let the splash hang forever if app.js fails to load/run */
-setTimeout(function(){var s=document.getElementById('spl');if(s)s.classList.add('hide')},8000);
+/* Watchdog: if the app hasn't mounted shortly after load, the cached app.js
+   or React runtime is probably broken — clear caches + service worker once and
+   reload to self-heal. If the app did mount, just fade the splash out. */
+setTimeout(function(){
+  var root=document.getElementById('root');
+  var spl=document.getElementById('spl');
+  var mounted=root&&root.childElementCount>0;
+  if(mounted){try{sessionStorage.removeItem('insta_recover')}catch(e){}if(spl)spl.classList.add('hide');return;}
+  var tried;try{tried=sessionStorage.getItem('insta_recover')}catch(e){}
+  if(!tried){
+    try{sessionStorage.setItem('insta_recover','1')}catch(e){}
+    var reload=function(){location.reload()};
+    var jobs=[];
+    try{if(window.caches)jobs.push(caches.keys().then(function(ks){return Promise.all(ks.map(function(k){return caches.delete(k)}))}))}catch(e){}
+    try{if(navigator.serviceWorker)jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))}))}catch(e){}
+    Promise.all(jobs).then(reload,reload);
+  }else if(spl){
+    spl.innerHTML='<div style="text-align:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#76767c;padding:30px;line-height:1.55">Couldn’t load Instapaper.<br/>Check your connection, then fully close and reopen the app.</div>';
+  }
+},7000);
 </script>
 <script src="app.js"></script>
 <script>
