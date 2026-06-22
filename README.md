@@ -62,8 +62,10 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 Tap the **phone icon** in the header to open **`newspaper.html`**: a standalone,
 premium personalized newspaper (separate from the in-app Daily Brief checklist).
 
-- **Setup once** — pick topics (Tech, AI, Cricket, Finance… or type your own) and a
-  reading style: **Serious**, **Punchy**, or **gen z** — the whole paper's tone follows.
+- **Setup once** — pick topics (Tech, AI, Cricket, Finance… or type your own), a
+  **region** (India-specific, Global, or another country — US, UK, Australia, Canada,
+  Singapore, UAE), and a reading style: **Serious**, **Punchy**, or **gen z** — the
+  whole paper's tone follows.
 - **Live news** — real headlines pulled from Reddit's top posts (images + ranking)
   and Google News RSS (breadth + any custom topic), merged, de-duped, and ranked.
 - **Real broadsheet layout** — bold masthead, lead hero story, "Also in the news"
