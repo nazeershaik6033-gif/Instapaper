@@ -1141,7 +1141,8 @@ const Icons={
   pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
   crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
   rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
-  drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'}))
+  drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'})),
+  news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -1948,11 +1949,11 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,hea
   if(items===null){
     body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
       h(Spinner,{T,size:24}),
-      h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
+      h(‘div’,{style:{fontSize:14}},’Gathering today\’s ‘+region.label+’ headlines…’));
   }else if(err){
-    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
-      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
-      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
+    body=h(‘div’,{style:{padding:’60px 40px’,textAlign:’center’,color:T.sub}},
+      h(‘div’,{style:{display:’flex’,justifyContent:’center’,marginBottom:14,opacity:.5}},Icons.newspaper(40)),
+      h(‘div’,{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},’Couldn\’t load the brief’),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
@@ -3184,6 +3185,7 @@ function scopeTitle(scope,folders){
     case 'headlines':return 'India Headlines';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
+    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';

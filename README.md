@@ -40,6 +40,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 **AI for videos**
 - Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
 
+**Daily Brief**
+- 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
+- 🌐 **Pick your region** — switch between **Global** and **India** (plus the US, UK, Australia, Canada, Singapore, and UAE) right from the top of the brief
+- 🗂️ **Pick a category** — Top stories, World, National, Business, Technology, Science, Health, Sports, or Entertainment
+- Tap any headline to save the full article for **offline reading**; your region and category choices are remembered
+
 **Content editing**
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
