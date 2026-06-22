@@ -39,6 +39,25 @@
     }
   };
 
+  /* ---------------- regions (Google News editions) ------------------- */
+  /* "India" and "Global" lead; the rest let you pick any other country.
+     Each maps to the Google News edition params (hl / gl / ceid). */
+  var REGIONS = [
+    { id: "IN",     label: "India",          hl: "en-IN", gl: "IN", ceid: "IN:en" },
+    { id: "global", label: "Global",         hl: "en-US", gl: "US", ceid: "US:en" },
+    { id: "US",     label: "United States",  hl: "en-US", gl: "US", ceid: "US:en" },
+    { id: "GB",     label: "United Kingdom", hl: "en-GB", gl: "GB", ceid: "GB:en" },
+    { id: "AU",     label: "Australia",      hl: "en-AU", gl: "AU", ceid: "AU:en" },
+    { id: "CA",     label: "Canada",         hl: "en-CA", gl: "CA", ceid: "CA:en" },
+    { id: "SG",     label: "Singapore",      hl: "en-SG", gl: "SG", ceid: "SG:en" },
+    { id: "AE",     label: "UAE",            hl: "en-AE", gl: "AE", ceid: "AE:en" }
+  ];
+  var DEFAULT_REGION = "IN";
+  function regionById(id) {
+    for (var i = 0; i < REGIONS.length; i++) if (REGIONS[i].id === id) return REGIONS[i];
+    return REGIONS[0];
+  }
+
   /* gen-z reaction openers used to flavour deks (deterministic pick) */
   var GENZ_OPENERS = [
     "ok so basically", "not gonna lie,", "lowkey huge:", "the way that",
@@ -80,6 +99,7 @@
       if (!raw) return null;
       var p = JSON.parse(raw);
       if (!p.topics || !p.topics.length) return null;
+      if (!p.region) p.region = DEFAULT_REGION; // older papers had no region
       return p;
     } catch (e) { return null; }
   }
@@ -238,8 +258,9 @@
   /* ---- Google News RSS: breadth + freshness, great for custom topics.
      Tries rss2json (direct CORS, no proxy) first, then a proxied raw feed. */
   function fetchGoogleNews(topic) {
+    var r = regionById(prefs && prefs.region);
     var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(topic) +
-              "&hl=en-US&gl=US&ceid=US:en";
+              "&hl=" + r.hl + "&gl=" + r.gl + "&ceid=" + encodeURIComponent(r.ceid);
     return timedFetch("https://api.rss2json.com/v1/api.json?count=16&rss_url=" +
         encodeURIComponent(rss), 6500)
       .then(function (txt) {
@@ -425,7 +446,8 @@
   function renderSetup(existing) {
     var draft = {
       topics: existing ? existing.topics.slice() : ["Tech", "AI", "Finance", "Business"],
-      style: existing ? existing.style : "serious"
+      style: existing ? existing.style : "serious",
+      region: existing && existing.region ? existing.region : DEFAULT_REGION
     };
 
     app.innerHTML = "";
@@ -547,9 +569,27 @@
     s1.appendChild(addrow);
     inner.appendChild(s1);
 
-    /* ---- step 2: style ---- */
+    /* ---- step 2: region ---- */
+    var sR = el("div", "step");
+    sR.appendChild(el("div", "step-head ui", '<span class="n">2.</span> Choose your region'));
+    sR.appendChild(el("div", "rule"));
+    sR.appendChild(el("div", "sublabel ui", "News edition — India-specific, Global, or another country"));
+    var regionChips = el("div", "chips");
+    REGIONS.forEach(function (r) {
+      var c = el("button", "chip ui" + (draft.region === r.id ? " on" : ""), esc(r.label));
+      c.onclick = function () {
+        draft.region = r.id;
+        regionChips.querySelectorAll(".chip").forEach(function (x) { x.classList.remove("on"); });
+        c.classList.add("on");
+      };
+      regionChips.appendChild(c);
+    });
+    sR.appendChild(regionChips);
+    inner.appendChild(sR);
+
+    /* ---- step 3: style ---- */
     var s2 = el("div", "step");
-    s2.appendChild(el("div", "step-head ui", '<span class="n">2.</span> Choose your style'));
+    s2.appendChild(el("div", "step-head ui", '<span class="n">3.</span> Choose your style'));
     s2.appendChild(el("div", "rule"));
     var styleGrid = el("div", "styles");
     ["serious", "punchy", "genz"].forEach(function (key) {
@@ -574,12 +614,14 @@
     function updateCta() { cta.disabled = draft.topics.length === 0; }
     cta.onclick = function () {
       if (!draft.topics.length) return;
-      // if topics changed, drop the old cache so we don't flash stale sections
+      // if topics or region changed, drop the old cache so we don't flash stale sections
       var changed = !existing ||
-        existing.topics.join("|").toLowerCase() !== draft.topics.join("|").toLowerCase();
+        existing.topics.join("|").toLowerCase() !== draft.topics.join("|").toLowerCase() ||
+        existing.region !== draft.region;
       prefs = {
         topics: draft.topics.slice(),
         style: draft.style,
+        region: draft.region,
         lastRefresh: changed ? 0 : (existing.lastRefresh || 0),
         cache: (existing && existing.cache && !changed) ? existing.cache : null,
         edition: editionNo()
@@ -758,7 +800,7 @@
     phone.title = "Add to home screen";
     phone.onclick = function () { toast("Tap your browser’s Share button → “Add to Home Screen” to install."); };
     left.appendChild(phone);
-    left.appendChild(el("span", null, "Personal Edition"));
+    left.appendChild(el("span", null, regionById(prefs.region).label + " Edition"));
     top.appendChild(left);
     top.appendChild(el("span", null, "Vol. I · " + (STYLES[prefs.style] || STYLES.serious).label + " edition"));
     m.appendChild(top);
