@@ -1,7 +1,9 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
-const CACHE = 'instapaper-shell-v48';
+const CACHE = 'instapaper-shell-v49';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
-  './newspaper.html', './newspaper.js', './newspaper.manifest.json'];
+  './newspaper.html', './newspaper.js', './newspaper.manifest.json',
+  'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
+  'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js'];
 const RUNTIME_HOSTS = ['cdnjs.cloudflare.com', 'fonts.googleapis.com', 'fonts.gstatic.com'];
 
 self.addEventListener('install', e => {
