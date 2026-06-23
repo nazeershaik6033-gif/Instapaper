@@ -26,12 +26,28 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🗂️ **Pick a category** — Top stories, World, National, Business, Technology, Science, Health, Sports, or Entertainment
 - Tap any headline to save the full article for **offline reading**; your region and category choices are remembered
 
+**Photos & files**
+- 📷 **Photos section** (sidebar → Photos) — add images and files via the **+** button: **Take photo**, **Photo library**, or **Upload files** (images, PDFs, anything)
+- 🗂 Three tabs — **All photos**, **Albums**, and **Favourites**; **pin** photos to the top, group them into **albums**, and **favourite** the best ones
+- ✂️ **Edit** any photo — add a caption, **crop**, and **rotate**; **move**, edit, or delete from any tab
+- Photos are stored privately on-device in IndexedDB (kept out of the backup file so backups stay small)
+
+**Reading state & auto-archive**
+- Articles and videos track a **read / watched** state. Finishing an article (scrolling to the end, or finishing TTS / Speed Read) or marking a video watched **auto-moves it to Archive**, keeping Home and Videos as clean "to-do" lists. Nothing is deleted — find everything you've finished under Archive or the **Read** filter.
+- **Filter & sort pills** — quick **Filter** (All / Unread / Liked / Articles / Videos / Completed) and **Sort** (Newest / Oldest / Longest / Shortest / Popular) chips sit right under the search bar on every list.
+- **Mark videos as watched** — right in the video player, or via long-press → Mark as watched.
+
+**AI for videos**
+- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
+
 **Content editing**
-- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
+- 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **Browser & Logged-In Sites**
 - 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
+- 💾 **Save / Share from the browser** — reading any page in the built-in browser? Tap **Save** to download & clean it straight into your reading list, or **Share** to send the link out via the system share sheet
+- 📥 **Share into Instapaper** — once installed to your home screen, Instapaper appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
@@ -46,6 +62,23 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Rewrite** — simplify, shorten, expand, change tone, or convert to bullet points
 - **Ask** questions about any article (or chat freely without one)
 - AI results can be copied, shared, spoken aloud, or saved to Notes
+
+## The Daily Brief — your personalized newspaper (📱 header icon)
+
+Tap the **phone icon** in the header to open **`newspaper.html`**: a standalone,
+premium personalized newspaper (separate from the in-app Daily Brief checklist).
+
+- **Setup once** — pick topics (Tech, AI, Cricket, Finance… or type your own), a
+  **region** (India-specific, Global, or another country — US, UK, Australia, Canada,
+  Singapore, UAE), and a reading style: **Serious**, **Punchy**, or **gen z** — the
+  whole paper's tone follows.
+- **Live news** — real headlines pulled from Reddit's top posts (images + ranking)
+  and Google News RSS (breadth + any custom topic), merged, de-duped, and ranked.
+- **Real broadsheet layout** — bold masthead, lead hero story, "Also in the news"
+  rail, multi-column sections, dividers, pull quotes, kickers, bylines, serif type.
+- **Auto-refreshes every 6 hours** (and on tab focus), with a last-refresh time and a
+  manual Refresh button. Preferences + last edition are saved in the browser
+  (instant loads, offline-friendly). Edit anytime via the ⚙ gear. Fully responsive.
 
 ## How to install on your iPhone
 
