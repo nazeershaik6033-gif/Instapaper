@@ -848,11 +848,22 @@ const PRESET_SOURCES=[
   {domain:'eenadu.net',label:'Eenadu'},{domain:'sakshi.com',label:'Sakshi'},
   {domain:'andhrajyothy.com',label:'Andhra Jyothi'},
 ];
+/* Direct RSS feeds from Indian news outlets — not blocked by proxies unlike Google News */
+const DIRECT_FEEDS={
+  '':['https://timesofindia.indiatimes.com/rssfeedstopstories.cms','https://www.thehindu.com/feeder/default.rss','https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml'],
+  'NATION':['https://timesofindia.indiatimes.com/rssfeeds/296589292.cms','https://www.thehindu.com/news/national/feeder/default.rss'],
+  'WORLD':['https://timesofindia.indiatimes.com/rssfeeds/296589297.cms','https://www.thehindu.com/news/international/feeder/default.rss'],
+  'BUSINESS':['https://timesofindia.indiatimes.com/rssfeeds/1898055.cms','https://www.thehindu.com/business/feeder/default.rss'],
+  'TECHNOLOGY':['https://timesofindia.indiatimes.com/rssfeeds/66949542.cms','https://www.thehindu.com/sci-tech/technology/feeder/default.rss'],
+  'SCIENCE':['https://timesofindia.indiatimes.com/rssfeeds/32952.cms','https://www.thehindu.com/sci-tech/science/feeder/default.rss'],
+  'HEALTH':['https://timesofindia.indiatimes.com/rssfeeds/3908999.cms'],
+  'SPORTS':['https://timesofindia.indiatimes.com/rssfeeds/4719148.cms','https://www.thehindu.com/sport/feeder/default.rss'],
+  'ENTERTAINMENT':['https://timesofindia.indiatimes.com/rssfeeds/1081479906.cms'],
+};
 function briefFeedUrl(region,topic,sources,customQuery){
   const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+region.ceid;
   const activeSrc=(sources||[]).filter(s=>s.enabled);
   if(activeSrc.length||customQuery){
-    // Use search endpoint with site: filters when sources are chosen or topic is custom
     const siteStr=activeSrc.map(s=>'site:'+s.domain).join(' OR ');
     const base=customQuery||(TOPIC_TO_QUERY[topic||'']||'india');
     const q=siteStr?base+' ('+siteStr+')':base;
@@ -862,8 +873,8 @@ function briefFeedUrl(region,topic,sources,customQuery){
     ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
     :'https://news.google.com/rss?'+qs;
 }
-/* Parse Google News XML into clean headline items. */
-function parseGNewsXml(xml){
+/* Parse any standard RSS/Atom XML into clean headline items. */
+function parseGNewsXml(xml,defaultSource){
   const doc=new DOMParser().parseFromString(xml,'text/xml');
   if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
   const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
@@ -871,68 +882,78 @@ function parseGNewsXml(xml){
   const nodes=doc.getElementsByTagName('item');
   for(let i=0;i<nodes.length;i++){
     const it=nodes[i];
-    const link=childText(it,'link');
+    const link=childText(it,'link')||childText(it,'guid');
     let title=childText(it,'title');
     if(!link||!title)continue;
     const srcEl=it.getElementsByTagName('source')[0];
-    let source=srcEl?srcEl.textContent.trim():'';
+    let source=srcEl?srcEl.textContent.trim():defaultSource||'';
     if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
     else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim();source=m[2].trim()}}
-    const pub=childText(it,'pubDate');
+    const pub=childText(it,'pubDate')||childText(it,'updated');
     let publishedAt=0;if(pub){const d=Date.parse(pub);if(!isNaN(d))publishedAt=d}
     items.push({title,url:link,source,publishedAt});
   }
   return items;
 }
-/* Fetch + parse a Google News RSS feed into clean headline items.
-   Races rss2json.com, allorigins JSON, and a wide CORS proxy pool in parallel. */
-async function fetchBrief(regionId,topic,sources,customQuery){
-  const region=briefRegion(regionId);
-  const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
-  const enc=encodeURIComponent(feedUrl);
-  /* RSS→JSON service: parses on their server, no CORS issues */
+const CORS_PROXIES=[
+  u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+  u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u),
+  u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+  u=>'https://corsproxy.org/?'+encodeURIComponent(u),
+  u=>'https://thingproxy.freeboard.io/fetch/'+u,
+  u=>'https://api.cors.lol/?url='+encodeURIComponent(u),
+];
+/* Fetch one RSS URL through the proxy pool — first valid response wins. */
+async function fetchOneFeed(feedUrl,defaultSource){
+  const tryProxy=async p=>{
+    const res=await fetchWithTimeout(p(feedUrl),{},12000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    const text=await res.text();
+    if(!text||text.length<100||!text.includes('<item>'))throw new Error('not rss');
+    return parseGNewsXml(text,defaultSource);
+  };
+  /* Also try rss2json.com — parses on their servers, bypasses CORS entirely */
   const tryRss2json=async()=>{
-    const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+enc+'&count=30',{},15000);
+    const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=30',{},12000);
     if(!res.ok)throw new Error('rss2json '+res.status);
     const json=await res.json();
     if(json.status!=='ok'||!Array.isArray(json.items)||!json.items.length)throw new Error('rss2json empty');
     return json.items.map(it=>{
-      let title=it.title||'';
-      const source=it.author||'';
+      let title=it.title||'';const source=it.author||defaultSource||'';
       if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
-      else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim()}}
       return{title,url:it.link,source,publishedAt:it.pubDate?new Date(it.pubDate).getTime():0};
     }).filter(it=>it.title&&it.url);
   };
-  /* allorigins /get returns JSON wrapper with contents + http_code */
-  const tryAllOriginsGet=async()=>{
-    const res=await fetchWithTimeout('https://api.allorigins.win/get?url='+enc,{},15000);
-    if(!res.ok)throw new Error('allorigins-get '+res.status);
-    const json=await res.json();
-    if(!json.contents||!json.contents.includes('<item>'))throw new Error('allorigins-get no rss');
-    return parseGNewsXml(json.contents);
-  };
-  /* Wide pool of raw-text CORS proxies */
-  const RAW_PROXIES=[
-    u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
-    u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u),
-    u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
-    u=>'https://corsproxy.org/?'+encodeURIComponent(u),
-    u=>'https://thingproxy.freeboard.io/fetch/'+u,
-    u=>'https://api.cors.lol/?url='+encodeURIComponent(u),
+  return Promise.any([tryRss2json(),...CORS_PROXIES.map(p=>tryProxy(p))]);
+}
+/* Fetch headlines: tries direct Indian news RSS feeds first, Google News as fallback. */
+async function fetchBrief(regionId,topic,sources,customQuery){
+  const region=briefRegion(regionId);
+  const activeSrc=(sources||[]).filter(s=>s.enabled);
+  /* When source-filtering or custom query: use Google News search (needs proxy) */
+  if(activeSrc.length||customQuery){
+    const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
+    let items;
+    try{items=await fetchOneFeed(feedUrl,'Google News')}
+    catch(e){throw new Error('Could not load headlines — check your connection and try again')}
+    if(!items.length)throw new Error('No stories found');
+    return items;
+  }
+  /* Default: fetch directly from Indian news outlets (not blocked by proxies) */
+  const directUrls=DIRECT_FEEDS[topic||'']||DIRECT_FEEDS[''];
+  const sourceNames={'timesofindia.indiatimes.com':'Times of India','thehindu.com':'The Hindu','hindustantimes.com':'Hindustan Times'};
+  const getSrc=u=>{const h=Object.keys(sourceNames).find(k=>u.includes(k));return sourceNames[h]||''};
+  /* Race all direct feeds + Google News in parallel */
+  const googleFeedUrl=briefFeedUrl(region,topic,sources,customQuery);
+  const attempts=[
+    ...directUrls.map(u=>fetchOneFeed(u,getSrc(u))),
+    fetchOneFeed(googleFeedUrl,'Google News'),
   ];
-  const tryProxy=async p=>{
-    const res=await fetchWithTimeout(p(feedUrl),{},15000);
-    if(!res.ok)throw new Error('proxy '+res.status);
-    const text=await res.text();
-    if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
-    return parseGNewsXml(text);
-  };
-  let items;
-  try{items=await Promise.any([tryRss2json(),tryAllOriginsGet(),...RAW_PROXIES.map(p=>tryProxy(p))])}
-  catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
-  if(!items.length)throw new Error('No stories found for this region');
-  return items;
+  let results;
+  try{results=await Promise.any(attempts)}
+  catch(e){throw new Error('Could not load headlines — check your connection and try again')}
+  if(!results.length)throw new Error('No stories found');
+  return results;
 }
 
 /* ============================== seed content ============================== */
