@@ -579,7 +579,10 @@ const BRIEF_CATEGORIES=[
 ];
 const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
 function briefFeedUrl(region,topic){
-  const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+encodeURIComponent(region.ceid);
+  // ceid must NOT be percent-encoded (e.g. "IN:en" not "IN%3Aen") — Google News
+  // does exact-string matching on the ceid value, so encoding the colon causes
+  // it to fall back to global/US content regardless of the selected region.
+  const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+region.ceid;
   return topic
     ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
     :'https://news.google.com/rss?'+qs;
