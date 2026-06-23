@@ -508,7 +508,7 @@
 
     /* ---- step 1: topics ---- */
     var s1 = el("div", "step");
-    var h1 = el("div", "step-head ui", '<span class="n">1.</span> Select your topics');
+    var h1 = el("div", "step-head ui", '<span class="n">2.</span> Select your topics');
     s1.appendChild(h1);
     s1.appendChild(el("div", "rule"));
     var editing = -1; // index of the topic currently being renamed
@@ -599,11 +599,10 @@
     inp.addEventListener("keydown", function (e) { if (e.key === "Enter") { e.preventDefault(); addCustom(); } });
     addrow.appendChild(inp); addrow.appendChild(addbtn);
     s1.appendChild(addrow);
-    inner.appendChild(s1);
 
-    /* ---- step 2: region ---- */
+    /* ---- step 1: region (shown first) ---- */
     var sR = el("div", "step");
-    sR.appendChild(el("div", "step-head ui", '<span class="n">2.</span> Choose your region'));
+    sR.appendChild(el("div", "step-head ui", '<span class="n">1.</span> Choose your region'));
     sR.appendChild(el("div", "rule"));
     sR.appendChild(el("div", "sublabel ui", "News edition — India-specific, Global, or another country"));
     var regionChips = el("div", "chips");
@@ -617,7 +616,8 @@
       regionChips.appendChild(c);
     });
     sR.appendChild(regionChips);
-    inner.appendChild(sR);
+    inner.appendChild(sR);   // 1. region
+    inner.appendChild(s1);   // 2. topics
 
     /* ---- step 3: style ---- */
     var s2 = el("div", "step");
