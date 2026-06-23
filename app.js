@@ -2892,11 +2892,8 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         navRow('AI Assistant','ai',Icons.ai(20)),
         navRow('Logged-In Sites','sites',Icons.globe(20)),
         navRow('Syncing & Backup','data',Icons.download(20),true)),
-      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'16px 20px',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{fontSize:14.5,color:T.sub}},'Version'),
-        h('span',{style:{fontSize:14.5,fontWeight:600,color:T.fg}},'v'+APP_VERSION)),
-      h('div',{style:{padding:'8px 20px 22px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
-        'Your personal read-it-later app. Everything is stored privately on this device.'));
+      h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
+        'Instapaper · v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
       h('div',{style:{padding:'14px 20px 0',fontSize:14.5,fontWeight:600}},'Theme'),
