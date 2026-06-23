@@ -1675,7 +1675,7 @@ function BriefChips({T,options,selected,onSelect}){
         (o.flag?o.flag+' ':'')+o.label);
     }));
 }
-function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
+function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true}){
   const [items,setItems]=useState(null); // null = loading
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
@@ -1725,9 +1725,9 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
   }
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
-      h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'),
+      showRegion?h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'):h('div',{style:{flex:1}}),
       h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
-    h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}),
+    showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
     h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
     h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
     h('div',{style:{borderTop:'1px solid '+T.hair}},body));
@@ -2925,9 +2925,9 @@ function scopeTitle(scope,folders){
     case 'videos':return 'Videos';
     case 'photos':return 'Photos';
     case 'brief':return 'My Routine';
+    case 'headlines':return 'India Headlines';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
-    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -3401,7 +3401,7 @@ function App(){
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.phone(22),()=>{setScope({type:'brief'});setQuery('')}),
-      headerBtn(Icons.newspaper(22),openNewspaper),
+      headerBtn(Icons.newspaper(22),()=>{setScope({type:'headlines'});setQuery('')}),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
       EMBEDDED?headerBtn(Icons.back(23),exitToHost):null);
   }
@@ -3410,7 +3410,9 @@ function App(){
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
-  else if(scope.type==='brief')body=h(DailyBrief,{T,regionId:S.briefRegion||'IN',category:S.briefCategory||'',
+  else if(scope.type==='brief')body=h(BriefView,{T,brief:data.brief,
+    onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
+  else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',category:S.briefCategory||'',showRegion:false,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(!list.length){
