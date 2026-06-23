@@ -7,8 +7,11 @@
   "use strict";
 
   var STORE_KEY = "dailybrief_v1";
-  var CACHE_VER = 2; // bump when ranking/shape changes so old editions refetch
+  var CACHE_VER = 3; // bump when ranking/shape changes so old editions refetch
   var SIX_HOURS = 6 * 60 * 60 * 1000;
+  // Only ever show recent stories — anything older than this is dropped outright,
+  // so the paper can never surface stale, years-old "evergreen" search hits.
+  var FRESH_MS = 14 * 24 * 60 * 60 * 1000;
   var app = document.getElementById("app");
   var toastEl = document.getElementById("toast");
 
@@ -157,7 +160,10 @@
     var h = Math.round(m / 60);
     if (h < 24) return h + "h ago";
     var d = Math.round(h / 24);
-    return d + "d ago";
+    if (d <= 30) return d + "d ago";
+    // anything older falls back to a real date rather than an absurd "3366d ago"
+    var mon = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    return mon[date.getMonth()] + " " + date.getDate() + ", " + date.getFullYear();
   }
   function fmtClock(date) {
     var h = date.getHours(), m = date.getMinutes();
@@ -263,8 +269,14 @@
      Tries rss2json (direct CORS, no proxy) first, then a proxied raw feed. */
   function fetchGoogleNews(topic) {
     var r = regionById(prefs && prefs.region);
-    var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(topic) +
-              "&hl=" + r.hl + "&gl=" + r.gl + "&ceid=" + encodeURIComponent(r.ceid);
+    // "when:7d" pins Google News to the last week, so we get today's headlines for
+    // the topic instead of relevance-ranked evergreen articles from years ago.
+    var q = topic + " when:7d";
+    // ceid must NOT be pre-encoded here: the rss2json/proxy layer encodes the whole
+    // URL once, and Google News matches the ceid value EXACTLY — a stray "%3A" for
+    // the colon makes it ignore the edition and fall back to US/global content.
+    var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) +
+              "&hl=" + r.hl + "&gl=" + r.gl + "&ceid=" + r.ceid;
     return timedFetch("https://api.rss2json.com/v1/api.json?count=16&rss_url=" +
         encodeURIComponent(rss), 6500)
       .then(function (txt) {
@@ -316,8 +328,12 @@
 
   /* ---- Hacker News (Algolia): direct CORS, no proxy, very reliable ---- */
   function fetchHN(topic) {
+    // Restrict to stories created within the fresh window so HN can't surface
+    // years-old threads for the topic.
+    var since = Math.floor((Date.now() - FRESH_MS) / 1000);
     return timedFetch("https://hn.algolia.com/api/v1/search?query=" +
-        encodeURIComponent(topic) + "&tags=story&hitsPerPage=12", 6000)
+        encodeURIComponent(topic) + "&tags=story&hitsPerPage=12" +
+        "&numericFilters=created_at_i%3E" + since, 6000)
       .then(function (txt) {
         var j = JSON.parse(txt);
         return (j.hits || []).filter(function (h) { return h.url && h.title; }).map(function (h) {
@@ -342,6 +358,12 @@
       fetchHN(topic).catch(function () { return []; })
     ]).then(function (parts) {
         var results = parts[0].concat(parts[1]).concat(parts[2]);
+        // hard freshness gate: drop anything older than the fresh window so a
+        // stale article can never reach the page, regardless of its score/image
+        var now = Date.now();
+        results = results.filter(function (a) {
+          return a.date && (now - a.date.getTime()) < FRESH_MS;
+        });
         // dedupe by normalized title
         var seen = {}, merged = [];
         results.forEach(function (a) {
@@ -354,19 +376,24 @@
           }
           seen[k] = a; merged.push(a);
         });
-        // rank: when a country is selected, its edition leads; then images + score + recency
+        // rank: a selected country edition leads, then recency dominates (so the
+        // freshest story wins), with images/score only as a gentle tie-breaker
         merged.sort(function (a, b) {
           if (!!a.regional !== !!b.regional) return (b.regional ? 1 : 0) - (a.regional ? 1 : 0);
-          var sa = (a.image ? 50 : 0) + Math.min(a.score, 5000) / 50 + recencyBoost(a.date);
-          var sb = (b.image ? 50 : 0) + Math.min(b.score, 5000) / 50 + recencyBoost(b.date);
+          var sa = recencyBoost(a.date) * 4 + (a.image ? 20 : 0) + Math.min(a.score, 5000) / 100;
+          var sb = recencyBoost(b.date) * 4 + (b.image ? 20 : 0) + Math.min(b.score, 5000) / 100;
           return sb - sa;
         });
         return merged.slice(0, 12);
       });
   }
   function recencyBoost(date) {
+    // smooth decay across the whole fresh window so the newest story always ranks
+    // ahead of an older one (not just a coarse 3-tier step that flattens to 0)
     var h = (Date.now() - date.getTime()) / 3600000;
-    if (h < 6) return 30; if (h < 24) return 18; if (h < 72) return 8; return 0;
+    if (h <= 0) return 40;
+    var days = h / 24;
+    return Math.max(0, 40 - days * (40 / 14)); // 40 now → 0 at 14 days
   }
 
   // fetch every topic in parallel, but never wait longer than deadlineMs —
@@ -765,7 +792,9 @@
     // choose the strongest story (prefer image + score) as the lead
     var ranked = allArts.slice().sort(function (a, b) {
       if (!!a.regional !== !!b.regional) return (b.regional ? 1 : 0) - (a.regional ? 1 : 0);
-      return ((b.image ? 100 : 0) + b.score) - ((a.image ? 100 : 0) + a.score);
+      var sa = recencyBoost(a.date) * 3 + (a.image ? 60 : 0) + a.score;
+      var sb = recencyBoost(b.date) * 3 + (b.image ? 60 : 0) + b.score;
+      return sb - sa;
     });
     var used = {};
     var lead = ranked[0];
