@@ -267,16 +267,17 @@
 
   /* ---- Google News RSS: breadth + freshness, great for custom topics.
      Tries rss2json (direct CORS, no proxy) first, then a proxied raw feed. */
-  function fetchGoogleNews(topic) {
-    var r = regionById(prefs && prefs.region);
-    // "when:7d" pins Google News to the last week, so we get today's headlines for
-    // the topic instead of relevance-ranked evergreen articles from years ago.
-    var q = topic + " when:7d";
-    // ceid must NOT be pre-encoded here: the rss2json/proxy layer encodes the whole
-    // URL once, and Google News matches the ceid value EXACTLY — a stray "%3A" for
-    // the colon makes it ignore the edition and fall back to US/global content.
-    var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) +
-              "&hl=" + r.hl + "&gl=" + r.gl + "&ceid=" + r.ceid;
+
+  // When India is selected, the first query is restricted to these media houses
+  // so the paper leads with Indian journalism, not global wire services.
+  var INDIA_SOURCES = "(site:ndtv.com OR site:timesofindia.com OR site:thehindu.com" +
+    " OR site:hindustantimes.com OR site:indiatoday.in OR site:indianexpress.com" +
+    " OR site:livemint.com OR site:news18.com OR site:economictimes.indiatimes.com" +
+    " OR site:deccanherald.com OR site:telegraphindia.com OR site:thewire.in" +
+    " OR site:scroll.in OR site:theprint.in OR site:wionews.com)";
+
+  // fetch one Google News RSS URL — rss2json first, proxy fallback
+  function fetchOneGoogleRss(rss, topic) {
     return timedFetch("https://api.rss2json.com/v1/api.json?count=16&rss_url=" +
         encodeURIComponent(rss), 6500)
       .then(function (txt) {
@@ -298,6 +299,45 @@
         });
       })
       .catch(function () { return proxiedFetch(rss).then(function (txt) { return parseGoogleRss(topic, txt); }); });
+  }
+
+  function fetchGoogleNews(topic) {
+    var r = regionById(prefs && prefs.region);
+    // "when:7d" pins Google News to the last week, so we get today's headlines for
+    // the topic instead of relevance-ranked evergreen articles from years ago.
+    var q = topic + " when:7d";
+    // ceid must NOT be pre-encoded here: the rss2json/proxy layer encodes the whole
+    // URL once, and Google News matches the ceid value EXACTLY — a stray "%3A" for
+    // the colon makes it ignore the edition and fall back to US/global content.
+    var base = "&hl=" + r.hl + "&gl=" + r.gl + "&ceid=" + r.ceid;
+
+    if (r.id !== "IN") {
+      // All other regions: single query, same as before.
+      var rss = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + base;
+      return fetchOneGoogleRss(rss, topic);
+    }
+
+    // India: run TWO queries in parallel —
+    //   1. restricted to major Indian media houses (highest trust for Indian news)
+    //   2. general India edition (catches any topic not covered by the house list)
+    // Merge with Indian-source articles leading; dedupe by URL.
+    var rssIndia = "https://news.google.com/rss/search?q=" +
+      encodeURIComponent(q + " " + INDIA_SOURCES) + base;
+    var rssGeneral = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + base;
+    return Promise.all([
+      fetchOneGoogleRss(rssIndia, topic).catch(function () { return []; }),
+      fetchOneGoogleRss(rssGeneral, topic).catch(function () { return []; })
+    ]).then(function (parts) {
+      var fromIndia = parts[0];
+      var fromGeneral = parts[1];
+      // Mark Indian-house articles so ranking sorts them to the top.
+      fromIndia = fromIndia.map(function (a) { return Object.assign({}, a, { regional: true }); });
+      // Append general results that aren't already in the Indian set.
+      var seen = {};
+      fromIndia.forEach(function (a) { if (a.url) seen[a.url] = true; });
+      var extras = fromGeneral.filter(function (a) { return a.url && !seen[a.url]; });
+      return fromIndia.concat(extras).slice(0, 20);
+    });
   }
 
   function parseGoogleRss(topic, txt) {
