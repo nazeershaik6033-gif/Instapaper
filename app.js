@@ -1675,7 +1675,7 @@ function BriefChips({T,options,selected,onSelect}){
         (o.flag?o.flag+' ':'')+o.label);
     }));
 }
-function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
+function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true}){
   const [items,setItems]=useState(null); // null = loading
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
@@ -1725,9 +1725,9 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
   }
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
-      h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'),
+      showRegion?h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'):h('div',{style:{flex:1}}),
       h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
-    h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}),
+    showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
     h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
     h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
     h('div',{style:{borderTop:'1px solid '+T.hair}},body));
@@ -2137,12 +2137,13 @@ function BriefView({T,brief,onBrief,toastFn}){
   const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it)});
-  const sectionHead=(g,list)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);return h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'14px 4px 4px'}},
-    h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:3,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(15)),
-    h('div',{onClick:()=>toggleCollapse(key),style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},(g?g.name:'Other')+' · '+list.filter(i=>doneIds.includes(i.id)).length+'/'+list.length+(groupNew?' · '+groupNew+' new':'')),
-    g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:3}},Icons.pencil(16)):null,
-    g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null,
-    h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:3}},Icons.plus(18)));};
+  const sectionHead=(g,list)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'20px 2px 8px'}},
+    h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
+    h('div',{onClick:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},g?g.name:'Other'),
+    groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length),
+    g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
+    g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
+    h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));};
   // Brief history as a collapsible section (open when '_history' is in the set).
   const histMissed=briefLog.reduce((n,e)=>n+e.items.reduce((m,i)=>m+i.entries.length,0),0);
   const historySection=()=>{const isOpen=collapsed.has('_history');return h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair}},
@@ -2163,25 +2164,28 @@ function BriefView({T,brief,onBrief,toastFn}){
             h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
 
   return h('div',null,
-    h('div',{className:'sx',style:{display:'flex',gap:7,overflowX:'auto',padding:'8px 14px 2px'}},
-      slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',style:{flexShrink:0,display:'flex',flexDirection:'column',alignItems:'flex-start',gap:1,padding:'7px 13px',borderRadius:11,border:'1px solid '+(s.id===win.sel?T.accent:T.hair),background:s.id===win.sel?T.card:'transparent'}},
-        h('span',{style:{fontSize:13,fontWeight:600,color:s.id===win.sel?T.fg:T.sub}},s.name+(s.id===win.activeSlotId?' •':'')),
-        h('span',{style:{fontSize:10.5,color:T.sub}},fmtClock(s.time)))),
-      h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 6px'}},Icons.calendar(18))),
-    h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'6px 16px 4px'}},
-      h('div',{style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center'}},
-        h(Ring,{T,frac:total?doneN/total:0,size:46}),
-        h('div',{style:{position:'absolute',fontSize:12,fontWeight:700,color:T.fg}},doneN+'/'+(total||0))),
-      h('div',{style:{flex:1,minWidth:0}},
-        h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg}},curSlot.name+' brief'),
-        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:1}},win.future?('Starts at '+fmtClock(curSlot.time)+' today'):(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done')+(newCount?' · '+newCount+' new since '+(win.start?fmtClock(new Date(win.start).getHours()+':'+String(new Date(win.start).getMinutes()).padStart(2,'0')):'last brief'):''):'Add the sites, apps and channels you check.'))),
-      newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
+    h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
+      slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',
+        style:{flexShrink:0,padding:'8px 18px',borderRadius:20,fontSize:14,fontWeight:600,border:'none',
+          background:s.id===win.sel?T.fg:'transparent',color:s.id===win.sel?T.bg:T.sub}},
+        s.name+(s.id===win.activeSlotId?' •':''))),
+      h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
+    h('div',{style:{padding:'4px 16px 12px',borderBottom:'1px solid '+T.hair}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:10}},
+        h('div',{style:{flex:1,fontSize:13.5,color:T.sub}},
+          win.future?('Opens at '+fmtClock(curSlot.time))
+            :(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done'+(newCount?' · '+newCount+' new':''))
+              :'Add sites, channels and apps below')),
+        newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
+      total&&!win.future?h('div',{style:{marginTop:8,height:3,borderRadius:3,background:T.hair,overflow:'hidden'}},
+        h('div',{style:{width:(total?doneN/total*100:0)+'%',height:'100%',background:T.accent,borderRadius:3,transition:'width 0.3s'}})):null),
     h('div',{style:{padding:'2px 14px 0'}},
-      win.future?h('div',{style:{fontSize:12.5,color:T.sub,background:T.card,borderRadius:10,padding:'10px 12px',margin:'6px 2px',lineHeight:1.45}},'This routine begins at '+fmtClock(curSlot.time)+'. New videos since your last check will appear here then.'):null,
-      total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px'}},'Nothing here yet — tap + to add.'))))
+      win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
+      total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},'Nothing here yet — tap + to add.'))))
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
-      h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
-      h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:10,padding:'11px 14px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},Icons.plus(18),'Add item'),
+      h('div',{style:{display:'flex',gap:10,marginTop:20}},
+        h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:7,padding:'12px',borderRadius:12,border:'1px solid '+T.hair,color:T.sub,fontSize:13.5,fontWeight:500}},Icons.plus(16),'New group'),
+        h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:7,padding:'12px',borderRadius:12,background:T.card,color:T.fg,fontSize:13.5,fontWeight:600}},Icons.plus(16),'Add item')),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
 
@@ -2925,9 +2929,9 @@ function scopeTitle(scope,folders){
     case 'videos':return 'Videos';
     case 'photos':return 'Photos';
     case 'brief':return 'My Routine';
+    case 'headlines':return 'India Headlines';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
-    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -3401,7 +3405,7 @@ function App(){
       h('div',{style:{flex:1}}),
       headerBtn(Icons.ai(22),()=>setAiOpen({})),
       headerBtn(Icons.phone(22),()=>{setScope({type:'brief'});setQuery('')}),
-      headerBtn(Icons.newspaper(22),openNewspaper),
+      headerBtn(Icons.newspaper(22),()=>{setScope({type:'headlines'});setQuery('')}),
       headerBtn(Icons.globe(22),()=>setBrowserO({url:''})),
       EMBEDDED?headerBtn(Icons.back(23),exitToHost):null);
   }
@@ -3410,7 +3414,9 @@ function App(){
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
-  else if(scope.type==='brief')body=h(DailyBrief,{T,regionId:S.briefRegion||'IN',category:S.briefCategory||'',
+  else if(scope.type==='brief')body=h(BriefView,{T,brief:data.brief,
+    onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
+  else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',category:S.briefCategory||'',showRegion:false,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(!list.length){
