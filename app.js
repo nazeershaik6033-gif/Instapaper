@@ -1788,7 +1788,7 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,hea
       h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
   }else if(err){
     body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
-      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.news(40)),
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
       h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
