@@ -19,7 +19,7 @@
   var PRESET_TOPICS = [
     "Tech", "AI", "Finance", "Cricket", "Sports", "Science",
     "Politics", "Entertainment", "Health", "Business", "Climate", "Space",
-    "Telangana & AP"
+    "Telangana & AP", "Trending"
   ];
 
   /* ---------------- reading styles ----------------------------------- */
@@ -90,7 +90,8 @@
     business: ["business", "Economics"],
     climate: ["climate", "environment"],
     space: ["space", "spaceflight"],
-    "telangana & ap": ["hyderabad", "india", "andhra"]
+    "telangana & ap": ["hyderabad", "india", "andhra"],
+    trending: ["india", "viral", "trending"]
   };
 
   /* ---------------- state -------------------------------------------- */
@@ -285,8 +286,13 @@
     "telangana": "(site:eenadu.net OR site:andhrajyothi.com OR site:sakshi.com" +
       " OR site:telanganatoday.com OR site:deccanchronicle.com OR site:thehansindia.com" +
       " OR site:newindianexpress.com OR site:tv9telugu.com OR site:ntv.in" +
-      " OR site:thenewsminute.com OR site:siasat.com)"
+      " OR site:thenewsminute.com OR site:siasat.com)",
+    // "Trending" section: viral news, YouTube Shorts/Reels round-ups, social trends
+    "trending": "(site:youtube.com OR site:ndtv.com OR site:indiatoday.in" +
+      " OR site:timesofindia.com OR site:news18.com OR site:hindustantimes.com" +
+      " OR site:scroll.in OR site:theprint.in OR site:thequint.com OR site:scoopwhoop.com)"
   };
+
 
   // fetch one Google News RSS URL — rss2json first, proxy fallback
   function fetchOneGoogleRss(rss, topic) {
@@ -313,11 +319,17 @@
       .catch(function () { return proxiedFetch(rss).then(function (txt) { return parseGoogleRss(topic, txt); }); });
   }
 
+  // Topic-specific search query overrides (replaces the topic name in the query).
+  var TOPIC_QUERIES = {
+    "trending": "trending viral India reels shorts"
+  };
+
   function fetchGoogleNews(topic) {
     var r = regionById(prefs && prefs.region);
     // "when:7d" pins Google News to the last week, so we get today's headlines for
     // the topic instead of relevance-ranked evergreen articles from years ago.
-    var q = topic + " when:7d";
+    var qBase = TOPIC_QUERIES[topic.toLowerCase()] || topic;
+    var q = qBase + " when:7d";
     // ceid must NOT be pre-encoded here: the rss2json/proxy layer encodes the whole
     // URL once, and Google News matches the ceid value EXACTLY — a stray "%3A" for
     // the colon makes it ignore the edition and fall back to US/global content.
