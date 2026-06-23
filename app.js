@@ -862,21 +862,8 @@ function briefFeedUrl(region,topic,sources,customQuery){
     ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
     :'https://news.google.com/rss?'+qs;
 }
-/* Fetch + parse a Google News RSS feed into clean headline items. */
-async function fetchBrief(regionId,topic,sources,customQuery){
-  const region=briefRegion(regionId);
-  const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
-  // Try all proxies in parallel — first valid RSS response wins (much faster than sequential)
-  const tryProxy=async p=>{
-    const res=await fetchWithTimeout(p(feedUrl),{},18000);
-    if(!res.ok)throw new Error('proxy '+res.status);
-    const text=await res.text();
-    if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
-    return text;
-  };
-  let xml;
-  try{xml=await Promise.any(PROXIES.map(p=>tryProxy(p)))}
-  catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
+/* Parse Google News XML into clean headline items. */
+function parseGNewsXml(xml){
   const doc=new DOMParser().parseFromString(xml,'text/xml');
   if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
   const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
@@ -889,13 +876,46 @@ async function fetchBrief(regionId,topic,sources,customQuery){
     if(!link||!title)continue;
     const srcEl=it.getElementsByTagName('source')[0];
     let source=srcEl?srcEl.textContent.trim():'';
-    // Google News titles read "Headline - Source"; split the source off the end.
     if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
     else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim();source=m[2].trim()}}
     const pub=childText(it,'pubDate');
     let publishedAt=0;if(pub){const d=Date.parse(pub);if(!isNaN(d))publishedAt=d}
     items.push({title,url:link,source,publishedAt});
   }
+  return items;
+}
+/* Fetch + parse a Google News RSS feed into clean headline items.
+   Tries rss2json.com first (no CORS issues), then falls back to proxy pool. */
+async function fetchBrief(regionId,topic,sources,customQuery){
+  const region=briefRegion(regionId);
+  const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
+  /* --- attempt 1: rss2json.com (dedicated RSS→JSON service, no CORS issues) --- */
+  const tryRss2json=async()=>{
+    const url='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=30';
+    const res=await fetchWithTimeout(url,{},18000);
+    if(!res.ok)throw new Error('rss2json '+res.status);
+    const json=await res.json();
+    if(json.status!=='ok'||!Array.isArray(json.items)||!json.items.length)throw new Error('rss2json empty');
+    return json.items.map(it=>{
+      let title=it.title||'';
+      const source=it.author||'';
+      if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
+      else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim()}}
+      const publishedAt=it.pubDate?new Date(it.pubDate).getTime():0;
+      return{title,url:it.link,source,publishedAt};
+    }).filter(it=>it.title&&it.url);
+  };
+  /* --- attempt 2: CORS proxy pool, fetch raw XML --- */
+  const tryProxy=async p=>{
+    const res=await fetchWithTimeout(p(feedUrl),{},18000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    const text=await res.text();
+    if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
+    return parseGNewsXml(text);
+  };
+  let items;
+  try{items=await Promise.any([tryRss2json(),...PROXIES.map(p=>tryProxy(p))])}
+  catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
   if(!items.length)throw new Error('No stories found for this region');
   return items;
 }
