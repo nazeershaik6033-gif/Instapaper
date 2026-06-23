@@ -18,7 +18,8 @@
   /* ---------------- preset topics (mirrors the setup screen) ---------- */
   var PRESET_TOPICS = [
     "Tech", "AI", "Finance", "Cricket", "Sports", "Science",
-    "Politics", "Entertainment", "Health", "Business", "Climate", "Space"
+    "Politics", "Entertainment", "Health", "Business", "Climate", "Space",
+    "Telangana & AP", "Trending"
   ];
 
   /* ---------------- reading styles ----------------------------------- */
@@ -88,7 +89,9 @@
     health: ["Health", "medicine"],
     business: ["business", "Economics"],
     climate: ["climate", "environment"],
-    space: ["space", "spaceflight"]
+    space: ["space", "spaceflight"],
+    "telangana & ap": ["hyderabad", "india", "andhra"],
+    trending: ["india", "viral", "trending"]
   };
 
   /* ---------------- state -------------------------------------------- */
@@ -276,6 +279,21 @@
     " OR site:deccanherald.com OR site:telegraphindia.com OR site:thewire.in" +
     " OR site:scroll.in OR site:theprint.in OR site:wionews.com)";
 
+  // Topic-specific source overrides: for regional/geographic topics, swap in
+  // localised outlets instead of the national Indian house list.
+  // Key = topic name lowercased (substring match).
+  var TOPIC_SOURCES = {
+    "telangana": "(site:eenadu.net OR site:andhrajyothi.com OR site:sakshi.com" +
+      " OR site:telanganatoday.com OR site:deccanchronicle.com OR site:thehansindia.com" +
+      " OR site:newindianexpress.com OR site:tv9telugu.com OR site:ntv.in" +
+      " OR site:thenewsminute.com OR site:siasat.com)",
+    // "Trending" section: viral news, YouTube Shorts/Reels round-ups, social trends
+    "trending": "(site:youtube.com OR site:ndtv.com OR site:indiatoday.in" +
+      " OR site:timesofindia.com OR site:news18.com OR site:hindustantimes.com" +
+      " OR site:scroll.in OR site:theprint.in OR site:thequint.com OR site:scoopwhoop.com)"
+  };
+
+
   // fetch one Google News RSS URL — rss2json first, proxy fallback
   function fetchOneGoogleRss(rss, topic) {
     return timedFetch("https://api.rss2json.com/v1/api.json?count=16&rss_url=" +
@@ -301,11 +319,17 @@
       .catch(function () { return proxiedFetch(rss).then(function (txt) { return parseGoogleRss(topic, txt); }); });
   }
 
+  // Topic-specific search query overrides (replaces the topic name in the query).
+  var TOPIC_QUERIES = {
+    "trending": "trending viral India reels shorts"
+  };
+
   function fetchGoogleNews(topic) {
     var r = regionById(prefs && prefs.region);
     // "when:7d" pins Google News to the last week, so we get today's headlines for
     // the topic instead of relevance-ranked evergreen articles from years ago.
-    var q = topic + " when:7d";
+    var qBase = TOPIC_QUERIES[topic.toLowerCase()] || topic;
+    var q = qBase + " when:7d";
     // ceid must NOT be pre-encoded here: the rss2json/proxy layer encodes the whole
     // URL once, and Google News matches the ceid value EXACTLY — a stray "%3A" for
     // the colon makes it ignore the edition and fall back to US/global content.
@@ -318,11 +342,17 @@
     }
 
     // India: run TWO queries in parallel —
-    //   1. restricted to major Indian media houses (highest trust for Indian news)
-    //   2. general India edition (catches any topic not covered by the house list)
-    // Merge with Indian-source articles leading; dedupe by URL.
+    //   1. restricted to the appropriate media house list for this topic
+    //      (regional outlets for geographic topics, national houses otherwise)
+    //   2. general India edition (catches any topic with thin coverage in the list)
+    // Merge with house-list articles leading; dedupe by URL.
+    var topicKey = topic.toLowerCase();
+    var sourceFilter = INDIA_SOURCES;
+    for (var tk in TOPIC_SOURCES) {
+      if (topicKey.indexOf(tk) > -1) { sourceFilter = TOPIC_SOURCES[tk]; break; }
+    }
     var rssIndia = "https://news.google.com/rss/search?q=" +
-      encodeURIComponent(q + " " + INDIA_SOURCES) + base;
+      encodeURIComponent(q + " " + sourceFilter) + base;
     var rssGeneral = "https://news.google.com/rss/search?q=" + encodeURIComponent(q) + base;
     return Promise.all([
       fetchOneGoogleRss(rssIndia, topic).catch(function () { return []; }),
