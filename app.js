@@ -799,6 +799,68 @@ async function fetchArticleData(url){
   };
 }
 
+/* ============================== daily brief (news) ============================== */
+/* Regions to read the brief from — "Global" and "India" are the two headline
+   regions; the rest let you pick any other country. */
+const BRIEF_REGIONS=[
+  {id:'global',label:'Global',flag:'🌐',hl:'en-US',gl:'US',ceid:'US:en'},
+  {id:'IN',label:'India',flag:'🇮🇳',hl:'en-IN',gl:'IN',ceid:'IN:en'},
+  {id:'US',label:'United States',flag:'🇺🇸',hl:'en-US',gl:'US',ceid:'US:en'},
+  {id:'GB',label:'United Kingdom',flag:'🇬🇧',hl:'en-GB',gl:'GB',ceid:'GB:en'},
+  {id:'AU',label:'Australia',flag:'🇦🇺',hl:'en-AU',gl:'AU',ceid:'AU:en'},
+  {id:'CA',label:'Canada',flag:'🇨🇦',hl:'en-CA',gl:'CA',ceid:'CA:en'},
+  {id:'SG',label:'Singapore',flag:'🇸🇬',hl:'en-SG',gl:'SG',ceid:'SG:en'},
+  {id:'AE',label:'UAE',flag:'🇦🇪',hl:'en-AE',gl:'AE',ceid:'AE:en'}
+];
+/* News categories — empty topic id means Google News "Top stories". */
+const BRIEF_CATEGORIES=[
+  {id:'',label:'Top stories'},
+  {id:'WORLD',label:'World'},
+  {id:'NATION',label:'National'},
+  {id:'BUSINESS',label:'Business'},
+  {id:'TECHNOLOGY',label:'Technology'},
+  {id:'SCIENCE',label:'Science'},
+  {id:'HEALTH',label:'Health'},
+  {id:'SPORTS',label:'Sports'},
+  {id:'ENTERTAINMENT',label:'Entertainment'}
+];
+const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
+function briefFeedUrl(region,topic){
+  // ceid must NOT be percent-encoded (e.g. "IN:en" not "IN%3Aen") — Google News
+  // does exact-string matching on the ceid value, so encoding the colon causes
+  // it to fall back to global/US content regardless of the selected region.
+  const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+region.ceid;
+  return topic
+    ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
+    :'https://news.google.com/rss?'+qs;
+}
+/* Fetch + parse a Google News RSS feed into clean headline items. */
+async function fetchBrief(regionId,topic){
+  const region=briefRegion(regionId);
+  const xml=await fetchRawHtml(briefFeedUrl(region,topic)); // through CORS proxies
+  const doc=new DOMParser().parseFromString(xml,'text/xml');
+  if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
+  const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
+  const items=[];
+  const nodes=doc.getElementsByTagName('item');
+  for(let i=0;i<nodes.length;i++){
+    const it=nodes[i];
+    const link=childText(it,'link');
+    let title=childText(it,'title');
+    if(!link||!title)continue;
+    const srcEl=it.getElementsByTagName('source')[0];
+    let source=srcEl?srcEl.textContent.trim():'';
+    // Google News titles read "Headline - Source"; split the source off the end.
+    if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
+    else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim();source=m[2].trim()}}
+    const pub=childText(it,'pubDate');
+    let publishedAt=0;if(pub){const d=Date.parse(pub);if(!isNaN(d))publishedAt=d}
+    items.push({title,url:link,source,publishedAt});
+  }
+  if(!items.length)throw new Error('No stories found for this region');
+  return items;
+}
+
 /* ============================== seed content ============================== */
 const WELCOME_HTML=[
 '<p><em>Welcome! This is your own premium reading app — every feature unlocked, no subscription, forever free.</em></p>',
@@ -1000,6 +1062,17 @@ function Toast({T,toast}){
 function Spinner({T,size}){
   const s=size||18;
   return h('span',{className:'spin',style:{width:s,height:s,borderRadius:'50%',border:'2.5px solid '+T.hair,borderTopColor:T.fg,display:'inline-block',flexShrink:0}});
+}
+
+/* gentle home-screen nudge to export a backup when one is due */
+function BackupBanner({T,never,onExport,onLater}){
+  return h('div',{className:'fdin',style:{margin:'0 16px 10px',padding:'12px 14px',borderRadius:12,background:T.card,border:'1px solid '+T.hair,display:'flex',alignItems:'center',gap:12}},
+    h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.download(22)),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{fontSize:14,fontWeight:600}},never?'Back up your library':'Time to back up'),
+      h('div',{style:{fontSize:12,color:T.meta,marginTop:1,lineHeight:1.4}},'Your reading lives only on this device. Save a backup file so you never lose it.')),
+    h('button',{onClick:onExport,className:'act95',style:{flexShrink:0,padding:'9px 14px',borderRadius:9,background:T.fg,color:T.bg,fontSize:13,fontWeight:600}},'Export'),
+    h('button',{onClick:onLater,'aria-label':'Remind me later',className:'act90',style:{flexShrink:0,padding:'8px',color:T.sub,display:'flex'}},Icons.x(16)));
 }
 
 /* ============================== article row ============================== */
@@ -1582,6 +1655,75 @@ function SpeedReader({a,T,S,onClose,onFinish,saveWpm}){
         h('input',{type:'range',min:150,max:700,step:10,value:wpm,onChange:e=>{const v=+e.target.value;setWpm(v);saveWpm(v)},style:{flex:1,accentColor:T.accent}}),
         h('div',{style:{fontSize:12.5,color:T.meta,width:104,textAlign:'right',flexShrink:0}},wpm+' wpm · ~'+minLeft+' min')))
   );
+}
+
+/* ============================== daily brief view ============================== */
+function BriefChips({T,options,selected,onSelect}){
+  return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'2px 16px 10px',flexShrink:0}},
+    options.map(o=>{
+      const active=o.id===selected;
+      return h('button',{key:o.id||'_top',onClick:()=>onSelect(o.id),className:'act95 trc',
+        style:{flexShrink:0,padding:'7px 14px',borderRadius:18,fontSize:13.5,fontWeight:active?600:500,whiteSpace:'nowrap',
+          background:active?T.fg:T.card,color:active?T.bg:T.fg,border:'1px solid '+(active?T.fg:T.hair)}},
+        (o.flag?o.flag+' ':'')+o.label);
+    }));
+}
+function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
+  const [items,setItems]=useState(null); // null = loading
+  const [err,setErr]=useState('');
+  const [busyUrl,setBusyUrl]=useState('');
+  const reqRef=useRef(0);
+  const load=useCallback(()=>{
+    const id=++reqRef.current;
+    setItems(null);setErr('');
+    fetchBrief(regionId,category)
+      .then(r=>{if(id===reqRef.current)setItems(r)})
+      .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
+  },[regionId,category]);
+  useEffect(load,[load]);
+  const region=briefRegion(regionId);
+  const open=async it=>{
+    if(busyUrl)return;
+    setBusyUrl(it.url);
+    try{await onOpenItem(it)}finally{setBusyUrl('')}
+  };
+  let body;
+  if(items===null){
+    body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
+      h(Spinner,{T,size:24}),
+      h('div',{style:{fontSize:14}},'Gathering today’s '+region.label+' headlines…'));
+  }else if(err){
+    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.news(40)),
+      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn’t load the brief'),
+      h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
+      h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
+  }else{
+    body=h('div',null,
+      items.map((it,i)=>{
+        const busy=busyUrl===it.url;
+        return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
+          style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'15px 16px 14px',borderBottom:'1px solid '+T.hair,color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
+            h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
+              it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
+              it.source&&it.publishedAt?h('span',null,'·'):null,
+              it.publishedAt?h('span',{style:{flexShrink:0}},timeAgo(it.publishedAt)):null)),
+          h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
+            busy?h(Spinner,{T,size:17}):Icons.download(18)));
+      }),
+      h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
+        'Tap a story to save it for offline reading. Headlines via Google News.'));
+  }
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
+      h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'),
+      h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
+    h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}),
+    h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
+    h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
+    h('div',{style:{borderTop:'1px solid '+T.hair}},body));
 }
 
 /* ============================== notes & tags views ============================== */
@@ -2502,6 +2644,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
       h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tapping a site or entering an address opens it in your browser.'));
   }
 
+
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
       h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
@@ -2552,6 +2695,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
         h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',enterKeyHint:'done',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add'+(curFolder?' to '+curFolder.name:'')))):null,
+
 
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
@@ -2727,6 +2871,13 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
       h(ARow,{T,icon:Icons.download(20),label:'Export backup',sub:'Articles, notes, highlights, sites, settings \u2014 and your encrypted vault',onClick:onExport}),
       h(ARow,{T,icon:Icons.upload(20),label:'Import backup',sub:'Restore from an exported file',onClick:()=>{if(fileRef.current)fileRef.current.click()}}),
       h('input',{ref:fileRef,type:'file',accept:'.json,application/json',style:{display:'none'},onChange:e=>{const f=e.target.files&&e.target.files[0];if(f)onImport(f);e.target.value=''}}),
+      head('Automatic backups'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'4px 20px 6px'}},
+        h('span',{style:{fontSize:14.5,flex:1}},'Remind me to back up'),
+        h('select',{value:String(S.backupEvery||0),onChange:e=>set({backupEvery:+e.target.value}),style:{padding:'9px 12px',borderRadius:9,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14}},
+          [['0','Off'],['3','Every 3 days'],['7','Weekly'],['14','Every 2 weeks'],['30','Monthly']].map(([v,l])=>h('option',{key:v,value:v},l)))),
+      h('div',{style:{padding:'2px 20px 12px',fontSize:12,color:T.sub,lineHeight:1.5}},
+        'Last backup: '+(S.lastBackupAt?timeAgo(S.lastBackupAt):'never')+'. When one is due, a reminder with a one-tap Export appears on the home screen.'),
       archivedCount?h(ARow,{T,icon:Icons.archive(20),label:'Clear archive',sub:archivedCount+' archived article'+(archivedCount>1?'s':''),onClick:onClearArchived}):null,
       h(ARow,{T,icon:Icons.trash(20),label:'Erase everything',danger:true,onClick:onEraseAll}));
   }
@@ -2769,6 +2920,7 @@ function scopeTitle(scope,folders){
     case 'brief':return 'My Routine';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
+    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -3025,6 +3177,26 @@ function App(){
     patchArticle(id,{title:rec.title,source:rec.source,author:rec.author,image:rec.image,html:rec.html,text:rec.text,excerpt:rec.excerpt,words:rec.words,readMin:rec.readMin,isVideo:rec.isVideo,videoId:rec.videoId,publishedAt:rec.publishedAt});
     toastFn('Article downloaded');
   };
+  /* save a Daily Brief headline for offline reading, then open it */
+  const addBriefItem=async it=>{
+    const dup=dataRef.current.articles.find(a=>a.url===it.url);
+    if(dup){openArticle(dup.id);return}
+    try{
+      const rec=await fetchArticleData(it.url);
+      const article=Object.assign(rec,{
+        title:rec.title||it.title,
+        source:it.source||rec.source,
+        publishedAt:rec.publishedAt||it.publishedAt||0,
+        id:uid(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:1,highlights:[]
+      });
+      update(d=>({...d,articles:[article,...d.articles]}));
+      setReadingId(article.id);
+      toastFn('Saved — '+article.readMin+' min read');
+    }catch(e){
+      toastFn('Couldn’t fetch that story — opening it instead');
+      setBrowserO({url:it.url});
+    }
+  };
 
   /* ---------- article actions ---------- */
   const deleteArticles=ids=>{
@@ -3129,8 +3301,11 @@ function App(){
     const blob=new Blob([JSON.stringify(dataRef.current,null,1)],{type:'application/json'});
     const url=URL.createObjectURL(blob);const aEl=document.createElement('a');
     aEl.href=url;aEl.download='instapaper-backup-'+new Date().toISOString().slice(0,10)+'.json';aEl.click();
-    setTimeout(()=>URL.revokeObjectURL(url),1500);toastFn('Backup downloaded');
+    setTimeout(()=>URL.revokeObjectURL(url),1500);
+    update(d=>({...d,settings:{...d.settings,lastBackupAt:Date.now(),backupSnoozeUntil:0}}));
+    toastFn('Backup downloaded');
   };
+  const snoozeBackup=()=>update(d=>({...d,settings:{...d.settings,backupSnoozeUntil:Date.now()+(d.settings.backupEvery||7)*86400000}}));
   const importBackup=async file=>{
     try{
       const d=JSON.parse(await file.text());
@@ -3181,6 +3356,16 @@ function App(){
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
+  /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
+  const backupNever=!S.lastBackupAt;
+  const backupDue=useMemo(()=>{
+    const every=S.backupEvery||0;
+    if(!every)return false;
+    if(!data.articles.some(a=>a.id!=='welcome'))return false; // nothing worth backing up yet
+    const now=Date.now();
+    if(now<(S.backupSnoozeUntil||0))return false;
+    return backupNever||now-S.lastBackupAt>=every*86400000;
+  },[data.articles,S.backupEvery,S.lastBackupAt,S.backupSnoozeUntil,backupNever]);
 
   const readerAction=k=>doAction(readingId,k);
   readerAction.update=update;
@@ -3220,6 +3405,8 @@ function App(){
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='brief')body=h(BriefView,{T,brief:{...BRIEF0,...(data.brief||{})},onBrief:fn=>update(d=>({...d,brief:fn({...BRIEF0,...(d.brief||{})})})),toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
+  else if(scope.type==='brief')body=h(DailyBrief,{T,regionId:S.briefRegion||'IN',category:S.briefCategory||'',
+    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
