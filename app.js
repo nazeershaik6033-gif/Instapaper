@@ -831,11 +831,33 @@ const BRIEF_CATEGORIES=[
   {id:'ENTERTAINMENT',label:'Entertainment'}
 ];
 const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
-function briefFeedUrl(region,topic){
-  // ceid must NOT be percent-encoded (e.g. "IN:en" not "IN%3Aen") — Google News
-  // does exact-string matching on the ceid value, so encoding the colon causes
-  // it to fall back to global/US content regardless of the selected region.
+/* Maps built-in topic IDs to human-readable search queries used when sources are filtered */
+const TOPIC_TO_QUERY={'':'india','WORLD':'world news india','NATION':'india national','BUSINESS':'india business','TECHNOLOGY':'india technology','SCIENCE':'india science','HEALTH':'india health','SPORTS':'india sports','ENTERTAINMENT':'india entertainment'};
+/* Preset Indian news sources shown in the Headlines customisation panel */
+const PRESET_SOURCES=[
+  {domain:'ndtv.com',label:'NDTV'},{domain:'thehindu.com',label:'The Hindu'},
+  {domain:'hindustantimes.com',label:'Hindustan Times'},{domain:'timesofindia.indiatimes.com',label:'Times of India'},
+  {domain:'economictimes.indiatimes.com',label:'Economic Times'},{domain:'indiatoday.in',label:'India Today'},
+  {domain:'indianexpress.com',label:'Indian Express'},{domain:'livemint.com',label:'Mint'},
+  {domain:'business-standard.com',label:'Business Standard'},{domain:'thewire.in',label:'The Wire'},
+  {domain:'scroll.in',label:'Scroll'},{domain:'theprint.in',label:'The Print'},
+  {domain:'moneycontrol.com',label:'MoneyControl'},{domain:'deccanherald.com',label:'Deccan Herald'},
+  {domain:'firstpost.com',label:'Firstpost'},{domain:'outlookindia.com',label:'Outlook India'},
+  {domain:'zeenews.india.com',label:'Zee News'},{domain:'news18.com',label:'News18'},
+  {domain:'wionews.com',label:'WION'},{domain:'aninews.in',label:'ANI'},
+  {domain:'eenadu.net',label:'Eenadu'},{domain:'sakshi.com',label:'Sakshi'},
+  {domain:'andhrajyothy.com',label:'Andhra Jyothi'},
+];
+function briefFeedUrl(region,topic,sources,customQuery){
   const qs='hl='+region.hl+'&gl='+region.gl+'&ceid='+region.ceid;
+  const activeSrc=(sources||[]).filter(s=>s.enabled);
+  if(activeSrc.length||customQuery){
+    // Use search endpoint with site: filters when sources are chosen or topic is custom
+    const siteStr=activeSrc.map(s=>'site:'+s.domain).join(' OR ');
+    const base=customQuery||(TOPIC_TO_QUERY[topic||'']||'india');
+    const q=siteStr?base+' ('+siteStr+')':base;
+    return'https://news.google.com/rss/search?q='+encodeURIComponent(q)+'&'+qs;
+  }
   return topic
     ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
     :'https://news.google.com/rss?'+qs;
@@ -843,7 +865,18 @@ function briefFeedUrl(region,topic){
 /* Fetch + parse a Google News RSS feed into clean headline items. */
 async function fetchBrief(regionId,topic){
   const region=briefRegion(regionId);
-  const xml=await fetchRawHtml(briefFeedUrl(region,topic)); // through CORS proxies
+  const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
+  // Try all proxies in parallel — first valid RSS response wins (much faster than sequential)
+  const tryProxy=async p=>{
+    const res=await fetchWithTimeout(p(feedUrl),{},18000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    const text=await res.text();
+    if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
+    return text;
+  };
+  let xml;
+  try{xml=await Promise.any(PROXIES.map(p=>tryProxy(p)))}
+  catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
   const doc=new DOMParser().parseFromString(xml,'text/xml');
   if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
   const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
@@ -1665,6 +1698,56 @@ function SpeedReader({a,T,S,onClose,onFinish,saveWpm}){
 }
 
 /* ============================== daily brief view ============================== */
+function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
+  const [tab,setTab]=useState('cats');
+  const [cats,setCats]=useState(initCats);
+  const [srcs,setSrcs]=useState(initSrcs);
+  const [newLabel,setNewLabel]=useState('');
+  const [newQuery,setNewQuery]=useState('');
+  const [newDomain,setNewDomain]=useState('');
+  const [newSrcLabel,setNewSrcLabel]=useState('');
+  const toggleCat=id=>setCats(cs=>cs.map(c=>c.id===id?{...c,enabled:!c.enabled}:c));
+  const deleteCat=id=>setCats(cs=>cs.filter(c=>c.id!==id));
+  const addCat=()=>{const nm=newLabel.trim();if(!nm)return;setCats(cs=>cs.concat([{id:'custom_'+uid(),label:nm,enabled:true,custom:true,query:newQuery.trim()||nm}]));setNewLabel('');setNewQuery('')};
+  const toggleSrc=d=>setSrcs(ss=>ss.map(s=>s.domain===d?{...s,enabled:!s.enabled}:s));
+  const deleteSrc=d=>setSrcs(ss=>ss.filter(s=>s.domain!==d));
+  const addSrc=()=>{const raw=newDomain.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'').toLowerCase();if(!raw)return;const l=newSrcLabel.trim()||raw;if(srcs.find(s=>s.domain===raw))return;setSrcs(ss=>ss.concat([{domain:raw,label:l,enabled:true,custom:true}]));setNewDomain('');setNewSrcLabel('')};
+  const save=()=>{onSave({headlinesCategories:cats,headlinesSources:srcs});onClose()};
+  const tabBtn=(label,key)=>h('button',{onClick:()=>setTab(key),className:'act95',style:{flex:1,padding:'9px',borderRadius:11,fontSize:14,fontWeight:600,border:'none',background:tab===key?T.fg:T.card,color:tab===key?T.bg:T.sub}},label);
+  const toggle=(on,onClick)=>h('button',{onClick,className:'act90',style:{width:44,height:26,borderRadius:13,background:on?T.accent:T.hair,position:'relative',flexShrink:0,padding:0,display:'flex',alignItems:'center',transition:'background .2s'}},
+    h('div',{style:{width:20,height:20,borderRadius:10,background:'#fff',position:'absolute',left:on?20:3,transition:'left .2s',boxShadow:'0 1px 3px rgba(0,0,0,.25)'}}));
+  const inp=(val,set,ph,opts)=>h('input',Object.assign({value:val,onChange:e=>set(e.target.value),placeholder:ph,style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:14.5,marginBottom:8,boxSizing:'border-box'}},opts||{}));
+  return h(Sheet,{T,title:'Customise Headlines',maxH:'94%',onClose},
+    h('div',{style:{display:'flex',gap:8,padding:'0 16px 10px'}},tabBtn('Categories','cats'),tabBtn('Sources','srcs')),
+    tab==='cats'?h('div',null,
+      h('div',{style:{padding:'0 16px 8px',fontSize:12.5,color:T.sub,lineHeight:1.5}},'Toggle categories or add custom ones (e.g. "Cricket", "Politics").'),
+      cats.map(c=>h('div',{key:c.id,style:{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid '+T.hair}},
+        h('div',{style:{flex:1}},
+          h('div',{style:{fontSize:15,color:T.fg}},c.label),
+          c.custom&&c.query&&c.query!==c.label?h('div',{style:{fontSize:11.5,color:T.sub,marginTop:1}},c.query):null),
+        c.custom?h('button',{onClick:()=>deleteCat(c.id),className:'act90',style:{display:'flex',color:T.danger,padding:4,marginRight:2}},Icons.trash(17)):null,
+        toggle(c.enabled,()=>toggleCat(c.id)))),
+      h('div',{style:{padding:'14px 16px',borderTop:'1px solid '+T.hair}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Add category'),
+        inp(newLabel,setNewLabel,'Name  (e.g. Cricket)'),
+        inp(newQuery,setNewQuery,'Search query — optional, defaults to name'),
+        h('button',{onClick:addCat,disabled:!newLabel.trim(),className:'act96',style:{width:'100%',padding:'11px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600,opacity:newLabel.trim()?1:0.4}},'Add category')))
+    :h('div',null,
+      h('div',{style:{padding:'0 16px 8px',fontSize:12.5,color:T.sub,lineHeight:1.5}},'Select news channels to filter by. When none are on, all sources are shown.'),
+      srcs.map(s=>h('div',{key:s.domain,style:{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid '+T.hair}},
+        h('div',{style:{flex:1}},
+          h('div',{style:{fontSize:15,color:T.fg}},s.label),
+          h('div',{style:{fontSize:11.5,color:T.sub,marginTop:1}},s.domain)),
+        s.custom?h('button',{onClick:()=>deleteSrc(s.domain),className:'act90',style:{display:'flex',color:T.danger,padding:4,marginRight:2}},Icons.trash(17)):null,
+        toggle(s.enabled,()=>toggleSrc(s.domain)))),
+      h('div',{style:{padding:'14px 16px',borderTop:'1px solid '+T.hair}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Add source'),
+        inp(newDomain,setNewDomain,'Domain  (e.g. theprint.in)',{inputMode:'url',autoCapitalize:'none',autoCorrect:'off'}),
+        inp(newSrcLabel,setNewSrcLabel,'Display name  (e.g. The Print)'),
+        h('button',{onClick:addSrc,disabled:!newDomain.trim(),className:'act96',style:{width:'100%',padding:'11px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600,opacity:newDomain.trim()?1:0.4}},'Add source'))),
+    h('div',{style:{padding:'16px',flexShrink:0}},
+      h('button',{onClick:save,className:'act96',style:{width:'100%',padding:'13px',borderRadius:12,background:T.accent,color:'#fff',fontSize:15,fontWeight:600}},'Save changes')));
+}
 function BriefChips({T,options,selected,onSelect}){
   return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'2px 16px 10px',flexShrink:0}},
     options.map(o=>{
@@ -1675,34 +1758,38 @@ function BriefChips({T,options,selected,onSelect}){
         (o.flag?o.flag+' ':'')+o.label);
     }));
 }
-function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true}){
-  const [items,setItems]=useState(null); // null = loading
+function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,headlinesCategories,headlinesSources}){
+  const [items,setItems]=useState(null);
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
+  const [configOpen,setConfigOpen]=useState(false);
   const reqRef=useRef(0);
+  const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
+  const activeCats=allCats.filter(c=>c.enabled);
+  const allSrcs=headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}));
   const load=useCallback(()=>{
     const id=++reqRef.current;
     setItems(null);setErr('');
-    fetchBrief(regionId,category)
+    const cats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
+    const selCat=cats.find(c=>c.id===category)||(cats.find(c=>c.enabled)||cats[0])||{id:'',enabled:true,custom:false,query:''};
+    const topicId=selCat.custom?null:selCat.id;
+    const customQ=selCat.custom?(selCat.query||selCat.label):null;
+    fetchBrief(regionId,topicId,headlinesSources,customQ)
       .then(r=>{if(id===reqRef.current)setItems(r)})
       .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
-  },[regionId,category]);
+  },[regionId,category,headlinesCategories,headlinesSources]);
   useEffect(load,[load]);
   const region=briefRegion(regionId);
-  const open=async it=>{
-    if(busyUrl)return;
-    setBusyUrl(it.url);
-    try{await onOpenItem(it)}finally{setBusyUrl('')}
-  };
+  const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
   let body;
   if(items===null){
     body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
       h(Spinner,{T,size:24}),
-      h('div',{style:{fontSize:14}},'Gathering today’s '+region.label+' headlines…'));
+      h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
   }else if(err){
     body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
       h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.news(40)),
-      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn’t load the brief'),
+      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
@@ -1726,11 +1813,13 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true}){
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
       showRegion?h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'):h('div',{style:{flex:1}}),
+      h('button',{onClick:()=>setConfigOpen(true),className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg}),title:'Customise'},Icons.gear(18)),
       h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
     showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
-    h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
-    h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
-    h('div',{style:{borderTop:'1px solid '+T.hair}},body));
+    activeCats.length?h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'):null,
+    activeCats.length?h(BriefChips,{T,options:activeCats,selected:category,onSelect:id=>onConfig({briefCategory:id})}):null,
+    h('div',{style:{borderTop:'1px solid '+T.hair}},body),
+    configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null);
 }
 
 /* ============================== notes & tags views ============================== */
@@ -3365,7 +3454,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos','brief'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief','headlines'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
@@ -3417,6 +3506,7 @@ function App(){
   else if(scope.type==='brief')body=h(BriefView,{T,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',category:S.briefCategory||'',showRegion:false,
+    headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(!list.length){
