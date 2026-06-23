@@ -843,7 +843,18 @@ function briefFeedUrl(region,topic){
 /* Fetch + parse a Google News RSS feed into clean headline items. */
 async function fetchBrief(regionId,topic){
   const region=briefRegion(regionId);
-  const xml=await fetchRawHtml(briefFeedUrl(region,topic)); // through CORS proxies
+  const feedUrl=briefFeedUrl(region,topic);
+  // Try all proxies in parallel — first valid RSS response wins (much faster than sequential)
+  const tryProxy=async p=>{
+    const res=await fetchWithTimeout(p(feedUrl),{},18000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    const text=await res.text();
+    if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
+    return text;
+  };
+  let xml;
+  try{xml=await Promise.any(PROXIES.map(p=>tryProxy(p)))}
+  catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
   const doc=new DOMParser().parseFromString(xml,'text/xml');
   if(doc.querySelector('parsererror'))throw new Error('Could not read the news feed');
   const childText=(parent,tag)=>{const e=parent.getElementsByTagName(tag)[0];return e?e.textContent.trim():''};
@@ -3365,7 +3376,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos','brief'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief','headlines'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
