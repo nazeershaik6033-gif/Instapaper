@@ -885,14 +885,14 @@ function parseGNewsXml(xml){
   return items;
 }
 /* Fetch + parse a Google News RSS feed into clean headline items.
-   Tries rss2json.com first (no CORS issues), then falls back to proxy pool. */
+   Races rss2json.com, allorigins JSON, and a wide CORS proxy pool in parallel. */
 async function fetchBrief(regionId,topic,sources,customQuery){
   const region=briefRegion(regionId);
   const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
-  /* --- attempt 1: rss2json.com (dedicated RSS→JSON service, no CORS issues) --- */
+  const enc=encodeURIComponent(feedUrl);
+  /* RSS→JSON service: parses on their server, no CORS issues */
   const tryRss2json=async()=>{
-    const url='https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=30';
-    const res=await fetchWithTimeout(url,{},18000);
+    const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+enc+'&count=30',{},15000);
     if(!res.ok)throw new Error('rss2json '+res.status);
     const json=await res.json();
     if(json.status!=='ok'||!Array.isArray(json.items)||!json.items.length)throw new Error('rss2json empty');
@@ -901,20 +901,35 @@ async function fetchBrief(regionId,topic,sources,customQuery){
       const source=it.author||'';
       if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
       else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim()}}
-      const publishedAt=it.pubDate?new Date(it.pubDate).getTime():0;
-      return{title,url:it.link,source,publishedAt};
+      return{title,url:it.link,source,publishedAt:it.pubDate?new Date(it.pubDate).getTime():0};
     }).filter(it=>it.title&&it.url);
   };
-  /* --- attempt 2: CORS proxy pool, fetch raw XML --- */
+  /* allorigins /get returns JSON wrapper with contents + http_code */
+  const tryAllOriginsGet=async()=>{
+    const res=await fetchWithTimeout('https://api.allorigins.win/get?url='+enc,{},15000);
+    if(!res.ok)throw new Error('allorigins-get '+res.status);
+    const json=await res.json();
+    if(!json.contents||!json.contents.includes('<item>'))throw new Error('allorigins-get no rss');
+    return parseGNewsXml(json.contents);
+  };
+  /* Wide pool of raw-text CORS proxies */
+  const RAW_PROXIES=[
+    u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),
+    u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u),
+    u=>'https://corsproxy.io/?url='+encodeURIComponent(u),
+    u=>'https://corsproxy.org/?'+encodeURIComponent(u),
+    u=>'https://thingproxy.freeboard.io/fetch/'+u,
+    u=>'https://api.cors.lol/?url='+encodeURIComponent(u),
+  ];
   const tryProxy=async p=>{
-    const res=await fetchWithTimeout(p(feedUrl),{},18000);
+    const res=await fetchWithTimeout(p(feedUrl),{},15000);
     if(!res.ok)throw new Error('proxy '+res.status);
     const text=await res.text();
     if(!text||text.length<200||!text.includes('<item>'))throw new Error('not rss');
     return parseGNewsXml(text);
   };
   let items;
-  try{items=await Promise.any([tryRss2json(),...PROXIES.map(p=>tryProxy(p))])}
+  try{items=await Promise.any([tryRss2json(),tryAllOriginsGet(),...RAW_PROXIES.map(p=>tryProxy(p))])}
   catch(e){throw new Error('Could not reach Google News — check your connection and try again')}
   if(!items.length)throw new Error('No stories found for this region');
   return items;
