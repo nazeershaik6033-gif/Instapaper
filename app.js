@@ -863,7 +863,7 @@ function briefFeedUrl(region,topic,sources,customQuery){
     :'https://news.google.com/rss?'+qs;
 }
 /* Fetch + parse a Google News RSS feed into clean headline items. */
-async function fetchBrief(regionId,topic){
+async function fetchBrief(regionId,topic,sources,customQuery){
   const region=briefRegion(regionId);
   const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
   // Try all proxies in parallel — first valid RSS response wins (much faster than sequential)
