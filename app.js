@@ -835,29 +835,29 @@ const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
 const TOPIC_TO_QUERY={'':'india','WORLD':'world news india','NATION':'india national','BUSINESS':'india business','TECHNOLOGY':'india technology','SCIENCE':'india science','HEALTH':'india health','SPORTS':'india sports','ENTERTAINMENT':'india entertainment'};
 /* Preset Indian news sources shown in the Headlines customisation panel */
 const PRESET_SOURCES=[
-  {domain:'ndtv.com',label:'NDTV',rss:'https://feeds.feedburner.com/ndtvnews-top-stories'},
-  {domain:'thehindu.com',label:'The Hindu',rss:'https://www.thehindu.com/feeder/default.rss'},
-  {domain:'hindustantimes.com',label:'Hindustan Times',rss:'https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml'},
-  {domain:'timesofindia.indiatimes.com',label:'Times of India',rss:'https://timesofindia.indiatimes.com/rssfeedstopstories.cms'},
-  {domain:'economictimes.indiatimes.com',label:'Economic Times',rss:'https://economictimes.indiatimes.com/rssfeedstopstories.cms'},
-  {domain:'indiatoday.in',label:'India Today',rss:null},
-  {domain:'indianexpress.com',label:'Indian Express',rss:'https://indianexpress.com/feed/'},
-  {domain:'livemint.com',label:'Mint',rss:'https://www.livemint.com/rss/news'},
-  {domain:'business-standard.com',label:'Business Standard',rss:'https://www.business-standard.com/rss/home_page_top_stories.rss'},
-  {domain:'thewire.in',label:'The Wire',rss:'https://thewire.in/feed'},
-  {domain:'scroll.in',label:'Scroll',rss:'https://scroll.in/feed'},
-  {domain:'theprint.in',label:'The Print',rss:'https://theprint.in/feed/'},
-  {domain:'moneycontrol.com',label:'MoneyControl',rss:null},
-  {domain:'deccanherald.com',label:'Deccan Herald',rss:'https://www.deccanherald.com/rss/national.xml'},
-  {domain:'firstpost.com',label:'Firstpost',rss:'https://www.firstpost.com/rss/'},
-  {domain:'outlookindia.com',label:'Outlook India',rss:'https://www.outlookindia.com/feed/'},
-  {domain:'zeenews.india.com',label:'Zee News',rss:null},
-  {domain:'news18.com',label:'News18',rss:null},
-  {domain:'wionews.com',label:'WION',rss:'https://www.wionews.com/rss'},
-  {domain:'aninews.in',label:'ANI',rss:null},
-  {domain:'eenadu.net',label:'Eenadu',rss:null},
-  {domain:'sakshi.com',label:'Sakshi',rss:null},
-  {domain:'andhrajyothy.com',label:'Andhra Jyothi',rss:null},
+  {domain:'ndtv.com',label:'NDTV',rss:'https://feeds.feedburner.com/ndtvnews-top-stories',epaper:null},
+  {domain:'thehindu.com',label:'The Hindu',rss:'https://www.thehindu.com/feeder/default.rss',epaper:'https://epaper.thehindu.com'},
+  {domain:'hindustantimes.com',label:'Hindustan Times',rss:'https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml',epaper:'https://epaper.hindustantimes.com'},
+  {domain:'timesofindia.indiatimes.com',label:'Times of India',rss:'https://timesofindia.indiatimes.com/rssfeedstopstories.cms',epaper:'https://epaper.timesofindia.com'},
+  {domain:'economictimes.indiatimes.com',label:'Economic Times',rss:'https://economictimes.indiatimes.com/rssfeedstopstories.cms',epaper:'https://epaper.economictimes.com'},
+  {domain:'indiatoday.in',label:'India Today',rss:null,epaper:null},
+  {domain:'indianexpress.com',label:'Indian Express',rss:'https://indianexpress.com/feed/',epaper:'https://epaper.indianexpress.com'},
+  {domain:'livemint.com',label:'Mint',rss:'https://www.livemint.com/rss/news',epaper:'https://epaper.livemint.com'},
+  {domain:'business-standard.com',label:'Business Standard',rss:'https://www.business-standard.com/rss/home_page_top_stories.rss',epaper:'https://epaper.business-standard.com'},
+  {domain:'thewire.in',label:'The Wire',rss:'https://thewire.in/feed',epaper:null},
+  {domain:'scroll.in',label:'Scroll',rss:'https://scroll.in/feed',epaper:null},
+  {domain:'theprint.in',label:'The Print',rss:'https://theprint.in/feed/',epaper:null},
+  {domain:'moneycontrol.com',label:'MoneyControl',rss:null,epaper:null},
+  {domain:'deccanherald.com',label:'Deccan Herald',rss:'https://www.deccanherald.com/rss/national.xml',epaper:'https://epaper.deccanherald.com'},
+  {domain:'firstpost.com',label:'Firstpost',rss:'https://www.firstpost.com/rss/',epaper:null},
+  {domain:'outlookindia.com',label:'Outlook India',rss:'https://www.outlookindia.com/feed/',epaper:'https://epaper.outlookindia.com'},
+  {domain:'zeenews.india.com',label:'Zee News',rss:null,epaper:null},
+  {domain:'news18.com',label:'News18',rss:null,epaper:null},
+  {domain:'wionews.com',label:'WION',rss:'https://www.wionews.com/rss',epaper:null},
+  {domain:'aninews.in',label:'ANI',rss:null,epaper:null},
+  {domain:'eenadu.net',label:'Eenadu',rss:null,epaper:'https://epaper.eenadu.net'},
+  {domain:'sakshi.com',label:'Sakshi',rss:null,epaper:'https://epaper.sakshi.com'},
+  {domain:'andhrajyothy.com',label:'Andhra Jyothi',rss:null,epaper:'https://epaper.andhrajyothy.com'},
 ];
 /* Direct RSS feeds from Indian news outlets — not blocked by proxies unlike Google News */
 const DIRECT_FEEDS={
@@ -1800,12 +1800,13 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
   const [newQuery,setNewQuery]=useState('');
   const [newDomain,setNewDomain]=useState('');
   const [newSrcLabel,setNewSrcLabel]=useState('');
+  const [newEpaper,setNewEpaper]=useState('');
   const toggleCat=id=>setCats(cs=>cs.map(c=>c.id===id?{...c,enabled:!c.enabled}:c));
   const deleteCat=id=>setCats(cs=>cs.filter(c=>c.id!==id));
   const addCat=()=>{const nm=newLabel.trim();if(!nm)return;setCats(cs=>cs.concat([{id:'custom_'+uid(),label:nm,enabled:true,custom:true,query:newQuery.trim()||nm}]));setNewLabel('');setNewQuery('')};
   const toggleSrc=d=>setSrcs(ss=>ss.map(s=>s.domain===d?{...s,enabled:!s.enabled}:s));
   const deleteSrc=d=>setSrcs(ss=>ss.filter(s=>s.domain!==d));
-  const addSrc=()=>{const raw=newDomain.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'').toLowerCase();if(!raw)return;const l=newSrcLabel.trim()||raw;if(srcs.find(s=>s.domain===raw))return;setSrcs(ss=>ss.concat([{domain:raw,label:l,enabled:true,custom:true}]));setNewDomain('');setNewSrcLabel('')};
+  const addSrc=()=>{const raw=newDomain.trim().replace(/^https?:\/\//,'').replace(/\/.*$/,'').toLowerCase();if(!raw)return;const l=newSrcLabel.trim()||raw;if(srcs.find(s=>s.domain===raw))return;const ep=newEpaper.trim()||null;setSrcs(ss=>ss.concat([{domain:raw,label:l,enabled:true,custom:true,epaper:ep}]));setNewDomain('');setNewSrcLabel('');setNewEpaper('')};
   const save=()=>{onSave({headlinesCategories:cats,headlinesSources:srcs});onClose()};
   const tabBtn=(label,key)=>h('button',{onClick:()=>setTab(key),className:'act95',style:{flex:1,padding:'9px',borderRadius:11,fontSize:14,fontWeight:600,border:'none',background:tab===key?T.fg:T.card,color:tab===key?T.bg:T.sub}},label);
   const toggle=(on,onClick)=>h('button',{onClick,className:'act90',style:{width:44,height:26,borderRadius:13,background:on?T.accent:T.hair,position:'relative',flexShrink:0,padding:0,display:'flex',alignItems:'center',transition:'background .2s'}},
@@ -1831,15 +1832,18 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
       srcs.map(s=>h('div',{key:s.domain,style:{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid '+T.hair}},
         h('div',{style:{flex:1}},
           h('div',{style:{fontSize:15,color:T.fg}},s.label),
-          h('div',{style:{display:'flex',alignItems:'center',gap:4,marginTop:1}},
-            h('div',{style:{fontSize:11.5,color:T.sub}},s.domain),
-            h('a',{href:'https://'+s.domain,target:'_blank',rel:'noopener noreferrer',style:{display:'flex',color:T.sub,lineHeight:0},onClick:e=>e.stopPropagation()},Icons.external(12)))),
+          h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:2,flexWrap:'wrap'}},
+            h('a',{href:'https://'+s.domain,target:'_blank',rel:'noopener noreferrer',style:{display:'flex',alignItems:'center',gap:2,color:T.sub,fontSize:11.5,textDecoration:'none'},onClick:e=>e.stopPropagation()},
+              s.domain,Icons.external(11)),
+            s.epaper?h('a',{href:s.epaper,target:'_blank',rel:'noopener noreferrer',style:{display:'flex',alignItems:'center',gap:2,color:T.accent,fontSize:11.5,fontWeight:500,textDecoration:'none'},onClick:e=>e.stopPropagation()},
+              'ePaper',Icons.external(11)):null)),
         s.custom?h('button',{onClick:()=>deleteSrc(s.domain),className:'act90',style:{display:'flex',color:T.danger,padding:4,marginRight:2}},Icons.trash(17)):null,
         toggle(s.enabled,()=>toggleSrc(s.domain)))),
       h('div',{style:{padding:'14px 16px',borderTop:'1px solid '+T.hair}},
         h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Add source'),
         inp(newDomain,setNewDomain,'Domain  (e.g. theprint.in)',{inputMode:'url',autoCapitalize:'none',autoCorrect:'off'}),
         inp(newSrcLabel,setNewSrcLabel,'Display name  (e.g. The Print)'),
+        inp(newEpaper,setNewEpaper,'ePaper URL  (optional)',{inputMode:'url',autoCapitalize:'none',autoCorrect:'off'}),
         h('button',{onClick:addSrc,disabled:!newDomain.trim(),className:'act96',style:{width:'100%',padding:'11px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600,opacity:newDomain.trim()?1:0.4}},'Add source'))),
     h('div',{style:{padding:'16px',flexShrink:0}},
       h('button',{onClick:save,className:'act96',style:{width:'100%',padding:'13px',borderRadius:12,background:T.accent,color:'#fff',fontSize:15,fontWeight:600}},'Save changes')));
