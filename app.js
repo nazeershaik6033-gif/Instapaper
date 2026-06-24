@@ -835,18 +835,29 @@ const briefRegion=id=>BRIEF_REGIONS.find(r=>r.id===id)||BRIEF_REGIONS[0];
 const TOPIC_TO_QUERY={'':'india','WORLD':'world news india','NATION':'india national','BUSINESS':'india business','TECHNOLOGY':'india technology','SCIENCE':'india science','HEALTH':'india health','SPORTS':'india sports','ENTERTAINMENT':'india entertainment'};
 /* Preset Indian news sources shown in the Headlines customisation panel */
 const PRESET_SOURCES=[
-  {domain:'ndtv.com',label:'NDTV'},{domain:'thehindu.com',label:'The Hindu'},
-  {domain:'hindustantimes.com',label:'Hindustan Times'},{domain:'timesofindia.indiatimes.com',label:'Times of India'},
-  {domain:'economictimes.indiatimes.com',label:'Economic Times'},{domain:'indiatoday.in',label:'India Today'},
-  {domain:'indianexpress.com',label:'Indian Express'},{domain:'livemint.com',label:'Mint'},
-  {domain:'business-standard.com',label:'Business Standard'},{domain:'thewire.in',label:'The Wire'},
-  {domain:'scroll.in',label:'Scroll'},{domain:'theprint.in',label:'The Print'},
-  {domain:'moneycontrol.com',label:'MoneyControl'},{domain:'deccanherald.com',label:'Deccan Herald'},
-  {domain:'firstpost.com',label:'Firstpost'},{domain:'outlookindia.com',label:'Outlook India'},
-  {domain:'zeenews.india.com',label:'Zee News'},{domain:'news18.com',label:'News18'},
-  {domain:'wionews.com',label:'WION'},{domain:'aninews.in',label:'ANI'},
-  {domain:'eenadu.net',label:'Eenadu'},{domain:'sakshi.com',label:'Sakshi'},
-  {domain:'andhrajyothy.com',label:'Andhra Jyothi'},
+  {domain:'ndtv.com',label:'NDTV',rss:'https://feeds.feedburner.com/ndtvnews-top-stories'},
+  {domain:'thehindu.com',label:'The Hindu',rss:'https://www.thehindu.com/feeder/default.rss'},
+  {domain:'hindustantimes.com',label:'Hindustan Times',rss:'https://www.hindustantimes.com/feeds/rss/india-news/rssfeed.xml'},
+  {domain:'timesofindia.indiatimes.com',label:'Times of India',rss:'https://timesofindia.indiatimes.com/rssfeedstopstories.cms'},
+  {domain:'economictimes.indiatimes.com',label:'Economic Times',rss:'https://economictimes.indiatimes.com/rssfeedstopstories.cms'},
+  {domain:'indiatoday.in',label:'India Today',rss:null},
+  {domain:'indianexpress.com',label:'Indian Express',rss:'https://indianexpress.com/feed/'},
+  {domain:'livemint.com',label:'Mint',rss:'https://www.livemint.com/rss/news'},
+  {domain:'business-standard.com',label:'Business Standard',rss:'https://www.business-standard.com/rss/home_page_top_stories.rss'},
+  {domain:'thewire.in',label:'The Wire',rss:'https://thewire.in/feed'},
+  {domain:'scroll.in',label:'Scroll',rss:'https://scroll.in/feed'},
+  {domain:'theprint.in',label:'The Print',rss:'https://theprint.in/feed/'},
+  {domain:'moneycontrol.com',label:'MoneyControl',rss:null},
+  {domain:'deccanherald.com',label:'Deccan Herald',rss:'https://www.deccanherald.com/rss/national.xml'},
+  {domain:'firstpost.com',label:'Firstpost',rss:'https://www.firstpost.com/rss/'},
+  {domain:'outlookindia.com',label:'Outlook India',rss:'https://www.outlookindia.com/feed/'},
+  {domain:'zeenews.india.com',label:'Zee News',rss:null},
+  {domain:'news18.com',label:'News18',rss:null},
+  {domain:'wionews.com',label:'WION',rss:'https://www.wionews.com/rss'},
+  {domain:'aninews.in',label:'ANI',rss:null},
+  {domain:'eenadu.net',label:'Eenadu',rss:null},
+  {domain:'sakshi.com',label:'Sakshi',rss:null},
+  {domain:'andhrajyothy.com',label:'Andhra Jyothi',rss:null},
 ];
 /* Direct RSS feeds from Indian news outlets — not blocked by proxies unlike Google News */
 const DIRECT_FEEDS={
@@ -930,8 +941,22 @@ async function fetchOneFeed(feedUrl,defaultSource){
 async function fetchBrief(regionId,topic,sources,customQuery){
   const region=briefRegion(regionId);
   const activeSrc=(sources||[]).filter(s=>s.enabled);
-  /* When source-filtering or custom query: use Google News search (needs proxy) */
-  if(activeSrc.length||customQuery){
+  /* When specific sources selected: fetch their RSS feeds directly */
+  if(activeSrc.length&&!customQuery){
+    const rssSrcs=activeSrc.filter(s=>s.rss);
+    if(rssSrcs.length){
+      const settled=await Promise.allSettled(rssSrcs.map(s=>fetchOneFeed(s.rss,s.label)));
+      const all=[];
+      settled.forEach(r=>{if(r.status==='fulfilled')all.push(...r.value)});
+      if(all.length){
+        all.sort((a,b)=>b.publishedAt-a.publishedAt);
+        return all.slice(0,40);
+      }
+    }
+    throw new Error('Could not load headlines for the selected sources — check your connection and try again');
+  }
+  /* Custom query: use Google News search */
+  if(customQuery){
     const feedUrl=briefFeedUrl(region,topic,sources,customQuery);
     let items;
     try{items=await fetchOneFeed(feedUrl,'Google News')}
@@ -939,21 +964,18 @@ async function fetchBrief(regionId,topic,sources,customQuery){
     if(!items.length)throw new Error('No stories found');
     return items;
   }
-  /* Default: fetch directly from Indian news outlets (not blocked by proxies) */
+  /* Default: fetch all direct feeds in parallel and merge results */
   const directUrls=DIRECT_FEEDS[topic||'']||DIRECT_FEEDS[''];
   const sourceNames={'timesofindia.indiatimes.com':'Times of India','thehindu.com':'The Hindu','hindustantimes.com':'Hindustan Times'};
   const getSrc=u=>{const h=Object.keys(sourceNames).find(k=>u.includes(k));return sourceNames[h]||''};
-  /* Race all direct feeds + Google News in parallel */
-  const googleFeedUrl=briefFeedUrl(region,topic,sources,customQuery);
-  const attempts=[
-    ...directUrls.map(u=>fetchOneFeed(u,getSrc(u))),
-    fetchOneFeed(googleFeedUrl,'Google News'),
-  ];
-  let results;
-  try{results=await Promise.any(attempts)}
-  catch(e){throw new Error('Could not load headlines — check your connection and try again')}
-  if(!results.length)throw new Error('No stories found');
-  return results;
+  const settled=await Promise.allSettled(directUrls.map(u=>fetchOneFeed(u,getSrc(u))));
+  const all=[];
+  settled.forEach(r=>{if(r.status==='fulfilled')all.push(...r.value)});
+  if(all.length){
+    all.sort((a,b)=>b.publishedAt-a.publishedAt);
+    return all.slice(0,40);
+  }
+  throw new Error('Could not load headlines — check your connection and try again');
 }
 
 /* ============================== seed content ============================== */
