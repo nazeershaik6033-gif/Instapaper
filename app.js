@@ -953,7 +953,10 @@ async function fetchOneFeed(feedUrl,defaultSource){
 /* Fetch headlines: tries direct Indian news RSS feeds first, Google News as fallback. */
 async function fetchBrief(regionId,topic,sources,customQuery){
   const region=briefRegion(regionId);
-  const activeSrc=(sources||[]).filter(s=>s.enabled);
+  /* Enrich saved source entries that predate the rss: field by merging with PRESET_SOURCES */
+  const srcMap=Object.fromEntries(PRESET_SOURCES.map(s=>[s.domain,s]));
+  const enriched=(sources||[]).map(s=>s.rss!==undefined?s:{...srcMap[s.domain],...s});
+  const activeSrc=enriched.filter(s=>s.enabled);
   /* When specific sources selected: fetch their RSS feeds directly */
   if(activeSrc.length&&!customQuery){
     const rssSrcs=activeSrc.filter(s=>s.rss);
@@ -966,7 +969,7 @@ async function fetchBrief(regionId,topic,sources,customQuery){
         return all.slice(0,40);
       }
     }
-    throw new Error('Could not load headlines for the selected sources — check your connection and try again');
+    /* No RSS-capable sources among selection — fall through to default feeds */
   }
   /* Custom query: use Google News search */
   if(customQuery){
