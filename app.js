@@ -913,19 +913,30 @@ const CORS_PROXIES=[
   u=>'https://corsproxy.org/?'+encodeURIComponent(u),
   u=>'https://thingproxy.freeboard.io/fetch/'+u,
   u=>'https://api.cors.lol/?url='+encodeURIComponent(u),
+  u=>'https://cors-proxy.fringe.zone/'+u,
+  u=>'https://proxy.cors.sh/'+u,
 ];
-/* Fetch one RSS URL through the proxy pool — first valid response wins. */
+/* Fetch one RSS URL through the proxy pool. Direct fetch first, then proxies, rss2json last (it caches). */
 async function fetchOneFeed(feedUrl,defaultSource){
-  const tryProxy=async p=>{
-    const res=await fetchWithTimeout(p(feedUrl),{},12000);
-    if(!res.ok)throw new Error('proxy '+res.status);
-    const text=await res.text();
+  /* Cache-bust so proxies re-fetch instead of serving stale content */
+  const sep=feedUrl.includes('?')?'&':'?';
+  const freshUrl=feedUrl+sep+'_t='+Date.now();
+  const parseXml=async text=>{
     if(!text||text.length<100||!text.includes('<item>'))throw new Error('not rss');
     return parseGNewsXml(text,defaultSource);
   };
-  /* Also try rss2json.com — parses on their servers, bypasses CORS entirely */
+  const tryDirect=async()=>{
+    const res=await fetchWithTimeout(freshUrl,{cache:'no-store'},8000);
+    if(!res.ok)throw new Error('direct '+res.status);
+    return parseXml(await res.text());
+  };
+  const tryProxy=async p=>{
+    const res=await fetchWithTimeout(p(freshUrl),{},12000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    return parseXml(await res.text());
+  };
   const tryRss2json=async()=>{
-    const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=30',{},12000);
+    const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=30',{},15000);
     if(!res.ok)throw new Error('rss2json '+res.status);
     const json=await res.json();
     if(json.status!=='ok'||!Array.isArray(json.items)||!json.items.length)throw new Error('rss2json empty');
@@ -935,7 +946,9 @@ async function fetchOneFeed(feedUrl,defaultSource){
       return{title,url:it.link,source,publishedAt:it.pubDate?new Date(it.pubDate).getTime():0};
     }).filter(it=>it.title&&it.url);
   };
-  return Promise.any([tryRss2json(),...CORS_PROXIES.map(p=>tryProxy(p))]);
+  /* Try direct + all proxies in parallel; fall back to rss2json only if all fail */
+  try{return await Promise.any([tryDirect(),...CORS_PROXIES.map(p=>tryProxy(p))]);}
+  catch(e){return tryRss2json();}
 }
 /* Fetch headlines: tries direct Indian news RSS feeds first, Google News as fallback. */
 async function fetchBrief(regionId,topic,sources,customQuery){
