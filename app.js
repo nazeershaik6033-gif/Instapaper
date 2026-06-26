@@ -1140,7 +1140,8 @@ const Icons={
   file:s=>Svg({size:s},P('M6.5 4c0-.8.7-1.5 1.5-1.5h5l4 4V20c0 .8-.7 1.5-1.5 1.5H8c-.8 0-1.5-.7-1.5-1.5V4Z'),P('M13 2.5V6.5h4')),
   pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
   crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
-  rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6'))
+  rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
+  drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'}))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -2314,6 +2315,9 @@ function BriefView({T,brief,onBrief,toastFn}){
   // Per-group collapse for the brief; persisted so it survives reloads.
   const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_brief_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_brief_collapsed',JSON.stringify([...n]))}catch(e){}return n});
+  const [reordering,setReordering]=useState(false);const [dragOver,setDragOver]=useState(-1);const dragInfo=useRef({active:false,srcIdx:0,startY:0});const numGroupsRef=useRef(groups.length);numGroupsRef.current=groups.length;
+  const startGroupDrag=(idx,e)=>{const y=e.touches?e.touches[0].clientY:e.clientY;dragInfo.current={active:true,srcIdx:idx,startY:y};setDragOver(idx)};
+  useEffect(()=>{if(!reordering)return;const onMove=e=>{if(!dragInfo.current.active)return;const y=e.touches?e.touches[0].clientY:e.clientY;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const step=Math.round(dy/80);const idx=Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1);setDragOver(idx)};const onEnd=e=>{if(!dragInfo.current.active)return;dragInfo.current.active=false;const y=(e.changedTouches&&e.changedTouches[0])?e.changedTouches[0].clientY:e.clientY||0;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const src=dragInfo.current.srcIdx;const step=Math.round(dy/80);const dst=Math.min(Math.max(src+step,0),ng-1);if(src!==dst)onBrief(b=>{const gs=[...b.groups];const[mv]=gs.splice(src,1);gs.splice(dst,0,mv);return{...b,groups:gs}});setDragOver(-1)};window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);return()=>{window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd)}},[reordering]);
   const [briefLog,setBriefLog]=useState(loadBriefLog);
   useEffect(()=>{
     if(!win.key)return;
@@ -2390,13 +2394,15 @@ function BriefView({T,brief,onBrief,toastFn}){
   const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
-  const sectionHead=(g,list)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'20px 2px 8px'}},
-    h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
-    h('div',{onClick:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},g?g.name:'Other'),
+  const sectionHead=(g,list,gIdx)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'20px 2px 8px'}},
+    reordering&&g
+      ?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,cursor:'grab'}},Icons.drag(16))
+      :h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
+    h('div',{onClick:reordering?undefined:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:reordering?'default':'pointer'}},g?g.name:'Other'),
     groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length),
-    g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
-    g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
-    h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));};
+    reordering?null:g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
+    reordering?null:g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
+    reordering?null:h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));};
   // Brief history as a collapsible section (open when '_history' is in the set).
   const histMissed=briefLog.reduce((n,e)=>n+e.items.reduce((m,i)=>m+i.entries.length,0),0);
   const historySection=()=>{const isOpen=collapsed.has('_history');return h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair}},
@@ -2417,6 +2423,10 @@ function BriefView({T,brief,onBrief,toastFn}){
             h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
 
   return h('div',null,
+    h('div',{style:{display:'flex',gap:8,padding:'8px 14px 4px'}},
+      h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,border:'1px solid '+T.hair,color:T.sub,fontSize:13,fontWeight:500}},Icons.plus(15),'New group'),
+      h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,background:T.card,color:T.fg,fontSize:13,fontWeight:600}},Icons.plus(15),'Add item'),
+      h('button',{onClick:()=>{setReordering(r=>!r);setDragOver(-1);dragInfo.current.active=false},className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:reordering?T.accent:'transparent',color:reordering?'#fff':T.sub,border:'1px solid '+(reordering?T.accent:T.hair)}},Icons.drag(17))),
     h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
       slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',
         style:{flexShrink:0,padding:'8px 18px',borderRadius:20,fontSize:14,fontWeight:600,border:'none',
@@ -2434,11 +2444,8 @@ function BriefView({T,brief,onBrief,toastFn}){
         h('div',{style:{width:(total?doneN/total*100:0)+'%',height:'100%',background:T.accent,borderRadius:3,transition:'width 0.3s'}})):null),
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
-      total?sections.map(({g,list})=>h('div',{key:g?g.id:'_other'},sectionHead(g,list),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},'Nothing here yet — tap + to add.'))))
+      total?sections.map(({g,list},gIdx)=>h('div',{key:g?g.id:'_other',style:{opacity:reordering&&dragInfo.current.active&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:'2px solid transparent',borderRadius:4}},sectionHead(g,list,gIdx),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},'Nothing here yet — tap + to add.'))))
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
-      h('div',{style:{display:'flex',gap:10,marginTop:20}},
-        h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:7,padding:'12px',borderRadius:12,border:'1px solid '+T.hair,color:T.sub,fontSize:13.5,fontWeight:500}},Icons.plus(16),'New group'),
-        h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:7,padding:'12px',borderRadius:12,background:T.card,color:T.fg,fontSize:13.5,fontWeight:600}},Icons.plus(16),'Add item')),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
 
