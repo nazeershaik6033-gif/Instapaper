@@ -2242,7 +2242,7 @@ function Ring({T,frac,size}){
     h('circle',{cx:size/2,cy:size/2,r,fill:'none',stroke:T.accent,strokeWidth:3,strokeLinecap:'round',strokeDasharray:c,strokeDashoffset:c*(1-clamp(frac,0,1)),style:{transition:'stroke-dashoffset .3s'}}));
 }
 const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
-function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPress}){
+function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPress,collapsed,onToggleCollapse}){
   const lp=useLongPress(onLongPress);
   const check=h('button',{onClick:e=>{e.stopPropagation();onToggle()},className:'act90',style:{display:'flex',flexShrink:0,color:done?T.accent:T.sub,padding:2,marginTop:1}},Icons.checkCircle(24,done));
   if(feedy){
@@ -2257,13 +2257,15 @@ function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPres
         e.publishedMs?h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},fmtDateShort(e.publishedMs)):null));
     return h('div',Object.assign({},lp,{style:{display:'flex',gap:8,padding:'10px 4px',alignItems:'flex-start'}}),check,
       h('div',{style:{flex:1,minWidth:0}},
-        h('div',{onClick:onOpen,style:{display:'flex',alignItems:'center',gap:6,cursor:'pointer'}},
-          h('span',{style:{color:K.c,display:'flex',flexShrink:0}},K.ic(15)),
-          h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.55:1}},item.name),
-          es.length?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:K.c,borderRadius:5,padding:'2px 6px'}},es.length+' new'):null),
-        es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,6).map(card),
+        h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+          h('div',{onClick:onOpen,style:{display:'flex',alignItems:'center',gap:6,cursor:'pointer',flex:1,minWidth:0}},
+            h('span',{style:{color:K.c,display:'flex',flexShrink:0}},K.ic(15)),
+            h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.55:1}},item.name),
+            es.length?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:K.c,borderRadius:5,padding:'2px 6px'}},es.length+' new'):null),
+          onToggleCollapse?h('button',{onClick:()=>onToggleCollapse(),className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:2,transform:collapsed?'none':'rotate(90deg)',transition:'transform 160ms'}},Icons.chevR(13)):null),
+        collapsed?null:(es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,6).map(card),
           es.length>6?h('button',{onClick:onOpen,style:{fontSize:12,color:T.accent,fontWeight:600,textAlign:'left',padding:'2px'}},'+'+(es.length-6)+' more'):null)
-          :h('div',{onClick:onOpen,style:{marginTop:5,fontSize:12,color:T.sub,cursor:'pointer'}},'No new posts since the last brief.')));
+          :h('div',{onClick:onOpen,style:{marginTop:5,fontSize:12,color:T.sub,cursor:'pointer'}},'No new posts since the last brief.'))));
   }
   return h('div',Object.assign({},lp,{style:{display:'flex',gap:10,padding:'11px 4px',alignItems:'center'}}),check,
     h('div',{onClick:onOpen,style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:11,cursor:'pointer'}},
@@ -2387,7 +2389,7 @@ function BriefView({T,brief,onBrief,toastFn}){
   const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
   const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
-  const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it)});
+  const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
   const sectionHead=(g,list)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'20px 2px 8px'}},
     h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
     h('div',{onClick:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},g?g.name:'Other'),
