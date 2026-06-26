@@ -1209,7 +1209,7 @@ function BackupBanner({T,never,onExport,onLater}){
 }
 
 /* ============================== article row ============================== */
-function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,selecting,selected,onToggleSelect,snippet,disabledSelect}){
+function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,selecting,selected,onToggleSelect,snippet,disabledSelect,onMarkDone}){
   const [dx,setDx]=useState(0);
   const drag=useRef({x:0,y:0,lock:null,moved:false});
   const lp=useRef(null);
@@ -1279,7 +1279,8 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
       (a.image||a.isVideo)?h('div',{style:{width:64,height:64,borderRadius:5,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden'}},
         a.image?h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover',display:'block'},onError:e=>{e.target.style.display='none'}}):null,
         a.isVideo?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
-          h('div',{style:{width:30,height:30,borderRadius:'50%',background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:2}},Icons.play(15,true))):null
+          h('div',{style:{width:30,height:30,borderRadius:'50%',background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:2}},Icons.play(15,true))):null,
+        a.isVideo&&onMarkDone?h('button',{onTouchStart:e=>e.stopPropagation(),onTouchEnd:e=>{e.stopPropagation();onMarkDone()},onMouseDown:e=>e.stopPropagation(),onClick:e=>{e.stopPropagation();onMarkDone()},style:{position:'absolute',bottom:3,right:3,padding:0,width:22,height:22,display:'flex',alignItems:'center',justifyContent:'center',color:done?T.accent:'rgba(255,255,255,.9)',filter:done?'none':'drop-shadow(0 1px 2px rgba(0,0,0,.6))'}},Icons.checkCircle(20,done)):null
       ):null
     ));
 }
@@ -1334,6 +1335,67 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
         h('div',{style:{height:'calc(20px + '+SAFE_B+')'}})
       )
     ));
+}
+
+/* ============================== collapsible group header ============================== */
+function CollapsibleGroup({T,label,badge,children,defaultOpen}){
+  const [open,setOpen]=useState(defaultOpen!==false);
+  return h('div',null,
+    h('button',{onClick:()=>setOpen(o=>!o),className:'act98',style:{display:'flex',alignItems:'center',gap:10,width:'100%',padding:'12px 16px',textAlign:'left',background:T.card,borderBottom:'1px solid '+T.hair,color:T.fg}},
+      h('span',{style:{display:'flex',color:T.sub,transform:open?'rotate(90deg)':'none',transition:'transform 180ms'}},Icons.chevR(15)),
+      h('span',{style:{flex:1,fontSize:14,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label),
+      badge>0?h('span',{style:{background:T.accent,color:'#fff',borderRadius:10,padding:'1px 7px',fontSize:11.5,fontWeight:700,minWidth:20,textAlign:'center',flexShrink:0}},String(badge)):null
+    ),
+    open?children:null);
+}
+
+/* ============================== My Routine (Videos grouped by channel) ============================== */
+function MyRoutine({T,videos,onOpen,onLongPress,onMarkDone,onSwipeLeft,onSwipeRight,selectState,onToggleSelect}){
+  const channels=useMemo(()=>{
+    const map=new Map();
+    videos.forEach(v=>{const k=v.source||'Other';if(!map.has(k))map.set(k,[]);map.get(k).push(v)});
+    return[...map.entries()].map(([name,vids])=>({name,videos:vids,newCount:vids.filter(v=>(v.progress||0)<0.97).length}));
+  },[videos]);
+  return h('div',null,channels.map(ch=>h(CollapsibleGroup,{key:ch.name,T,label:ch.name,badge:ch.newCount},
+    ch.videos.map(v=>h(ArticleRow,{key:v.id,a:v,T,scopeType:'videos',
+      onOpen:()=>onOpen(v.id),onLongPress:()=>onLongPress(v.id),
+      onMarkDone:()=>onMarkDone(v.id,(v.progress||0)>=0.97?0:1),
+      onSwipeLeft:()=>onSwipeLeft(v),onSwipeRight:()=>onSwipeRight(v),
+      selecting:!!selectState,selected:selectState?selectState.ids.includes(v.id):false,
+      disabledSelect:selectState&&selectState.mode==='playlist'&&(v.isVideo||!v.text),
+      onToggleSelect:()=>onToggleSelect(v.id)}))
+  )));
+}
+
+/* ============================== Grouped Archive / History ============================== */
+function GroupedArchive({T,articles,onOpen,onLongPress,onSwipeLeft,onSwipeRight,selectState,onToggleSelect}){
+  const groups=useMemo(()=>{
+    const d=new Date();d.setHours(0,0,0,0);const today=d.getTime();
+    const buckets=[
+      {key:'today',label:'Today',items:[]},
+      {key:'yesterday',label:'Yesterday',items:[]},
+      {key:'week',label:'This week',items:[]},
+      {key:'month',label:'This month',items:[]},
+      {key:'older',label:'Older',items:[]}
+    ];
+    articles.forEach(a=>{
+      const t=a.addedAt||0;
+      if(t>=today)buckets[0].items.push(a);
+      else if(t>=today-86400000)buckets[1].items.push(a);
+      else if(t>=today-6*86400000)buckets[2].items.push(a);
+      else if(t>=today-29*86400000)buckets[3].items.push(a);
+      else buckets[4].items.push(a);
+    });
+    return buckets.filter(b=>b.items.length);
+  },[articles]);
+  return h('div',null,groups.map((g,i)=>h(CollapsibleGroup,{key:g.key,T,label:g.label,badge:0,defaultOpen:i===0},
+    g.items.map(a=>h(ArticleRow,{key:a.id,a,T,scopeType:'archive',
+      onOpen:()=>onOpen(a.id),onLongPress:()=>onLongPress(a.id),
+      onSwipeLeft:()=>onSwipeLeft(a),onSwipeRight:()=>onSwipeRight(a),
+      selecting:!!selectState,selected:selectState?selectState.ids.includes(a.id):false,
+      disabledSelect:selectState&&selectState.mode==='playlist'&&(a.isVideo||!a.text),
+      onToggleSelect:()=>onToggleSelect(a.id)}))
+  )));
 }
 
 /* ============================== ooo menu ============================== */
@@ -3090,7 +3152,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
 /* ============================== list helpers ============================== */
 function inScope(a,scope){
   switch(scope.type){
-    case 'home':return !a.archived;
+    case 'home':return !a.archived&&!a.folderId;
     case 'liked':return a.liked;
     case 'archive':return a.archived;
     case 'videos':return a.isVideo&&!a.archived;
@@ -3609,7 +3671,22 @@ function App(){
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
-  else if(!list.length){
+  else if(scope.type==='videos'&&!q&&list.length){
+    body=h(MyRoutine,{T,videos:list,
+      onOpen:openArticle,
+      onLongPress:id=>setSheet({type:'article',id}),
+      onMarkDone:(id,progress)=>{patchArticle(id,{progress});toastFn(progress>=0.97?'Marked as watched':'Marked as unwatched')},
+      onSwipeLeft:v=>{patchArticle(v.id,{archived:true});toastFn('Archived')},
+      onSwipeRight:v=>{patchArticle(v.id,x=>({liked:!x.liked}));toastFn(v.liked?'Unliked':'Liked')},
+      selectState:selecting,onToggleSelect:toggleSelect});
+  }else if(scope.type==='archive'&&!q&&list.length){
+    body=h(GroupedArchive,{T,articles:list,
+      onOpen:openArticle,
+      onLongPress:id=>setSheet({type:'article',id}),
+      onSwipeLeft:v=>{patchArticle(v.id,{archived:false});toastFn('Moved to Home')},
+      onSwipeRight:v=>{patchArticle(v.id,x=>({liked:!x.liked}));toastFn(v.liked?'Unliked':'Liked')},
+      selectState:selecting,onToggleSelect:toggleSelect});
+  }else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
   }else{
