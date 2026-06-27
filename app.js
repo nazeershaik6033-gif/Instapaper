@@ -1922,42 +1922,40 @@ function BriefChips({T,options,selected,onSelect}){
         (o.flag?o.flag+' ':'')+o.label);
     }));
 }
-function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,headlinesCategories,headlinesSources}){
+function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCategories,headlinesSources,onOpenUrl}){
   const [items,setItems]=useState(null);
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
   const [configOpen,setConfigOpen]=useState(false);
+  const [briefTab,setBriefTab]=useState('stories');
   const reqRef=useRef(0);
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
-  const activeCats=allCats.filter(c=>c.enabled);
   const allSrcs=headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}));
+  const enabledSrcs=allSrcs.filter(s=>s.enabled);
   const load=useCallback(()=>{
     const id=++reqRef.current;
     setItems(null);setErr('');
-    const cats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
-    const selCat=cats.find(c=>c.id===category)||(cats.find(c=>c.enabled)||cats[0])||{id:'',enabled:true,custom:false,query:''};
-    const topicId=selCat.custom?null:selCat.id;
-    const customQ=selCat.custom?(selCat.query||selCat.label):null;
-    fetchBrief(regionId,topicId,headlinesSources,customQ)
+    fetchBrief(regionId,'',headlinesSources,null)
       .then(r=>{if(id===reqRef.current)setItems(r)})
       .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
-  },[regionId,category,headlinesCategories,headlinesSources]);
+  },[regionId,headlinesSources]);
   useEffect(load,[load]);
   const region=briefRegion(regionId);
   const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
-  let body;
+  const openUrl=url=>{if(onOpenUrl)onOpenUrl(url)};
+  let newsBody;
   if(items===null){
-    body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
+    newsBody=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
       h(Spinner,{T,size:24}),
       h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
   }else if(err){
-    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
+    newsBody=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
       h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
       h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
-    body=h('div',null,
+    newsBody=h('div',null,
       items.map((it,i)=>{
         const busy=busyUrl===it.url;
         return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
@@ -1974,15 +1972,39 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,hea
       h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
         'Tap a story to save it for offline reading. Headlines via Google News.'));
   }
+  const sourcesBody=enabledSrcs.length===0
+    ?h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
+        h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
+        h('div',{style:{fontSize:16,fontWeight:600,color:T.meta,marginBottom:6}},'No sources selected'),
+        h('div',{style:{fontSize:13.5,lineHeight:1.5}},'Tap the settings icon above to choose your preferred news sources.'))
+    :h('div',null,
+        enabledSrcs.map(s=>h('div',{key:s.domain,style:{display:'flex',alignItems:'center',gap:12,padding:'15px 16px',borderBottom:'1px solid '+T.hair}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg,marginBottom:5}},s.label),
+            h('div',{style:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
+              h('button',{onClick:()=>openUrl('https://'+s.domain),className:'act95',
+                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.meta,fontSize:12.5,fontWeight:500}},
+                Icons.globe(13),'Website'),
+              s.epaper?h('button',{onClick:()=>openUrl(s.epaper),className:'act95',
+                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.accent,fontSize:12.5,fontWeight:500}},
+                Icons.external(13),'ePaper'):null)))));
+  const tabBar=h('div',{style:{display:'flex',borderBottom:'1px solid '+T.hair}},
+    [['Top Stories','stories'],['Sources','sources']].map(([label,key])=>{
+      const active=briefTab===key;
+      return h('button',{key,onClick:()=>setBriefTab(key),className:'act95',
+        style:{flex:1,padding:'11px 8px',fontSize:14,fontWeight:active?600:500,
+          color:active?T.accent:T.sub,background:'none',border:'none',
+          borderBottom:'2px solid '+(active?T.accent:'transparent'),
+          marginBottom:-1,transition:'color .15s,border-color .15s'}},label);
+    }));
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
       showRegion?h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'):h('div',{style:{flex:1}}),
       h('button',{onClick:()=>setConfigOpen(true),className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg}),title:'Customise'},Icons.gear(18)),
       h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
     showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
-    activeCats.length?h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'):null,
-    activeCats.length?h(BriefChips,{T,options:activeCats,selected:category,onSelect:id=>onConfig({briefCategory:id})}):null,
-    h('div',{style:{borderTop:'1px solid '+T.hair}},body),
+    tabBar,
+    h('div',null,briefTab==='stories'?newsBody:sourcesBody),
     configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null);
 }
 
@@ -3670,9 +3692,10 @@ function App(){
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='brief')body=h(BriefView,{T,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
-  else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',category:S.briefCategory||'',showRegion:false,
+  else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
-    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
+    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem,
+    onOpenUrl:url=>setBrowserO({url})});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(scope.type==='videos'&&!q&&list.length){
     body=h(MyRoutine,{T,videos:list,
