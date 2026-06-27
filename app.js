@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:''};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -264,8 +264,8 @@ function faviconUrl(siteOrUrl){
   return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(host);
 }
 
-/* Lite view: fetch a page through the read proxies and make it safe to render
-   in a sandboxed frame — works even when the site blocks normal embedding. */
+
+
 /* detect Indic scripts so text-to-speech picks a matching voice (Telugu, Hindi, …) */
 function detectSpeechLang(s){
   if(/[ఀ-౿]/.test(s))return'te-IN';
@@ -1141,7 +1141,8 @@ const Icons={
   pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
   crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
   rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
-  drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'}))
+  drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'})),
+  news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -1948,11 +1949,11 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,hea
   if(items===null){
     body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
       h(Spinner,{T,size:24}),
-      h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
+      h(‘div’,{style:{fontSize:14}},’Gathering today\’s ‘+region.label+’ headlines…’));
   }else if(err){
-    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
-      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
-      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
+    body=h(‘div’,{style:{padding:’60px 40px’,textAlign:’center’,color:T.sub}},
+      h(‘div’,{style:{display:’flex’,justifyContent:’center’,marginBottom:14,opacity:.5}},Icons.newspaper(40)),
+      h(‘div’,{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},’Couldn\’t load the brief’),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
@@ -2865,73 +2866,67 @@ function BookmarkTile({T,site,onOpen,onLongPress}){
 }
 
 function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
-  const [input,setInput]=useState('');
+  const [input,setInput]=useState(‘’);
   const [vaultOpen,setVaultOpen]=useState(false);
+  const [url,setUrl]=useState(initialUrl||’’);
+  const [frameKey,setFrameKey]=useState(0);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
-  const [openFolder,setOpenFolder]=useState(null); // folderId being viewed
-  const [actSite,setActSite]=useState(null); // bookmark long-press action sheet
-  const [moveSite,setMoveSite]=useState(null); // move-to-folder sheet
-  const [editSite,setEditSite]=useState(null); // rename bookmark sheet
-  const [mkFolder,setMkFolder]=useState(null); // {} new · {rename:id} · {forSite:id}
-  const [fName,setFName]=useState('');
-  const open=t=>{const u=browserTarget(t);if(u)openExternalUrl(u)};
-  useEffect(()=>{if(initialUrl)open(initialUrl)},[]); // launched with a target → open it in the system browser
+  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
+  useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
+  const [actSite,setActSite]=useState(null);
+  const [moveSite,setMoveSite]=useState(null);
+  const [editSite,setEditSite]=useState(null);
+  const [mkFolder,setMkFolder]=useState(null);
+  const [fName,setFName]=useState(‘’);
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
-  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
-  const addBtn=(onClick)=>h('button',{onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
-    h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
-    h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
-  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>open(st.url),onLongPress:()=>setActSite(st)});
-  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
+  const tbtn=(icon,onClick)=>h(‘button’,{onClick,className:’act90’,style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
+  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,margin:’4px 2px 12px’};
+  const addBtn=(onClick)=>h(‘button’,{onClick,className:’act95’,style:{display:’flex’,flexDirection:’column’,alignItems:’center’,gap:7}},
+    h(‘span’,{style:{width:54,height:54,borderRadius:14,border:’1.5px dashed ‘+T.sub,display:’flex’,alignItems:’center’,justifyContent:’center’,color:T.sub}},Icons.plus(22)),
+    h(‘span’,{style:{fontSize:11.5,color:T.sub}},’Add’));
+  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>go(st.url),onLongPress:()=>setActSite(st)});
+  const grid=children=>h(‘div’,{style:{display:’grid’,gridTemplateColumns:’repeat(4,1fr)’,gap:14}},children);
   const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
-  const curFolder=openFolder?folders.find(f=>f.id===openFolder):null;
-
-  let body;
-  if(curFolder){
-    const fSites=sites.filter(s=>s.folderId===curFolder.id);
-    body=h('div',null,
-      h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'0 2px 14px'}},
-        h('button',{onClick:()=>setOpenFolder(null),className:'act90',style:{display:'flex',color:T.fg}},Icons.back(20)),
-        h('div',{style:{fontSize:16,fontWeight:600,flex:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},curFolder.name),
-        h('button',{onClick:()=>{setFName(curFolder.name);setMkFolder({rename:curFolder.id})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(18)),
-        h('button',{onClick:()=>{onSites(list=>list.map(s=>s.folderId===curFolder.id?{...s,folderId:null}:s));onFolders(list=>list.filter(f=>f.id!==curFolder.id));setOpenFolder(null)},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(18))),
-      grid([...fSites.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:curFolder.id}))]),
-      fSites.length?null:h('div',{style:{fontSize:12.5,color:T.sub,marginTop:18,textAlign:'center',lineHeight:1.5}},'No bookmarks here yet. Tap Add, or long-press a bookmark elsewhere and move it in.'));
-  }else{
-    body=h('div',null,
-      folders.length?h('div',null,
-        h('div',{style:lblS},'Folders'),
-        h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,1fr)',gap:10,marginBottom:20}},
-          folders.map(f=>{const n=sites.filter(s=>s.folderId===f.id).length;
-            return h('button',{key:f.id,onClick:()=>setOpenFolder(f.id),className:'act96',style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:12,background:T.card,textAlign:'left',minWidth:0}},
-              h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.folder(22)),
-              h('span',{style:{minWidth:0}},
-                h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-                h('span',{style:{display:'block',fontSize:11.5,color:T.sub}},n+(n===1?' site':' sites'))));
-          }))):null,
-      h('div',{style:lblS},'Bookmarks'),
-      grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
-      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
-      h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tapping a site or entering an address opens it in your browser.'));
-  }
-
-
-  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+  const homeBody=h(‘div’,null,
+    folders.map(f=>{
+      const fSites=sites.filter(s=>s.folderId===f.id);
+      return h(‘div’,{key:f.id,style:{marginBottom:20}},
+        h(‘div’,{style:{display:’flex’,alignItems:’center’,marginBottom:8}},
+          h(‘div’,{style:{fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,flex:1}},f.name),
+          h(‘button’,{onClick:()=>{setFName(f.name);setMkFolder({rename:f.id})},className:’act90’,style:{display:’flex’,color:T.sub}},Icons.pencil(15)),
+          h(‘button’,{onClick:()=>{onSites(list=>list.map(s=>s.folderId===f.id?{...s,folderId:null}:s));onFolders(list=>list.filter(x=>x.id!==f.id))},className:’act90’,style:{display:’flex’,color:T.danger}},Icons.trash(15))),
+        grid([...fSites.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:f.id}))]));
+    }),
+    h(‘div’,{style:lblS},’Bookmarks’),
+    grid([...loose.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:null}))]),
+    h(‘button’,{onClick:()=>{setFName(‘’);setMkFolder({})},className:’act98’,style:{display:’flex’,alignItems:’center’,gap:8,marginTop:18,padding:’11px 14px’,borderRadius:11,border:’1px dashed ‘+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),’New folder’),
+    h(‘div’,{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},’Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.’));
+  return h(‘div’,{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
+      h('button',{onClick:url?()=>{setUrl('');setInput('')}:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},url?Icons.back(22):Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-          onKeyDown:e=>{if(e.key==='Enter'){open(input);setInput('')}},
+          onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
-      h('button',{onClick:()=>setVaultOpen(true),className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.key(19))),
-    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},body),
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
+      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
+      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
+      tbtn(Icons.key(19),()=>setVaultOpen(true))),
+    url?h(Fragment,null,
+      h('iframe',{key:url+'|'+frameKey,src:url,
+        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
+        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
+        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
+      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
+        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},'Blank page? The site may block embedding.'),
+        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
+    :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
-      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);open(s.url)}}),
+      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);go(s.url)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Rename',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:()=>{const s=actSite;setActSite(null);setMoveSite(s)}}),
       h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onSites(list=>list.filter(x=>x.id!==actSite.id));setActSite(null)}})):null,
@@ -2948,7 +2943,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=fName.trim()||'New folder';
             if(mkFolder.rename){onFolders(list=>list.map(f=>f.id===mkFolder.rename?{...f,name:nm}:f))}
-            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id);else setOpenFolder(id)}
+            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id)}
             setMkFolder(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkFolder.rename?'Rename':'Create'))):null,
 
     editSite?h(Sheet,{T,title:'Edit bookmark',onClose:()=>setEditSite(null)},
@@ -2965,9 +2960,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
         h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',enterKeyHint:'done',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
-        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add'+(curFolder?' to '+curFolder.name:'')))):null,
-
-
+        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add bookmark'))):null,
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
         h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null);
@@ -3192,6 +3185,7 @@ function scopeTitle(scope,folders){
     case 'headlines':return 'India Headlines';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
+    case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -3586,7 +3580,7 @@ function App(){
       d.folders=Array.isArray(d.folders)?d.folders:[];
       d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
       d.sites=Array.isArray(d.sites)?d.sites:[];
-  d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+      d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
       update(()=>d);setScope({type:'home'});toastFn('Backup restored — '+d.articles.length+' articles');
@@ -3749,6 +3743,7 @@ function App(){
                     style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.sort?600:400,background:'transparent',textAlign:'left'}},
                     l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
         })():null):null,
+      backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
       h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
