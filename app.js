@@ -87,7 +87,7 @@ async function openRouterChat(key,model,messages,maxTokens,onWait){
     if(res.status===401)msg='Invalid OpenRouter API key — check it in the AI settings.';
     else if(res.status===402)msg='Out of OpenRouter credits — switch to a (free) model or top up.';
     else if(res.status===429)msg='OpenRouter rate limit. Free models allow ~20 requests/min and 50/day (1,000/day once you buy $10 credit one time). Wait a minute, pick another :free model, or switch to Google Gemini in Settings → AI.';
-    if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can’t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
+    if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can\'t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
     throw new Error(msg);
   }
   const j=await res.json();
@@ -127,7 +127,7 @@ async function geminiChat(key,model,messages,maxTokens,onWait){
     let msg='Gemini request failed ('+res.status+')';
     try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
     if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in the AI settings.';
-    else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
+    else if(res.status===403)msg='This Gemini API key isn\'t allowed to use '+model+'.';
     else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or switch provider in Settings → AI.';
     throw new Error(msg);
   }
@@ -163,8 +163,8 @@ async function geminiVideo(key,model,prompt,url,maxTokens,onWait){
     let msg='Gemini video request failed ('+res.status+')';
     try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
     if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in Settings → AI.';
-    else if(res.status===400)msg='Gemini couldn’t read this video. It may be private, age-restricted, or region-locked.';
-    else if(res.status===403)msg='This Gemini API key isn’t allowed to use '+model+'.';
+    else if(res.status===400)msg='Gemini couldn\'t read this video. It may be private, age-restricted, or region-locked.';
+    else if(res.status===403)msg='This Gemini API key isn\'t allowed to use '+model+'.';
     else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or use Gemini 2.5 Flash in Settings → AI.';
     throw new Error(msg);
   }
@@ -589,7 +589,7 @@ function chunkParas(paras,max){
 function toSentences(text){
   const clean=String(text||'').replace(/\s+/g,' ').trim();
   if(!clean)return[];
-  let parts=clean.match(/[^.!?…]+[.!?…]+["”'’)\]]*\s*|[^.!?…]+$/g)||[clean];
+  let parts=clean.match(/[^.!?…]+[.!?…]+[""'')\]]*\s*|[^.!?…]+$/g)||[clean];
   parts=parts.map(p=>p.trim()).filter(Boolean);
   // merge very short fragments with the previous sentence
   const merged=[];
@@ -1549,8 +1549,8 @@ function HighlightSheet({T,article,hl,onSaveNote,onDelete,onClose}){
         style:{width:'100%',marginTop:14,padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}})),
     h(PrimaryBtn,{T,label:'Save note',onClick:()=>onSaveNote(note.trim())}),
     h('div',{style:{display:'flex',justifyContent:'center',gap:26,marginTop:10}},
-      h('button',{onClick:()=>{shareText('',('“'+hl.text+'”')+(note?'\n\n'+note:''),article.url)},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.share(20),'Share'),
-      h('button',{onClick:()=>{copyText('“'+hl.text+'”'+(article.url?' — '+article.url:''))},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.copy(20),'Copy'),
+      h('button',{onClick:()=>{shareText('',('"'+hl.text+'"')+(note?'\n\n'+note:''),article.url)},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.share(20),'Share'),
+      h('button',{onClick:()=>{copyText('"'+hl.text+'"'+(article.url?' — '+article.url:''))},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.copy(20),'Copy'),
       h('button',{onClick:onDelete,className:'act95',style:{color:T.danger,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.trash(20),'Delete')));
 }
 /* ============================== highlight engine ============================== */
@@ -1687,11 +1687,11 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     if(kind==='hl')addHighlight(text,false);
     else if(kind==='note')addHighlight(text,true);
     else if(kind==='copy'){copyText(text);toastFn('Copied')}
-    else if(kind==='share')shareText(a.title,'“'+text+'”',a.url);
+    else if(kind==='share')shareText(a.title,'"'+text+'"',a.url);
     clearSel();
   };
 
-  const doRetry=async()=>{setRetrying(true);try{await onRetry()}catch(e){toastFn('Still couldn’t download this page')}setRetrying(false)};
+  const doRetry=async()=>{setRetrying(true);try{await onRetry()}catch(e){toastFn('Still couldn\'t download this page')}setRetrying(false)};
 
   const tb=(icon,onClick,opts)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:(opts&&opts.color)||T.fg})},icon);
   const heroDupe=a.image&&a.html&&a.html.indexOf(escapeHtml(a.image))>-1;
@@ -1797,7 +1797,7 @@ function speedDelay(word,wpm){
   let m=1;
   if(word.length>9)m*=1.35;
   if(/[,;:—–]$/.test(word))m*=1.7;
-  else if(/[.!?…]["”')\]]*$/.test(word))m*=2.3;
+  else if(/[.!?…][""')\]]*$/.test(word))m*=2.3;
   return(60000/wpm)*m;
 }
 function SpeedReader({a,T,S,onClose,onFinish,saveWpm}){
@@ -1949,11 +1949,11 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem,showRegion=true,hea
   if(items===null){
     body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
       h(Spinner,{T,size:24}),
-      h(‘div’,{style:{fontSize:14}},’Gathering today\’s ‘+region.label+’ headlines…’));
+      h('div',{style:{fontSize:14}},'Gathering today\'s '+region.label+' headlines…'));
   }else if(err){
-    body=h(‘div’,{style:{padding:’60px 40px’,textAlign:’center’,color:T.sub}},
-      h(‘div’,{style:{display:’flex’,justifyContent:’center’,marginBottom:14,opacity:.5}},Icons.newspaper(40)),
-      h(‘div’,{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},’Couldn\’t load the brief’),
+    body=h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.newspaper(40)),
+      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},'Couldn\'t load the brief'),
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
@@ -2126,7 +2126,7 @@ function PhotosView({T,S,media,albums,onPick,onPickToAlbum,onUpdate,onDelete,onA
               h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,marginTop:6,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},al.name),
               h('div',{style:{fontSize:12,color:T.sub}},ms.length+(ms.length===1?' item':' items')));
           }))
-          :h('div',{style:{padding:'30px 30px',textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5}},'Create an album to group photos. Long-press any photo and choose “Move to album”.'));
+          :h('div',{style:{padding:'30px 30px',textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5}},'Create an album to group photos. Long-press any photo and choose "Move to album".'));
     }
   }
   const isImg=actM&&actM.kind==='image';
@@ -2370,7 +2370,7 @@ function BriefView({T,brief,onBrief,toastFn}){
     else{patch.url=normalizeUrl(raw)||raw}
     let ytName='';if(f.kind==='youtube'){const hm=raw.match(/@([\w.\-]+)/)||(/^[\w.\-]+$/.test(raw)&&!/youtu/i.test(raw)?[null,raw]:null);if(hm)ytName='@'+hm[1]}
     patch.name=(f.name||'').trim()||(patch.handle?'@'+patch.handle:'')||ytName||domainOf(patch.url)||'Item';
-    if(f.kind==='telegram'&&!patch.handle)toastFn('Couldn’t read that Telegram handle');
+    if(f.kind==='telegram'&&!patch.handle)toastFn('Couldn\'t read that Telegram handle');
     // Add/patch the item immediately — never block the sheet on the network.
     let itemId=f.id;
     if(f.id)onBrief(b=>({...b,items:b.items.map(x=>x.id===f.id?{...x,...patch}:x)}));
@@ -2383,7 +2383,7 @@ function BriefView({T,brief,onBrief,toastFn}){
       if(f.kind==='youtube'&&!cid){
         try{cid=await resolveYtChannelId(raw)}catch(e){}
         if(cid)onBrief(b=>({...b,items:b.items.map(x=>x.id===itemId?{...x,channelId:cid,url:'https://www.youtube.com/channel/'+cid}:x)}));
-        else toastFn('Couldn’t find that channel — it’ll still open as a link');
+        else toastFn('Couldn\'t find that channel — it\'ll still open as a link');
       }
       const probe={kind:patch.kind,channelId:cid,handle:patch.handle,feedUrl:patch.feedUrl};
       if(hasFeed(probe)){try{const es=await fetchFeed(probe);if(es)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[itemId]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}}
@@ -2473,7 +2473,7 @@ function BriefView({T,brief,onBrief,toastFn}){
     moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
       h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{setItemGroup(moveIt.id,null);setMoveIt(null)}}),
       groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
-      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with “New group”.')):null,
+      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with "New group".')):null,
 
     grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
@@ -2517,7 +2517,7 @@ function TagsList({T,articles,onPick}){
   const counts={};
   for(const a of articles)for(const t of a.tags)counts[t]=(counts[t]||0)+1;
   const tags=Object.keys(counts).sort();
-  if(!tags.length)return h(EmptyState,{T,icon:Icons.tag(40),title:'No tags yet',sub:'Long-press any article and choose “Edit tags” to organize your reading with tags.'});
+  if(!tags.length)return h(EmptyState,{T,icon:Icons.tag(40),title:'No tags yet',sub:'Long-press any article and choose "Edit tags" to organize your reading with tags.'});
   return h('div',null,tags.map(t=>
     h('button',{key:t,onClick:()=>onPick(t),className:'act98 trc',style:{display:'flex',alignItems:'center',gap:16,width:'100%',padding:'16px 18px',textAlign:'left',color:T.fg,borderBottom:'1px solid '+T.hair}},
       h('span',{style:{display:'flex',color:T.meta}},Icons.tag(20)),
@@ -2768,7 +2768,7 @@ function VaultPanel({T,vault,onChange,session}){
       verr?h('div',{style:{fontSize:13,color:T.danger,marginTop:8}},verr):null,
       btn(vbusy?'Creating…':'Create vault',async()=>{
         if(p1.length<4){setVerr('Passcode must be at least 4 characters');return}
-        if(p1!==p2){setVerr('Passcodes don’t match');return}
+        if(p1!==p2){setVerr('Passcodes don\'t match');return}
         setVbusy(true);setVerr('');
         try{const blob=await vaultEncrypt(p1,[]);session.current={unlocked:true,pass:p1,entries:[]};onChange(blob);setP1('');setP2('')}
         catch(e){setVerr('Could not create the vault')}
@@ -2866,9 +2866,9 @@ function BookmarkTile({T,site,onOpen,onLongPress}){
 }
 
 function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
-  const [input,setInput]=useState(‘’);
+  const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
-  const [url,setUrl]=useState(initialUrl||’’);
+  const [url,setUrl]=useState(initialUrl||'');
   const [frameKey,setFrameKey]=useState(0);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
   const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
@@ -2877,31 +2877,31 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
   const [moveSite,setMoveSite]=useState(null);
   const [editSite,setEditSite]=useState(null);
   const [mkFolder,setMkFolder]=useState(null);
-  const [fName,setFName]=useState(‘’);
+  const [fName,setFName]=useState('');
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
-  const tbtn=(icon,onClick)=>h(‘button’,{onClick,className:’act90’,style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
-  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,margin:’4px 2px 12px’};
-  const addBtn=(onClick)=>h(‘button’,{onClick,className:’act95’,style:{display:’flex’,flexDirection:’column’,alignItems:’center’,gap:7}},
-    h(‘span’,{style:{width:54,height:54,borderRadius:14,border:’1.5px dashed ‘+T.sub,display:’flex’,alignItems:’center’,justifyContent:’center’,color:T.sub}},Icons.plus(22)),
-    h(‘span’,{style:{fontSize:11.5,color:T.sub}},’Add’));
+  const tbtn=(icon,onClick)=>h('button',{onClick,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
+  const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
+  const addBtn=(onClick)=>h('button',{onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
+    h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
+    h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
   const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>go(st.url),onLongPress:()=>setActSite(st)});
-  const grid=children=>h(‘div’,{style:{display:’grid’,gridTemplateColumns:’repeat(4,1fr)’,gap:14}},children);
+  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
   const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
-  const homeBody=h(‘div’,null,
+  const homeBody=h('div',null,
     folders.map(f=>{
       const fSites=sites.filter(s=>s.folderId===f.id);
-      return h(‘div’,{key:f.id,style:{marginBottom:20}},
-        h(‘div’,{style:{display:’flex’,alignItems:’center’,marginBottom:8}},
-          h(‘div’,{style:{fontSize:11.5,fontWeight:700,letterSpacing:’.06em’,textTransform:’uppercase’,color:T.sub,flex:1}},f.name),
-          h(‘button’,{onClick:()=>{setFName(f.name);setMkFolder({rename:f.id})},className:’act90’,style:{display:’flex’,color:T.sub}},Icons.pencil(15)),
-          h(‘button’,{onClick:()=>{onSites(list=>list.map(s=>s.folderId===f.id?{...s,folderId:null}:s));onFolders(list=>list.filter(x=>x.id!==f.id))},className:’act90’,style:{display:’flex’,color:T.danger}},Icons.trash(15))),
-        grid([...fSites.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:f.id}))]));
+      return h('div',{key:f.id,style:{marginBottom:20}},
+        h('div',{style:{display:'flex',alignItems:'center',marginBottom:8}},
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1}},f.name),
+          h('button',{onClick:()=>{setFName(f.name);setMkFolder({rename:f.id})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(15)),
+          h('button',{onClick:()=>{onSites(list=>list.map(s=>s.folderId===f.id?{...s,folderId:null}:s));onFolders(list=>list.filter(x=>x.id!==f.id))},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(15))),
+        grid([...fSites.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:f.id}))]));
     }),
-    h(‘div’,{style:lblS},’Bookmarks’),
-    grid([...loose.map(tile),addBtn(()=>setAddForm({name:’’,url:’’,folderId:null}))]),
-    h(‘button’,{onClick:()=>{setFName(‘’);setMkFolder({})},className:’act98’,style:{display:’flex’,alignItems:’center’,gap:8,marginTop:18,padding:’11px 14px’,borderRadius:11,border:’1px dashed ‘+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),’New folder’),
-    h(‘div’,{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},’Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.’));
-  return h(‘div’,{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:lblS},'Bookmarks'),
+    grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
+    h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
+    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.'));
+  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
       h('button',{onClick:url?()=>{setUrl('');setInput('')}:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},url?Icons.back(22):Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
@@ -3194,10 +3194,10 @@ function scopeTitle(scope,folders){
 const EMPTY_STATES={
   home:['No articles yet','Tap + in the sidebar to save your first link.'],
   liked:['No liked articles','Tap the heart inside an article, or swipe right on it.'],
-  archive:['Archive is empty','Swipe left on an article to archive it when you’re done.'],
+  archive:['Archive is empty','Swipe left on an article to archive it when you\'re done.'],
   videos:['No videos saved','Save a YouTube link and it will show up here.'],
-  folder:['This folder is empty','Long-press an article and choose “Move to folder”.'],
-  tag:['Nothing with this tag','Long-press an article and choose “Edit tags”.']
+  folder:['This folder is empty','Long-press an article and choose "Move to folder".'],
+  tag:['Nothing with this tag','Long-press an article and choose "Edit tags".']
 };
 
 /* ============================== error boundary ============================== */
@@ -3458,7 +3458,7 @@ function App(){
       setReadingId(article.id);
       toastFn('Saved — '+article.readMin+' min read');
     }catch(e){
-      toastFn('Couldn’t fetch that story — opening it instead');
+      toastFn('Couldn\'t fetch that story — opening it instead');
       setBrowserO({url:it.url});
     }
   };
@@ -3584,7 +3584,7 @@ function App(){
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
       update(()=>d);setScope({type:'home'});toastFn('Backup restored — '+d.articles.length+' articles');
-    }catch(e){toastFn('That file doesn’t look like a backup')}
+    }catch(e){toastFn('That file doesn\'t look like a backup')}
   };
   const eraseAll=()=>{
     try{localStorage.removeItem(STORE_KEY)}catch(e){}
@@ -3690,7 +3690,7 @@ function App(){
       onSwipeRight:v=>{patchArticle(v.id,x=>({liked:!x.liked}));toastFn(v.liked?'Unliked':'Liked')},
       selectState:selecting,onToggleSelect:toggleSelect});
   }else if(!list.length){
-    const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
+    const[et,es]=q?['No results','Nothing matches "'+query.trim()+'" in your articles — full-text search covers everything you\'ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
   }else{
     body=h('div',null,
@@ -3826,7 +3826,7 @@ function App(){
 
     sheet&&sheet.type==='confirm'?h(ConfirmSheet,{T,
       title:sheet.kind==='delete'?('Delete '+(sheet.ids.length>1?sheet.ids.length+' articles?':'article?')):sheet.kind==='clearArchive'?'Clear archive?':'Erase everything?',
-      message:sheet.kind==='delete'?'This also removes any highlights and notes in '+(sheet.ids.length>1?'these articles':'this article')+'. This can’t be undone.':sheet.kind==='clearArchive'?'All archived articles and their highlights will be permanently removed.':'All articles, highlights, folders, and settings will be permanently removed from this device.',
+      message:sheet.kind==='delete'?'This also removes any highlights and notes in '+(sheet.ids.length>1?'these articles':'this article')+'. This can\'t be undone.':sheet.kind==='clearArchive'?'All archived articles and their highlights will be permanently removed.':'All articles, highlights, folders, and settings will be permanently removed from this device.',
       confirmLabel:sheet.kind==='delete'?'Delete':sheet.kind==='clearArchive'?'Clear archive':'Erase everything',
       onClose:()=>setSheet(null),
       onConfirm:()=>{
