@@ -2034,6 +2034,7 @@ const EMPTY_STATES={
 class Boundary extends React.Component{
   constructor(p){super(p);this.state={err:null}}
   static getDerivedStateFromError(e){return{err:e}}
+  componentDidCatch(){try{const s=document.getElementById('spl');if(s)s.classList.add('hide')}catch(e){}}
   render(){
     if(this.state.err)return ce('div',{style:{minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
       ce('div',{style:{fontFamily:WORDMARK,fontSize:24,fontWeight:600}},'Instapaper'),

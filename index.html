@@ -100,6 +100,12 @@ if('serviceWorker' in navigator){
     navigator.serviceWorker.register('sw.js').catch(function(){});
   });
 }
+/* Fallback: if React never mounts (CDN blocked, JS error before createRoot, etc.)
+   hide the splash after 8 s so the user isn't permanently stuck on the loading screen. */
+setTimeout(function(){
+  var s=document.getElementById('spl');
+  if(s&&!s.classList.contains('hide'))s.classList.add('hide');
+},8000);
 </script>
 </body>
 </html>
