@@ -2866,7 +2866,7 @@ function BookmarkTile({T,site,onOpen,onLongPress}){
 }
 
 function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
-  const [input,setInput]=useState('');
+  const [input,setInput]=useState(‘’);
   const [vaultOpen,setVaultOpen]=useState(false);
   const [url,setUrl]=useState(initialUrl||’’);
   const [frameKey,setFrameKey]=useState(0);
@@ -2903,7 +2903,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
     h(‘div’,{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},’Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.’));
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
+      h('button',{onClick:url?()=>{setUrl('');setInput('')}:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},url?Icons.back(22):Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
@@ -2943,7 +2943,11 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=fName.trim()||'New folder';
             if(mkFolder.rename){onFolders(list=>list.map(f=>f.id===mkFolder.rename?{...f,name:nm}:f))}
+<<<<<<< HEAD
             else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id)}
+=======
+            else{const id=uid();onFolders(list=>list.concat([{id,name:nm}]));if(mkFolder.forSite)setSiteFolder(mkFolder.forSite,id);else setOpenFolder(id)}
+>>>>>>> bad306b (Add folder structure to browser bookmarks view)
             setMkFolder(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},mkFolder.rename?'Rename':'Create'))):null,
 
     editSite?h(Sheet,{T,title:'Edit bookmark',onClose:()=>setEditSite(null)},
@@ -2958,9 +2962,16 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
       h('div',{style:{padding:'4px 18px 18px'}},
         h('input',{value:addForm.name,autoFocus:true,onChange:e=>setAddForm({...addForm,name:e.target.value}),placeholder:'Name (optional)',
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+<<<<<<< HEAD
         h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',enterKeyHint:'done',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add bookmark'))):null,
+=======
+        h('input',{value:addForm.url,onChange:e=>setAddForm({...addForm,url:e.target.value}),placeholder:'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const u=normalizeUrl(addForm.url);if(!u)return;onSites(list=>list.concat([{id:uid(),name:addForm.name.trim()||domainOf(u),url:u,folderId:addForm.folderId||null}]));setAddForm(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},'Add'+(curFolder?' to '+curFolder.name:'')))):null,
+
+>>>>>>> bad306b (Add folder structure to browser bookmarks view)
     vaultOpen?h(Sheet,{T,onClose:()=>setVaultOpen(false),title:'Passwords',z:95},
       h('div',{style:{padding:'0 20px'}},
         h(VaultPanel,{T,vault,onChange:onChangeVault,session}))):null);
@@ -3580,7 +3591,11 @@ function App(){
       d.folders=Array.isArray(d.folders)?d.folders:[];
       d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
       d.sites=Array.isArray(d.sites)?d.sites:[];
+<<<<<<< HEAD
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+=======
+      d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+>>>>>>> bad306b (Add folder structure to browser bookmarks view)
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
       update(()=>d);setScope({type:'home'});toastFn('Backup restored — '+d.articles.length+' articles');
