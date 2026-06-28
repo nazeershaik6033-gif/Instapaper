@@ -1,5 +1,5 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
-const CACHE = 'instapaper-shell-v78';
+const CACHE = 'instapaper-shell-v79';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   './newspaper.html', './newspaper.js', './newspaper.manifest.json',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
