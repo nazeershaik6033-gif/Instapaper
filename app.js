@@ -3024,10 +3024,8 @@ function BookmarkTile({T,site,onOpen,onLongPress}){
 function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
   const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
-  const [url,setUrl]=useState(initialUrl||'');
-  const [frameKey,setFrameKey]=useState(0);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
-  const go=t=>{const u=browserTarget(t);if(!u)return;setUrl(u);setInput(u)};
+  const go=t=>{const u=browserTarget(t);if(!u)return;setInput(u);openExternalUrl(u)}; // hand off to the system browser — embedding goes blank on any site that blocks framing
   useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
   const [actSite,setActSite]=useState(null);
   const [moveSite,setMoveSite]=useState(null);
@@ -3056,29 +3054,19 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
     h('div',{style:lblS},'Bookmarks'),
     grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
     h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
-    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.'));
+    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Tapping a bookmark or entering an address opens it in your browser. Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.'));
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:url?()=>{setUrl('');setInput('')}:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},url?Icons.back(22):Icons.x(22)),
+      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
-        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):url?h('button',{onClick:()=>{setUrl('');setInput('')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.home(16)):null),
-      url?tbtn(Icons.refresh(19),()=>setFrameKey(k=>k+1)):null,
-      url?tbtn(Icons.external(19),()=>openExternalUrl(url)):null,
+        input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
       tbtn(Icons.key(19),()=>setVaultOpen(true))),
-    url?h(Fragment,null,
-      h('iframe',{key:url+'|'+frameKey,src:url,
-        sandbox:'allow-scripts allow-same-origin allow-forms allow-popups allow-popups-to-escape-sandbox allow-downloads allow-modals',
-        allow:'fullscreen; clipboard-write',referrerPolicy:'no-referrer-when-downgrade',
-        style:{flex:1,border:0,width:'100%',background:'#fff'}}),
-      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'7px 14px calc(7px + '+SAFE_B+')',borderTop:'1px solid '+T.hair}},
-        h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.4}},'Blank page? The site may block embedding.'),
-        h('button',{onClick:()=>openExternalUrl(url),style:{color:T.accent,fontWeight:600,fontSize:12.5,flexShrink:0}},'Open ↗')))
-    :h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
