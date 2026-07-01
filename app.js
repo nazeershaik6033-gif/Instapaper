@@ -1111,6 +1111,7 @@ const Icons={
   filter:s=>Svg({size:s},P('M4 7h16M7 12h10M10 17h4')),
   calendar:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:15,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 9.5h17M8 3.2v3.6M16 3.2v3.6')),
   sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 2.6v2.4M12 19v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.6 12h2.4M19 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7')),
+  flame:s=>Svg({size:s},h('path',{d:'M12 2.5c.7 2.6-.8 4-2 5.2C8.8 9 7.8 10.6 7.8 12.6a4.2 4.2 0 0 0 8.4 0c0-1.2-.4-2.3-1.1-3.2 1 .4 1.8 1.2 2.2 2.5C18.4 8.7 16.5 5.2 12 2.5Z',fill:'currentColor',stroke:'none'})),
   newspaper:s=>Svg({size:s},P('M4 5.5h12.5v13H5.3c-.7 0-1.3-.6-1.3-1.3V5.5Z'),P('M16.5 8.5H19c.6 0 1 .4 1 1v7.7c0 .7-.6 1.3-1.3 1.3'),P('M6.8 8.5h6.9M6.8 11.5h6.9M6.8 14.5h4.4')),
   phone:s=>Svg({size:s},h('rect',{x:6.5,y:2.5,width:11,height:19,rx:2.6,stroke:'currentColor',strokeWidth:1.7}),P('M10.5 18.6h3')),
   send:s=>Svg({size:s},h('path',{d:'M21 4 3 11l6 2.4L11 20l3.2-4.6L21 4Z',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M21 4 9.4 13.4')),
@@ -2320,6 +2321,23 @@ function briefDoneIds(done,key){
   if(done.key===key&&Array.isArray(done.ids))return done.ids;
   return[];
 }
+/* Streak engine — a day counts once you clear a whole routine window. */
+const BRIEF_STREAK_KEY='insta_brief_streak_v1';
+const loadStreakDays=()=>{try{const a=JSON.parse(localStorage.getItem(BRIEF_STREAK_KEY)||'[]');return Array.isArray(a)?a.filter(x=>typeof x==='string'):[]}catch(e){return[]}};
+const saveStreakDays=a=>{try{localStorage.setItem(BRIEF_STREAK_KEY,JSON.stringify(a.slice(-400)))}catch(e){}};
+const loadBriefFocus=()=>{try{return localStorage.getItem('insta_brief_focus')||'all'}catch(e){return'all'}};
+function computeStreak(days){
+  const set=new Set(days);if(!set.size)return{current:0,best:0};
+  const sorted=[...set].sort();let best=1,run=1;
+  for(let i=1;i<sorted.length;i++){const p=new Date(sorted[i-1]+'T00:00:00'),c=new Date(sorted[i]+'T00:00:00');const diff=Math.round((c-p)/86400000);if(diff===1){run++;if(run>best)best=run}else if(diff>1)run=1}
+  let current=0;const d=new Date();d.setHours(0,0,0,0);
+  if(!set.has(ymd(d))){d.setDate(d.getDate()-1);if(!set.has(ymd(d)))return{current:0,best}}
+  while(set.has(ymd(d))){current++;d.setDate(d.getDate()-1)}
+  return{current,best:Math.max(best,current)};
+}
+const BRIEF_PALETTE=['#d4564a','#e8801f','#e0a020','#5cb85c','#2bb5a0','#3aa0e0','#6a7ef0','#9b59b6','#e0517f'];
+function groupColor(id){let n=0;const s=String(id||'');for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return BRIEF_PALETTE[n%BRIEF_PALETTE.length]}
+function hexA(hex,a){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex||'');if(!m)return hex||'transparent';const n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
 function BriefView({T,brief,onBrief,toastFn}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
@@ -2342,6 +2360,9 @@ function BriefView({T,brief,onBrief,toastFn}){
   const startGroupDrag=(idx,e)=>{const y=e.touches?e.touches[0].clientY:e.clientY;dragInfo.current={active:true,srcIdx:idx,startY:y};setDragOver(idx)};
   useEffect(()=>{if(!reordering)return;const onMove=e=>{if(!dragInfo.current.active)return;const y=e.touches?e.touches[0].clientY:e.clientY;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const step=Math.round(dy/80);const idx=Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1);setDragOver(idx)};const onEnd=e=>{if(!dragInfo.current.active)return;dragInfo.current.active=false;const y=(e.changedTouches&&e.changedTouches[0])?e.changedTouches[0].clientY:e.clientY||0;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const src=dragInfo.current.srcIdx;const step=Math.round(dy/80);const dst=Math.min(Math.max(src+step,0),ng-1);if(src!==dst)onBrief(b=>{const gs=[...b.groups];const[mv]=gs.splice(src,1);gs.splice(dst,0,mv);return{...b,groups:gs}});setDragOver(-1)};window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);return()=>{window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd)}},[reordering]);
   const [briefLog,setBriefLog]=useState(loadBriefLog);
+  const [streakDays,setStreakDays]=useState(loadStreakDays);
+  const [focus,setFocus]=useState(loadBriefFocus);
+  const setFocusP=v=>{setFocus(v);try{localStorage.setItem('insta_brief_focus',v)}catch(e){}};
   useEffect(()=>{
     if(!win.key)return;
     let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
@@ -2376,7 +2397,7 @@ function BriefView({T,brief,onBrief,toastFn}){
     return()=>{live=false};
   },[]);
   const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
-  const toggle=id=>{if(!win.key)return;onBrief(b=>{const map=normalizeDone(b.done);const cur=map[win.key]||[];map[win.key]=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:map}})};
+  const toggle=id=>{if(!win.key)return;vibrate(8);onBrief(b=>{const map=normalizeDone(b.done);const cur=map[win.key]||[];map[win.key]=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:map}})};
   const markSeen=urls=>{const list=(urls||[]).filter(Boolean);if(!list.length)return;onBrief(b=>{const s=Object.assign({},b.seen||{});const t=Date.now();list.forEach(u=>{s[u]=t});const cut=t-30*86400000;for(const k in s){if(s[k]<cut)delete s[k]}return{...b,seen:s}})};
   const open=it=>{const u=normalizeUrl(it.url)||it.url;if(u)openExternalUrl(u)};
   const openEntry=e=>{if(e&&e.url){markSeen([e.url]);openExternalUrl(e.url)}};
@@ -2413,14 +2434,23 @@ function BriefView({T,brief,onBrief,toastFn}){
   };
   const total=items.length,doneN=items.filter(i=>doneIds.includes(i.id)).length;
   const newCount=win.future?0:items.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+  useEffect(()=>{ // clearing a whole routine window banks today toward your streak
+    if(win.future||!total||doneN!==total)return;
+    const t=ymd(new Date());if(streakDays.includes(t))return;
+    const nd=streakDays.concat([t]).slice(-400);setStreakDays(nd);saveStreakDays(nd);
+    toastFn('Routine complete 🔥');
+  },[doneN,total,win.future]);
+  const streak=computeStreak(streakDays);
+  const passesFocus=it=>focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):true;
   const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
   const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
-  const sectionHead=(g,list,gIdx)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'20px 2px 8px'}},
+  const sectionHead=(g,list,gIdx)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;const allGrpDone=list.length&&doneInGrp===list.length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'13px 2px 7px'}},
     reordering&&g
       ?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,cursor:'grab'}},Icons.drag(16))
       :h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
+    h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:g?groupColor(g.id):T.sub,boxShadow:allGrpDone?'none':'0 0 0 3px '+hexA(g?groupColor(g.id):'#888888',.16)}}),
     h('div',{onClick:reordering?undefined:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:reordering?'default':'pointer'}},g?g.name:'Other'),
     groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length),
     reordering?null:g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
@@ -2445,7 +2475,32 @@ function BriefView({T,brief,onBrief,toastFn}){
             h('span',{style:{fontSize:11,color:T.meta,flexShrink:0,paddingTop:2}},new Date(e.publishedMs).toLocaleTimeString('en',{hour:'numeric',minute:'2-digit'})),
             h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
 
+  const hr=now.getHours();
+  const greet=hr<12?'Good morning':hr<17?'Good afternoon':hr<21?'Good evening':'Good night';
+  const dateStr=now.toLocaleDateString('en',{weekday:'long',month:'short',day:'numeric'});
+  const hero=h('div',{style:{margin:'10px 14px 4px',padding:'15px 17px',borderRadius:20,border:'1px solid '+T.hair,background:'linear-gradient(135deg,'+hexA(T.accent,.14)+' 0%,'+hexA(T.accent,.03)+' 55%,'+hexA(T.accent,0)+' 100%)',display:'flex',alignItems:'center',gap:15}},
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6,color:T.meta,fontSize:12.5,fontWeight:600}},
+        h('span',{style:{display:'flex',color:T.accent}},(hr>=6&&hr<19)?Icons.sun(14):Icons.moon(14)),greet),
+      h('div',{style:{fontFamily:WORDMARK,fontSize:21,fontWeight:600,color:T.fg,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},dateStr),
+      h('div',{style:{marginTop:5,display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:600,color:streak.current>0?'#e8801f':T.sub}},
+        streak.current>0?h('span',{style:{display:'flex'}},Icons.flame(15)):null,
+        streak.current>0?(streak.current+' day streak'+(streak.best>streak.current?' · best '+streak.best:'')):'Finish today to start a streak')),
+    h('div',{style:{position:'relative',width:66,height:66,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h(Ring,{T,frac:total?doneN/total:0,size:66}),
+      h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
+        win.future?h('span',{style:{fontSize:12,fontWeight:600,color:T.sub}},'Soon')
+          :(total&&doneN===total?h('span',{style:{color:T.accent,display:'flex'}},Icons.check(26))
+            :h(Fragment,null,
+              h('div',{style:{fontSize:17,fontWeight:700,color:T.fg,lineHeight:1}},String(doneN)),
+              h('div',{style:{fontSize:10.5,fontWeight:600,color:T.sub,lineHeight:1.4}},'of '+total))))));
+  const focusOpts=[['all','All'],['todo','To‑do'],['new','New']];
+  const focusRow=total?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'8px 14px 10px'}},
+    focusOpts.map(([v,l])=>{const active=focus===v;const cnt=v==='todo'?items.filter(i=>!doneIds.includes(i.id)).length:v==='new'?newCount:items.length;
+      return h('button',{key:v,onClick:()=>setFocusP(v),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 13px',borderRadius:16,fontSize:12.5,fontWeight:600,border:'1px solid '+(active?T.fg:T.hair),background:active?T.fg:'transparent',color:active?T.bg:T.sub}},
+        l,h('span',{style:{fontSize:11,fontWeight:700,opacity:.75}},String(cnt)))})):null;
   return h('div',null,
+    hero,
     h('div',{style:{display:'flex',gap:8,padding:'8px 14px 4px'}},
       h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,border:'1px solid '+T.hair,color:T.sub,fontSize:13,fontWeight:500}},Icons.plus(15),'New group'),
       h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,background:T.card,color:T.fg,fontSize:13,fontWeight:600}},Icons.plus(15),'Add item'),
@@ -2456,18 +2511,10 @@ function BriefView({T,brief,onBrief,toastFn}){
           background:s.id===win.sel?T.fg:'transparent',color:s.id===win.sel?T.bg:T.sub}},
         s.name+(s.id===win.activeSlotId?' •':''))),
       h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
-    h('div',{style:{padding:'4px 16px 12px',borderBottom:'1px solid '+T.hair}},
-      h('div',{style:{display:'flex',alignItems:'center',gap:10}},
-        h('div',{style:{flex:1,fontSize:13.5,color:T.sub}},
-          win.future?('Opens at '+fmtClock(curSlot.time))
-            :(total?(doneN===total?'All done 🎉':doneN+' of '+total+' done'+(newCount?' · '+newCount+' new':''))
-              :'Add sites, channels and apps below')),
-        newCount?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'3px 9px'}},newCount+' new'):null),
-      total&&!win.future?h('div',{style:{marginTop:8,height:3,borderRadius:3,background:T.hair,overflow:'hidden'}},
-        h('div',{style:{width:(total?doneN/total*100:0)+'%',height:'100%',background:T.accent,borderRadius:3,transition:'width 0.3s'}})):null),
+    focusRow,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
-      total?sections.map(({g,list},gIdx)=>h('div',{key:g?g.id:'_other',style:{opacity:reordering&&dragInfo.current.active&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:'2px solid transparent',borderRadius:4}},sectionHead(g,list,gIdx),collapsed.has(g?g.id:'_other')?null:(list.length?list.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},'Nothing here yet — tap + to add.'))))
+      total?sections.map(({g,list},gIdx)=>{const flist=list.filter(passesFocus);if(focus!=='all'&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key:g?g.id:'_other',style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),collapsed.has(g?g.id:'_other')?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))})
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
