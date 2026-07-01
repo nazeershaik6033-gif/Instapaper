@@ -468,6 +468,45 @@ async function fetchFeed(it){
   if(it.kind==='rss'&&it.feedUrl)return await fetchRss(it.feedUrl);
   return null;
 }
+/* Adds a My Routine source from the top-level store updater (used by the AI
+   "Add to My Routine" flow, which has no BriefView instance to call into). */
+function addBriefSourceViaUpdate(update,f){
+  const raw=(f.raw||'').trim();if(!raw)return null;
+  const patch={kind:f.kind,channelId:'',handle:'',feedUrl:'',url:''};
+  if(f.kind==='youtube'){patch.url=ytTargetUrl(raw)||raw}
+  else if(f.kind==='telegram'){patch.handle=tgHandle(raw);patch.url=patch.handle?'https://t.me/'+patch.handle:(normalizeUrl(raw)||raw)}
+  else if(f.kind==='rss'){patch.feedUrl=normalizeUrl(raw)||raw;patch.url=patch.feedUrl}
+  else{patch.url=normalizeUrl(raw)||raw}
+  let ytName='';if(f.kind==='youtube'){const hm=raw.match(/@([\w.\-]+)/)||(/^[\w.\-]+$/.test(raw)&&!/youtu/i.test(raw)?[null,raw]:null);if(hm)ytName='@'+hm[1]}
+  patch.name=(f.name||'').trim()||(patch.handle?'@'+patch.handle:'')||ytName||domainOf(patch.url)||'Item';
+  const itemId=uid();
+  update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).concat([{id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch}])}}));
+  (async()=>{
+    let cid='';
+    if(f.kind==='youtube'){
+      try{cid=await resolveYtChannelId(raw)}catch(e){}
+      if(cid)update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===itemId?{...x,channelId:cid,url:'https://www.youtube.com/channel/'+cid}:x)}}));
+    }
+    const probe={kind:patch.kind,channelId:cid,handle:patch.handle,feedUrl:patch.feedUrl};
+    if(hasFeed(probe)){try{const es=await fetchFeed(probe);if(es)update(d=>({...d,brief:{...d.brief,feeds:{...(d.brief.feeds||{}),[itemId]:{fetchedAt:Date.now(),entries:es}}}}))}catch(e){}}
+  })();
+  return{id:itemId,name:patch.name,kind:patch.kind,url:patch.url};
+}
+/* Ask the AI to turn a free-text description ("Vaibhav Sisinty's YouTube
+   channel", a pasted link, "@handle") into a structured source the same
+   shape saveItem() expects. Always returns {kind,query,name,group} or
+   {error}. */
+async function aiResolveSource(S,text){
+  const out=await aiChat(S,[
+    {role:'system',content:'You turn a short free-text description of a YouTube channel, Telegram channel, X/other social account, website, or RSS feed into a structured source to follow. Respond with ONLY a single-line compact JSON object, no markdown fences, no commentary, of the exact shape: {"kind":"youtube"|"telegram"|"rss"|"link","query":"the best text to resolve this source — an @handle or channel name for YouTube, a t.me/name or @name for Telegram, a feed or site URL for rss, or a homepage URL for a generic site/app","name":"a short clean display name","group":"a short one-or-two-word category guess such as Social, Sports, Tech, News, Podcasts, Finance — empty string if unclear"}. If the input names a specific X/Instagram/Twitter/WhatsApp account with no usable feed, use kind "link" and query as its profile/site URL. If the input is unusable or not a channel/account/site at all, respond with exactly {"error":"short reason"}.'},
+    {role:'user',content:text}],300,()=>{});
+  const m=out.match(/\{[\s\S]*\}/);
+  if(!m)throw new Error('Could not understand that — try rephrasing');
+  let obj;try{obj=JSON.parse(m[0])}catch(e){throw new Error('Could not understand that — try rephrasing')}
+  if(obj.error)throw new Error(obj.error);
+  if(!obj.query||!['youtube','telegram','rss','link'].includes(obj.kind))throw new Error('Could not understand that — try rephrasing');
+  return obj;
+}
 const BRIEF_SLOTS0=[{id:'m',name:'Morning',time:'08:00'},{id:'a',name:'Afternoon',time:'14:00'},{id:'n',name:'Night',time:'20:00'}];
 const BRIEF0={groups:[],items:[],slots:BRIEF_SLOTS0.map(s=>({...s})),done:{key:'',ids:[]},feeds:{},yt:{},seen:{}};
 function extractFirstUrl(text){const m=String(text||'').match(/https?:\/\/[^\s"'<>]+/);return m?m[0]:''}
@@ -2718,14 +2757,16 @@ function EditTextSheet({T,article,onSave,onClose}){
 }
 
 /* ============================== AI assistant ============================== */
-function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toastFn}){
+function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNote,toastFn}){
   const [ctx,setCtx]=useState(article||null);
-  const [view,setView]=useState('menu'); // menu | langs | styles | ask | result
+  const [view,setView]=useState('menu'); // menu | langs | styles | ask | result | addRoutine | addRoutineConfirm
   const [busy,setBusy]=useState('');
   const [error,setError]=useState('');
   const [result,setResult]=useState(null); // {kind,text,lang}
   const [question,setQuestion]=useState('');
   const [keyDraft,setKeyDraft]=useState('');
+  const [routineText,setRoutineText]=useState('');
+  const [routinePick,setRoutinePick]=useState(null); // {kind,query,name,groupId}
   const [speaking,setSpeaking]=useState(false);
   const sess=useRef(0);
   const speakingRef=useRef(false);
@@ -2785,6 +2826,24 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     }
     setResult({kind:'Answer',text:out,lang:outLang});setView('result');
   })};
+  const doResolveRoutine=()=>{
+    const t=routineText.trim();if(!t)return;
+    run('Looking that up…',async()=>{
+      const obj=await aiResolveSource(S,t);
+      const groups=(brief&&brief.groups)||[];
+      const gLower=(obj.group||'').trim().toLowerCase();
+      const matched=gLower?groups.find(g=>g.name.toLowerCase()===gLower||g.name.toLowerCase().includes(gLower)||gLower.includes(g.name.toLowerCase())):null;
+      setRoutinePick({kind:obj.kind,query:obj.query,name:obj.name||obj.query,groupId:matched?matched.id:null});
+      setView('addRoutineConfirm');
+    });
+  };
+  const doAddRoutine=()=>{
+    if(!routinePick)return;
+    const added=addBriefSourceViaUpdate(update,{kind:routinePick.kind,raw:routinePick.query,name:routinePick.name,groupId:routinePick.groupId});
+    if(!added){toastFn('Nothing to add');return}
+    toastFn('Added "'+added.name+'" to My Routine');
+    setRoutineText('');setRoutinePick(null);setView('menu');
+  };
 
   const listen=()=>{
     if(speaking){sess.current++;speakingRef.current=false;setSpeaking(false);try{speechSynthesis.cancel()}catch(e){}return}
@@ -2860,12 +2919,39 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
         h('textarea',{value:question,onChange:e=>setQuestion(e.target.value),rows:3,placeholder:ctx?'e.g. What are the main arguments?':'Ask anything…',autoFocus:true,
           style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
         h(PrimaryBtn,{T,label:'Ask AI',disabled:!question.trim(),style:{margin:'12px 0 0',width:'100%'},onClick:doAsk})));
+  }else if(view==='addRoutine'){
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.45}},'Describe a channel, account, or paste a link — the AI will figure out what it is and add it to My Routine.'),
+        h('textarea',{value:routineText,onChange:e=>setRoutineText(e.target.value),rows:3,placeholder:'e.g. Vaibhav Sisinty’s YouTube channel, or @mufaddal_vohra, or a link',autoFocus:true,
+          style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
+        h(PrimaryBtn,{T,label:'Find it',disabled:!routineText.trim(),style:{margin:'12px 0 0',width:'100%'},onClick:doResolveRoutine})));
+  }else if(view==='addRoutineConfirm'&&routinePick){
+    const groups=(brief&&brief.groups)||[];
+    const KIND_LABEL={youtube:'YouTube channel',telegram:'Telegram channel',rss:'RSS / News feed',link:'Site / app'};
+    body=h('div',null,
+      h('button',{onClick:()=>{setRoutinePick(null);setView('addRoutine')},className:'act95',style:{display:'flex',alignItems:'center',gap:5,color:T.accent,fontSize:14.5,fontWeight:500,padding:'2px 20px 10px'}},Icons.back(16),'Try again'),
+      h('div',{style:{padding:'0 20px 6px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px',borderRadius:12,background:T.card}},
+          h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.ai(20)),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},routinePick.name),
+            h('div',{style:{fontSize:12,color:T.sub,marginTop:2}},KIND_LABEL[routinePick.kind])))),
+      groups.length?h('div',{style:{padding:'10px 20px 4px'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Group'),
+        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
+          chip('No group',routinePick.groupId===null,()=>setRoutinePick(p=>({...p,groupId:null}))),
+          groups.map(g=>chip(g.name,routinePick.groupId===g.id,()=>setRoutinePick(p=>({...p,groupId:g.id}))))))
+        :null,
+      h('div',{style:{padding:'16px 20px 0'}},h(PrimaryBtn,{T,label:'Add to My Routine',onClick:doAddRoutine})));
   }else if(!ctx){
     const pick=articles.filter(a=>!a.isVideo&&a.text).slice(0,15);
     body=h('div',null,
+      error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
       h('div',{style:{padding:'0 20px 6px',fontSize:14,color:T.meta}},'Pick an article to work with:'),
       pick.length?pick.map(a=>h(ARow,{key:a.id,T,icon:Icons.notes(19),label:a.title,sub:(a.source||'')+(a.readMin?' · '+a.readMin+' min':''),onClick:()=>setCtx(a)})):h('div',{style:{padding:'10px 20px',fontSize:13.5,color:T.sub}},'No readable articles saved yet.'),
-      h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat without an article',onClick:()=>setView('ask')}));
+      h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat without an article',onClick:()=>setView('ask')}),
+      h(ARow,{T,icon:Icons.sun(20),label:'Add to My Routine',sub:'Describe a channel, account, or site to follow',onClick:()=>{setRoutineText('');setRoutinePick(null);setView('addRoutine')}}));
   }else{
     body=h('div',null,
       h('div',{style:{padding:'0 20px 10px'}},
@@ -3966,7 +4052,7 @@ function App(){
       onSave:(title,html)=>saveEditedContent(sheet.id,title,html)}):null})():null,
 
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
-      articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),
+      articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),brief:data.brief,
       update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
     sheet&&sheet.type==='confirm'?h(ConfirmSheet,{T,
