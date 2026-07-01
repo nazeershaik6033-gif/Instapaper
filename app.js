@@ -2363,6 +2363,7 @@ function BriefView({T,brief,onBrief,toastFn}){
   const [streakDays,setStreakDays]=useState(loadStreakDays);
   const [focus,setFocus]=useState(loadBriefFocus);
   const setFocusP=v=>{setFocus(v);try{localStorage.setItem('insta_brief_focus',v)}catch(e){}};
+  const [query,setQuery]=useState('');
   useEffect(()=>{
     if(!win.key)return;
     let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
@@ -2441,7 +2442,9 @@ function BriefView({T,brief,onBrief,toastFn}){
     toastFn('Routine complete 🔥');
   },[doneN,total,win.future]);
   const streak=computeStreak(streakDays);
-  const passesFocus=it=>focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):true;
+  const q=query.trim().toLowerCase();
+  const matchQ=it=>!q||(((it.name||'')+' '+domainOf(it.url)).toLowerCase().indexOf(q)>=0);
+  const passesFocus=it=>matchQ(it)&&(focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):true);
   const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
   const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
@@ -2499,6 +2502,12 @@ function BriefView({T,brief,onBrief,toastFn}){
     focusOpts.map(([v,l])=>{const active=focus===v;const cnt=v==='todo'?items.filter(i=>!doneIds.includes(i.id)).length:v==='new'?newCount:items.length;
       return h('button',{key:v,onClick:()=>setFocusP(v),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 13px',borderRadius:16,fontSize:12.5,fontWeight:600,border:'1px solid '+(active?T.fg:T.hair),background:active?T.fg:'transparent',color:active?T.bg:T.sub}},
         l,h('span',{style:{fontSize:11,fontWeight:700,opacity:.75}},String(cnt)))})):null;
+  const searchRow=total?h('div',{style:{padding:'0 14px 10px'}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,border:'1px solid '+(q?T.accent:T.hair),borderRadius:12,padding:'9px 12px',transition:'border-color 160ms'}},
+      h('span',{style:{display:'flex',color:q?T.accent:T.sub,flexShrink:0}},Icons.search(17)),
+      h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search channels & sites',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
+      query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null;
   return h('div',null,
     hero,
     h('div',{style:{display:'flex',gap:8,padding:'8px 14px 4px'}},
@@ -2512,9 +2521,11 @@ function BriefView({T,brief,onBrief,toastFn}){
         s.name+(s.id===win.activeSlotId?' •':''))),
       h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
     focusRow,
+    searchRow,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
-      total?sections.map(({g,list},gIdx)=>{const flist=list.filter(passesFocus);if(focus!=='all'&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key:g?g.id:'_other',style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),collapsed.has(g?g.id:'_other')?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))})
+      total?(()=>{const rendered=sections.map(({g,list},gIdx)=>{const key=g?g.id:'_other';const flist=list.filter(passesFocus);if((focus!=='all'||q)&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key,style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),(collapsed.has(key)&&!q)?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))});
+        return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;})()
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
