@@ -1112,6 +1112,8 @@ const Icons={
   calendar:s=>Svg({size:s},h('rect',{x:3.5,y:5,width:17,height:15,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M3.5 9.5h17M8 3.2v3.6M16 3.2v3.6')),
   sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 2.6v2.4M12 19v2.4M4.6 4.6l1.7 1.7M17.7 17.7l1.7 1.7M2.6 12h2.4M19 12h2.4M4.6 19.4l1.7-1.7M17.7 6.3l1.7-1.7')),
   flame:s=>Svg({size:s},h('path',{d:'M12 2.5c.7 2.6-.8 4-2 5.2C8.8 9 7.8 10.6 7.8 12.6a4.2 4.2 0 0 0 8.4 0c0-1.2-.4-2.3-1.1-3.2 1 .4 1.8 1.2 2.2 2.5C18.4 8.7 16.5 5.2 12 2.5Z',fill:'currentColor',stroke:'none'})),
+  bell:(s,fill)=>Svg({size:s},h('path',{d:'M6 9.5a6 6 0 0 1 12 0c0 4.5 1.2 5.8 1.8 6.5H4.2C4.8 15.3 6 14 6 9.5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.7,strokeLinejoin:'round'}),P('M10 19.5a2 2 0 0 0 4 0')),
+  chart:s=>Svg({size:s},P('M4 4v16h16'),h('rect',{x:7,y:11,width:3,height:6,rx:1,fill:'currentColor'}),h('rect',{x:12,y:8,width:3,height:9,rx:1,fill:'currentColor'}),h('rect',{x:17,y:5,width:3,height:12,rx:1,fill:'currentColor'})),
   newspaper:s=>Svg({size:s},P('M4 5.5h12.5v13H5.3c-.7 0-1.3-.6-1.3-1.3V5.5Z'),P('M16.5 8.5H19c.6 0 1 .4 1 1v7.7c0 .7-.6 1.3-1.3 1.3'),P('M6.8 8.5h6.9M6.8 11.5h6.9M6.8 14.5h4.4')),
   phone:s=>Svg({size:s},h('rect',{x:6.5,y:2.5,width:11,height:19,rx:2.6,stroke:'currentColor',strokeWidth:1.7}),P('M10.5 18.6h3')),
   send:s=>Svg({size:s},h('path',{d:'M21 4 3 11l6 2.4L11 20l3.2-4.6L21 4Z',fill:'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M21 4 9.4 13.4')),
@@ -2338,8 +2340,10 @@ function computeStreak(days){
 const BRIEF_PALETTE=['#d4564a','#e8801f','#e0a020','#5cb85c','#2bb5a0','#3aa0e0','#6a7ef0','#9b59b6','#e0517f'];
 function groupColor(id){let n=0;const s=String(id||'');for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return BRIEF_PALETTE[n%BRIEF_PALETTE.length]}
 function hexA(hex,a){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex||'');if(!m)return hex||'transparent';const n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
-function BriefView({T,brief,onBrief,toastFn}){
+function BriefView({T,S,brief,onBrief,toastFn}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
+  const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
+  const vis=items.filter(i=>!snoozedNow(i.id));
   const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
   const now=new Date();
   const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
@@ -2372,7 +2376,8 @@ function BriefView({T,brief,onBrief,toastFn}){
       const seenMap=brief.seen||{};
       const missed=[];
       for(const it of items){
-        if(oldDoneIds.includes(it.id)||!hasFeed(it))continue;
+        const snz=brief.snoozed&&brief.snoozed[it.id];
+        if(oldDoneIds.includes(it.id)||!hasFeed(it)||(snz&&snz>=stored.end))continue;
         const c=feeds[it.id];if(!c||!c.entries)continue;
         const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end&&!seenMap[e.url]);
         if(!es.length)continue;
@@ -2433,8 +2438,8 @@ function BriefView({T,brief,onBrief,toastFn}){
       if(hasFeed(probe)){try{const es=await fetchFeed(probe);if(es)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[itemId]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}}
     })();
   };
-  const total=items.length,doneN=items.filter(i=>doneIds.includes(i.id)).length;
-  const newCount=win.future?0:items.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+  const total=vis.length,doneN=vis.filter(i=>doneIds.includes(i.id)).length;
+  const newCount=win.future?0:vis.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
   useEffect(()=>{ // clearing a whole routine window banks today toward your streak
     if(win.future||!total||doneN!==total)return;
     const t=ymd(new Date());if(streakDays.includes(t))return;
@@ -2442,11 +2447,46 @@ function BriefView({T,brief,onBrief,toastFn}){
     toastFn('Routine complete 🔥');
   },[doneN,total,win.future]);
   const streak=computeStreak(streakDays);
+  const [statsOpen,setStatsOpen]=useState(false);
+  const [aiBusy,setAiBusy]=useState(false);
+  const [digest,setDigest]=useState(null);
+  const remindOn=!!brief.remind;
+  const snooze=(id,ms)=>{onBrief(b=>({...b,snoozed:{...(b.snoozed||{}),[id]:Date.now()+ms}}));toastFn('Snoozed')};
+  const toggleRemind=async()=>{
+    if(remindOn){onBrief(b=>({...b,remind:false}));toastFn('Reminders off');return}
+    let perm=(typeof Notification!=='undefined')?Notification.permission:'denied';
+    if(perm==='default'){try{perm=await Notification.requestPermission()}catch(e){}}
+    if(perm!=='granted'){toastFn('Allow notifications to get routine reminders');return}
+    onBrief(b=>({...b,remind:true}));toastFn('Reminders on — you’ll be nudged at each routine time');
+  };
+  useEffect(()=>{ // nudge once when an active window has new content (while the app is open)
+    if(!remindOn||win.future||!win.key||newCount<=0)return;
+    if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+    let last=null;try{last=localStorage.getItem('insta_brief_notified')}catch(e){}
+    if(last===win.key)return;
+    try{localStorage.setItem('insta_brief_notified',win.key)}catch(e){}
+    try{new Notification((curSlot.name||'Routine')+' · '+newCount+' new',{body:'New updates are waiting in your routine.',icon:'icon-192.png',tag:'insta-routine'})}catch(e){}
+  },[win.key,newCount,remindOn]);
+  const digestSource=()=>{const out=[];for(const it of vis){if(!hasFeed(it))continue;for(const e of newEntries(it))out.push((it.name||'Source')+': '+(e.title||'').slice(0,160))}
+    if(!out.length){for(const entry of briefLog.slice(0,8))for(const it of entry.items)for(const e of it.entries)out.push((it.name||'Source')+': '+(e.title||'').slice(0,160))}
+    return out.slice(0,60)};
+  const runDigest=async()=>{
+    if(!aiReady(S)){toastFn('Connect an AI key in Settings first');return}
+    const lines=digestSource();if(!lines.length){toastFn('Nothing new to summarize');return}
+    setAiBusy(true);setDigest(null);
+    try{const out=await aiChat(S,[
+      {role:'system',content:'You turn a list of new posts from feeds someone follows into a short, skimmable briefing.'},
+      {role:'user',content:'These are new posts from channels and sites I follow. Group them by theme and give me a concise briefing of 4–8 bullet points on what actually matters, then a final line starting with "Worth your time:" naming the single most important item. Respond entirely in '+(S.aiLang||'English')+'.\n\n'+lines.join('\n')}],
+      1200,()=>{});
+      setDigest({text:out})}
+    catch(e){setDigest({err:(e&&e.message)||'Could not summarize right now'})}
+    setAiBusy(false);
+  };
   const q=query.trim().toLowerCase();
   const matchQ=it=>!q||(((it.name||'')+' '+domainOf(it.url)).toLowerCase().indexOf(q)>=0);
   const passesFocus=it=>matchQ(it)&&(focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):true);
-  const sections=groups.map(g=>({g,list:items.filter(i=>i.groupId===g.id)}));
-  const ungrouped=items.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
+  const sections=groups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
+  const ungrouped=vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
   const sectionHead=(g,list,gIdx)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;const allGrpDone=list.length&&doneInGrp===list.length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'13px 2px 7px'}},
@@ -2486,9 +2526,10 @@ function BriefView({T,brief,onBrief,toastFn}){
       h('div',{style:{display:'flex',alignItems:'center',gap:6,color:T.meta,fontSize:12.5,fontWeight:600}},
         h('span',{style:{display:'flex',color:T.accent}},(hr>=6&&hr<19)?Icons.sun(14):Icons.moon(14)),greet),
       h('div',{style:{fontFamily:WORDMARK,fontSize:21,fontWeight:600,color:T.fg,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},dateStr),
-      h('div',{style:{marginTop:5,display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:600,color:streak.current>0?'#e8801f':T.sub}},
+      h('button',{onClick:()=>setStatsOpen(true),className:'act95',style:{marginTop:5,display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:600,color:streak.current>0?'#e8801f':T.sub,background:'none',padding:0}},
         streak.current>0?h('span',{style:{display:'flex'}},Icons.flame(15)):null,
-        streak.current>0?(streak.current+' day streak'+(streak.best>streak.current?' · best '+streak.best:'')):'Finish today to start a streak')),
+        streak.current>0?(streak.current+' day streak'+(streak.best>streak.current?' · best '+streak.best:'')):'Finish today to start a streak',
+        h('span',{style:{display:'flex',opacity:.6,marginLeft:1}},Icons.chevR(13)))),
     h('div',{style:{position:'relative',width:66,height:66,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center'}},
       h(Ring,{T,frac:total?doneN/total:0,size:66}),
       h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center'}},
@@ -2499,7 +2540,7 @@ function BriefView({T,brief,onBrief,toastFn}){
               h('div',{style:{fontSize:10.5,fontWeight:600,color:T.sub,lineHeight:1.4}},'of '+total))))));
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New']];
   const focusRow=total?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'8px 14px 10px'}},
-    focusOpts.map(([v,l])=>{const active=focus===v;const cnt=v==='todo'?items.filter(i=>!doneIds.includes(i.id)).length:v==='new'?newCount:items.length;
+    focusOpts.map(([v,l])=>{const active=focus===v;const cnt=v==='todo'?vis.filter(i=>!doneIds.includes(i.id)).length:v==='new'?newCount:vis.length;
       return h('button',{key:v,onClick:()=>setFocusP(v),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 13px',borderRadius:16,fontSize:12.5,fontWeight:600,border:'1px solid '+(active?T.fg:T.hair),background:active?T.fg:'transparent',color:active?T.bg:T.sub}},
         l,h('span',{style:{fontSize:11,fontWeight:700,opacity:.75}},String(cnt)))})):null;
   const searchRow=total?h('div',{style:{padding:'0 14px 10px'}},
@@ -2508,12 +2549,17 @@ function BriefView({T,brief,onBrief,toastFn}){
       h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search channels & sites',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
         style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
       query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null;
+  const digestBtn=(!win.future&&newCount>0)?h('div',{style:{padding:'0 14px 10px'}},
+    h('button',{onClick:runDigest,disabled:aiBusy,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'11px',borderRadius:12,background:hexA(T.accent,.12),color:T.accent,fontSize:14,fontWeight:700,border:'1px solid '+hexA(T.accent,.32),opacity:aiBusy?.7:1}},
+      aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),aiBusy?'Summarizing…':'Summarize what’s new · '+newCount)):null;
   return h('div',null,
     hero,
     h('div',{style:{display:'flex',gap:8,padding:'8px 14px 4px'}},
       h('button',{onClick:()=>{setGName('');setGrp({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,border:'1px solid '+T.hair,color:T.sub,fontSize:13,fontWeight:500}},Icons.plus(15),'New group'),
       h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:6,padding:'9px 10px',borderRadius:10,background:T.card,color:T.fg,fontSize:13,fontWeight:600}},Icons.plus(15),'Add item'),
-      h('button',{onClick:()=>{setReordering(r=>!r);setDragOver(-1);dragInfo.current.active=false},className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:reordering?T.accent:'transparent',color:reordering?'#fff':T.sub,border:'1px solid '+(reordering?T.accent:T.hair)}},Icons.drag(17))),
+      h('button',{onClick:()=>{setReordering(r=>!r);setDragOver(-1);dragInfo.current.active=false},'aria-label':'Reorder groups',className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:reordering?T.accent:'transparent',color:reordering?'#fff':T.sub,border:'1px solid '+(reordering?T.accent:T.hair)}},Icons.drag(17)),
+      h('button',{onClick:toggleRemind,'aria-label':'Routine reminders',className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:'transparent',color:remindOn?T.accent:T.sub,border:'1px solid '+(remindOn?T.accent:T.hair)}},Icons.bell(17,remindOn)),
+      h('button',{onClick:()=>setStatsOpen(true),'aria-label':'Routine stats',className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:'transparent',color:T.sub,border:'1px solid '+T.hair}},Icons.chart(17))),
     h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
       slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',
         style:{flexShrink:0,padding:'8px 18px',borderRadius:20,fontSize:14,fontWeight:600,border:'none',
@@ -2522,6 +2568,7 @@ function BriefView({T,brief,onBrief,toastFn}){
       h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
     focusRow,
     searchRow,
+    digestBtn,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
       total?(()=>{const rendered=sections.map(({g,list},gIdx)=>{const key=g?g.id:'_other';const flist=list.filter(passesFocus);if((focus!=='all'||q)&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key,style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),(collapsed.has(key)&&!q)?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))});
@@ -2529,6 +2576,33 @@ function BriefView({T,brief,onBrief,toastFn}){
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+
+    statsOpen?h(Sheet,{T,title:'Your routine stats',onClose:()=>setStatsOpen(false)},(()=>{
+      const set=new Set(streakDays);
+      const days=[];for(let i=34;i>=0;i--){const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()-i);days.push({k:ymd(d),done:set.has(ymd(d))})}
+      const last7=days.slice(-7).filter(d=>d.done).length;
+      const stat=(big,lbl,accent)=>h('div',{style:{flex:1,textAlign:'center',padding:'14px 4px',background:T.card,borderRadius:14}},
+        h('div',{style:{fontSize:23,fontWeight:800,color:accent||T.fg,display:'flex',alignItems:'center',justifyContent:'center',gap:3}},big),
+        h('div',{style:{fontSize:10.5,fontWeight:700,color:T.sub,marginTop:3,textTransform:'uppercase',letterSpacing:'.05em'}},lbl));
+      return h('div',{style:{padding:'0 18px calc(20px + '+SAFE_B+')'}},
+        h('div',{style:{display:'flex',gap:10,marginBottom:20}},
+          stat(h(Fragment,null,h('span',{style:{display:'flex',color:'#e8801f'}},Icons.flame(19)),String(streak.current)),'Current','#e8801f'),
+          stat(String(streak.best),'Best'),
+          stat(last7+'/7','This week',T.accent)),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:10}},'Last 5 weeks'),
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:5}},days.map(d=>h('div',{key:d.k,title:d.k,style:{width:'calc((100% - 30px)/7)',aspectRatio:'1',borderRadius:6,background:d.done?T.accent:T.card,border:'1px solid '+T.hair}}))),
+        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:16,lineHeight:1.55}},'A square fills in each day you clear a whole routine window. Keep the streak alive! 🔥'));
+    })()):null,
+
+    digest?h(Sheet,{T,title:'What’s new',onClose:()=>setDigest(null)},
+      h('div',{style:{padding:'0 20px calc(18px + '+SAFE_B+')'}},
+        digest.err?h('div',{style:{color:T.danger,fontSize:14,lineHeight:1.5}},digest.err)
+          :h(Fragment,null,
+            h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:10}},'Summarized by '+aiModelLabel(S)),
+            h('div',{style:{fontSize:15,color:T.fg,lineHeight:1.62,whiteSpace:'pre-wrap'}},digest.text),
+            h('div',{style:{display:'flex',gap:8,marginTop:18}},
+              h('button',{onClick:()=>{copyText(digest.text);toastFn('Copied')},className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Copy'),
+              h('button',{onClick:()=>setDigest(null),className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Done'))))):null,
 
     slotSheet?h(Sheet,{T,title:'Brief times',maxH:'90%',onClose:()=>setSlotSheet(false)},
       h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
@@ -2548,6 +2622,8 @@ function BriefView({T,brief,onBrief,toastFn}){
       h(ARow,{T,icon:Icons.checkCircle(21,doneIds.includes(act.id)),label:doneIds.includes(act.id)?'Mark not done':'Mark done',onClick:()=>{toggle(act.id);setAct(null)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const it=act;setAct(null);setEdit({id:it.id,groupId:it.groupId,kind:it.kind,name:it.name,url:it.url,channelId:it.channelId})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to group…',onClick:()=>{const it=act;setAct(null);setMoveIt(it)}}),
+      h(ARow,{T,icon:Icons.calendar(21),label:'Snooze 1 hour',onClick:()=>{snooze(act.id,3600000);setAct(null)}}),
+      h(ARow,{T,icon:Icons.moon(21),label:'Snooze until tomorrow',onClick:()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+1);snooze(act.id,Math.max(60000,d.getTime()-Date.now()));setAct(null)}}),
       h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{removeItem(act.id);setAct(null)}})):null,
 
     moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
@@ -3748,7 +3824,7 @@ function App(){
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
-  else if(scope.type==='brief')body=h(BriefView,{T,brief:data.brief,
+  else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
