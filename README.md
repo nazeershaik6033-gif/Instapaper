@@ -70,6 +70,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Translate** into Telugu, Hindi, Tamil, Kannada, and many more — read the result, listen to it spoken aloud (తెలుగు / हिन्दी voices), or save it as a new article
 - **Rewrite** — simplify, shorten, expand, change tone, or convert to bullet points
 - **Ask** questions about any article (or chat freely without one)
+- **Add to My Routine** — describe a channel, account, or paste a link (e.g. "Vaibhav Sisinty's YouTube channel" or "@mufaddal_vohra") and the AI figures out what it is and adds it as a My Routine source, defaulting straight into your Daily Brief
 - AI results can be copied, shared, spoken aloud, or saved to Notes
 
 ## The Daily Brief — your personalized newspaper (📱 header icon)
