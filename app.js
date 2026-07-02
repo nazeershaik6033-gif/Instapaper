@@ -2881,7 +2881,20 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
     toastFn('Added "'+added.name+'" to My Routine');
     setRoutineText('');setRoutinePick(null);setView('menu');
   };
-  const CLAUDE_PRESETS=['Summarize this in clear bullet points','Give me the key takeaways and why they matter','Explain this simply, like I\'m new to the topic','What are the strongest counterarguments?'];
+  const CLAUDE_PRESETS=[
+    'Summarize this in clear bullet points',
+    'Give me the key takeaways and why they matter',
+    'Translate this into '+(outLang==='English'?'Telugu':outLang),
+    'Explain this simply, like I\'m new to the topic',
+    'What are the strongest counterarguments?',
+    'Turn this into a short thread I can post'
+  ];
+  const CLAUDE_LIB_PRESETS=[
+    'What should I read next and why?',
+    'Summarize the main themes across my saved reading',
+    'Group these into topics for me',
+    'Which of these are worth my time today?'
+  ];
   const doClaude=()=>{
     const cmd=claudeText.trim();
     let p=cmd||(ctx?'Summarize this article and give me the key takeaways.':'');
@@ -2889,6 +2902,17 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
     if(ctx){
       p+='\n\n----- ARTICLE -----\n'+(ctx.title||'')+(ctx.url?'\nSource: '+ctx.url:'')+'\n\n'+String(ctx.text||'').slice(0,6000);
     }
+    if(openInClaude(p,toastFn)){setClaudeText('');onClose()}
+  };
+  /* Free-form Q&A over the whole saved library, handed to the Claude app. We
+     send a compact index (title · source · length · link) of everything saved;
+     openInClaude copies the full index to the clipboard when it overflows the URL. */
+  const doClaudeLibrary=()=>{
+    const arts=(articles||[]).filter(a=>a&&(a.title||a.text));
+    if(!arts.length){toastFn('Nothing saved yet');return}
+    const q=claudeText.trim()||'Help me decide what to read next and summarize the main themes across these.';
+    const index=arts.slice(0,60).map((a,i)=>(i+1)+'. '+(a.title||'Untitled')+' — '+(a.source||domainOf(a.url)||'')+(a.readMin?' · '+a.readMin+' min':'')+(a.url?'\n   '+a.url:'')).join('\n');
+    const p=q+'\n\n----- MY SAVED READING LIBRARY ('+arts.length+' item'+(arts.length===1?'':'s')+') -----\n'+index;
     if(openInClaude(p,toastFn)){setClaudeText('');onClose()}
   };
 
@@ -2931,6 +2955,17 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
           CLAUDE_PRESETS.map(p=>chip(p,claudeText===p,()=>setClaudeText(p)))):null,
         h(PrimaryBtn,{T,label:'Open in Claude',style:{margin:'14px 0 0',width:'100%'},onClick:doClaude}),
         h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full prompt is copied to your clipboard as a backup.')));
+  }else if(view==='claudeLib'){
+    const n=(articles||[]).filter(a=>a&&(a.title||a.text)).length;
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.5}},'Ask ',h('strong',{style:{color:T.fg}},'Claude'),' anything about everything you\'ve saved — no API key. It receives an index of your ',h('strong',{style:{color:T.fg}},n+' saved item'+(n===1?'':'s')),' (titles, sources, links) to reason over.'),
+        h('textarea',{value:claudeText,onChange:e=>setClaudeText(e.target.value),rows:3,placeholder:'e.g. Which of my saved articles cover AI policy? Build me a reading plan.',autoFocus:true,
+          style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
+        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginTop:10}},
+          CLAUDE_LIB_PRESETS.map(p=>chip(p,claudeText===p,()=>setClaudeText(p)))),
+        h(PrimaryBtn,{T,label:'Ask Claude',disabled:!n,style:{margin:'14px 0 0',width:'100%'},onClick:doClaudeLibrary}),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full library index is copied to your clipboard as a backup.')));
   }else if(!ready){
     const prov=S.aiProvider||'openrouter';
     const isGem=prov==='gemini';
@@ -2946,7 +2981,8 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
         style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
       h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,[isGem?'geminiKey':'aiKey']:keyDraft.trim()}}));toastFn('AI connected')}}),
       h('div',{style:{display:'flex',alignItems:'center',gap:10,margin:'18px 0 4px'}},h('div',{style:{flex:1,height:1,background:T.hair}}),h('span',{style:{fontSize:12,color:T.sub}},'or, no key needed'),h('div',{style:{flex:1,height:1,background:T.hair}})),
-      h(ARow,{T,icon:Icons.send(20),label:'Use the Claude app instead',sub:'Send commands to Claude with your own account',onClick:()=>{setClaudeText('');setView('claude')}}));
+      h(ARow,{T,icon:Icons.send(20),label:ctx?'Use the Claude app instead':'Open in Claude',sub:'Send commands to Claude with your own account',onClick:()=>{setClaudeText('');setView('claude')}}),
+      ctx?null:h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved',onClick:()=>{setClaudeText('');setView('claudeLib')}}));
   }else if(busy){
     body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
       h(Spinner,{T,size:26}),
@@ -3010,6 +3046,7 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
     body=h('div',null,
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
       h(ARow,{T,icon:Icons.send(20),label:'Open in Claude',sub:'Send any command to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}}),
+      h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved — no API key',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
       h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat with the built-in AI'+(ready?'':' (needs a key)'),onClick:()=>setView('ask')}),
       h(ARow,{T,icon:Icons.sun(20),label:'Add to My Routine',sub:'Follow a channel, account, or site',onClick:()=>{setRoutineText('');setRoutinePick(null);setView('addRoutine')}}),
       secHead('Work with a saved article'),
