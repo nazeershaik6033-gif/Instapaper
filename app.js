@@ -2153,7 +2153,40 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
 function BlogsManager({T,feeds,onFeeds}){
   const [form,setForm]=useState(null); // {id?,name,url}
   const [busy,setBusy]=useState(false);
-  const move=(i,d)=>onFeeds(list=>{const a=list.slice();const j=i+d;if(j<0||j>=a.length)return list;const t=a[i];a[i]=a[j];a[j]=t;return a});
+  /* Reordering mirrors My Routine's group drag: press-and-drag the handle
+     beside any blog's name pill, any time — no separate mode to enter. */
+  const [dragOver,setDragOver]=useState(-1);
+  const dragInfo=useRef({active:false,srcIdx:0,startY:0});
+  const numFeedsRef=useRef(feeds.length);numFeedsRef.current=feeds.length;
+  const startDrag=(idx,e)=>{
+    const y=e.touches?e.touches[0].clientY:e.clientY;
+    dragInfo.current={active:true,srcIdx:idx,startY:y};
+    setDragOver(idx);
+    const onMove=ev=>{
+      if(!dragInfo.current.active)return;
+      const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
+      const dy=y2-dragInfo.current.startY;
+      const n=numFeedsRef.current;
+      const step=Math.round(dy/56);
+      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),n-1));
+    };
+    const onEnd=ev=>{
+      if(!dragInfo.current.active)return;
+      dragInfo.current.active=false;
+      const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:ev.clientY||0;
+      const dy=y2-dragInfo.current.startY;
+      const n=numFeedsRef.current;
+      const src=dragInfo.current.srcIdx;
+      const step=Math.round(dy/56);
+      const dst=Math.min(Math.max(src+step,0),n-1);
+      if(src!==dst)onFeeds(list=>{const a=list.slice();const[mv]=a.splice(src,1);a.splice(dst,0,mv);return a});
+      setDragOver(-1);
+      window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);
+      window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
+    };
+    window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);
+    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
+  };
   const save=async()=>{
     const site=normalizeUrl(form.url);
     if(!site||busy)return;
@@ -2166,16 +2199,21 @@ function BlogsManager({T,feeds,onFeeds}){
     setForm(null);
   };
   const canSave=!!normalizeUrl(form&&form.url)&&!busy;
+  const isDragging=dragOver!==-1;
   return h('div',{style:{padding:'4px 16px 16px'}},
-    feeds.map((f,i)=>h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:10,padding:'11px 0',borderBottom:'1px solid '+T.hair}},
-      h('img',{src:faviconUrl(f.site),alt:'',style:{width:22,height:22,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
-      h('div',{style:{flex:1,minWidth:0}},
-        h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-        h('span',{style:{display:'block',fontSize:11.5,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser')),
-      h('button',{onClick:()=>move(i,-1),disabled:i===0,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===0?0.3:1}},'▲'),
-      h('button',{onClick:()=>move(i,1),disabled:i===feeds.length-1,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===feeds.length-1?0.3:1}},'▼'),
-      h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90',style:{color:T.sub,padding:'4px 6px'}},Icons.pencil(16)),
-      h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90',style:{color:T.danger,padding:'4px 6px'}},Icons.trash(16)))),
+    feeds.map((f,i)=>{
+      const dragThis=isDragging&&dragInfo.current.srcIdx===i;
+      const dropHere=isDragging&&dragOver===i&&dragInfo.current.srcIdx!==i;
+      return h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:6,marginBottom:8,opacity:dragThis?0.4:1,transition:'opacity 120ms'}},
+        h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:9,minWidth:0,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+(dropHere?T.accent:T.hair),overflow:'hidden'}},
+          h('img',{src:faviconUrl(f.site),alt:'',style:{width:20,height:20,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+            h('span',{style:{display:'block',fontSize:11,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser'))),
+        h('button',{onMouseDown:e=>startDrag(i,e),onTouchStart:e=>startDrag(i,e),className:'act90','aria-label':'Reorder blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)),
+        h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90','aria-label':'Edit blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)),
+        h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90','aria-label':'Delete blog',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)));
+    }),
     form?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:12}},
       h('input',{value:form.name,onChange:e=>setForm({...form,name:e.target.value}),placeholder:'Name (e.g. Overreacted)',
         style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
