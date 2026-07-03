@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -484,6 +484,40 @@ async function fetchRss(url){ // RSS or Atom — news, blogs, Reddit, bridges
     else link=tx('link')||tx('guid');
     return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,thumb:''};
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
+}
+/* Resolve a page-or-feed URL to its best RSS/Atom feed URL for the Blogs section,
+   or '' if none can be found (caller then treats it as a homepage bookmark). */
+const BLOG_FEED_PATHS=['/feed','/rss.xml','/atom.xml','/index.xml','/feed.xml','/rss','/feeds/posts/default'];
+const looksLikeFeed=t=>/<rss[\s>]|<feed[\s>]|<rdf:RDF[\s>]|<(?:item|entry)[\s>]/i.test(t||'');
+async function discoverFeed(url){
+  const base=normalizeUrl(url);
+  if(!base)return'';
+  let html='';
+  try{html=await fetchRawHtml(base)}catch(e){html=''}
+  // 1) the pasted URL is already a feed
+  if(html&&looksLikeFeed(html)){try{if((await fetchRss(base)).length)return base}catch(e){}}
+  // 2) autodiscover via <link rel="alternate" type="application/rss+xml|atom+xml">
+  if(html){
+    try{
+      const doc=new DOMParser().parseFromString(html,'text/html');
+      const links=doc.querySelectorAll('link[rel~="alternate"][type]');
+      for(let i=0;i<links.length;i++){
+        const type=(links[i].getAttribute('type')||'').toLowerCase();
+        if(type.indexOf('rss')>=0||type.indexOf('atom')>=0||type.indexOf('xml')>=0){
+          const abs=absUrl(links[i].getAttribute('href')||'',base);
+          if(abs)return abs;
+        }
+      }
+    }catch(e){}
+  }
+  // 3) probe common feed paths
+  let origin='';try{origin=new URL(base).origin}catch(e){origin=''}
+  if(origin){
+    for(const p of BLOG_FEED_PATHS){
+      try{if((await fetchRss(origin+p)).length)return origin+p}catch(e){}
+    }
+  }
+  return'';
 }
 function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
 async function fetchFeed(it){
@@ -1113,6 +1147,7 @@ function loadStore(){
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+  d.feeds=Array.isArray(d.feeds)?d.feeds:[];
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.brief||typeof d.brief!=='object')d.brief={};
   d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
@@ -1390,6 +1425,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
     {key:'photos',icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
     {key:'brief',icon:Icons.newspaper(22),label:'Daily Brief',active:is('brief'),onClick:()=>go('brief')},
+    {key:'blogs',icon:Icons.rss(22),label:'Blogs',active:is('blogs'),onClick:()=>go('blogs')},
     {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
     {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
     {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
@@ -2084,6 +2120,122 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
     tabBar,
     h('div',null,briefTab==='stories'?newsBody:sourcesBody),
     configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null);
+}
+
+/* ============================== blogs view ============================== */
+/* Add / edit / reorder saved blogs; feed autodiscovery runs on save. */
+function BlogsManager({T,feeds,onFeeds}){
+  const [form,setForm]=useState(null); // {id?,name,url}
+  const [busy,setBusy]=useState(false);
+  const move=(i,d)=>onFeeds(list=>{const a=list.slice();const j=i+d;if(j<0||j>=a.length)return list;const t=a[i];a[i]=a[j];a[j]=t;return a});
+  const save=async()=>{
+    const site=normalizeUrl(form.url);
+    if(!site||busy)return;
+    setBusy(true);
+    let feedUrl='';try{feedUrl=await discoverFeed(site)}catch(e){feedUrl=''}
+    setBusy(false);
+    const name=(form.name||'').trim()||domainOf(site)||form.url;
+    if(form.id)onFeeds(list=>list.map(x=>x.id===form.id?{...x,name,site,feedUrl}:x));
+    else onFeeds(list=>list.concat([{id:uid(),name,site,feedUrl}]));
+    setForm(null);
+  };
+  const canSave=!!normalizeUrl(form&&form.url)&&!busy;
+  return h('div',{style:{padding:'4px 16px 16px'}},
+    feeds.map((f,i)=>h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:10,padding:'11px 0',borderBottom:'1px solid '+T.hair}},
+      h('img',{src:faviconUrl(f.site),alt:'',style:{width:22,height:22,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+        h('span',{style:{display:'block',fontSize:11.5,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser')),
+      h('button',{onClick:()=>move(i,-1),disabled:i===0,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===0?0.3:1}},'▲'),
+      h('button',{onClick:()=>move(i,1),disabled:i===feeds.length-1,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===feeds.length-1?0.3:1}},'▼'),
+      h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90',style:{color:T.sub,padding:'4px 6px'}},Icons.pencil(16)),
+      h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90',style:{color:T.danger,padding:'4px 6px'}},Icons.trash(16)))),
+    form?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:12}},
+      h('input',{value:form.name,onChange:e=>setForm({...form,name:e.target.value}),placeholder:'Name (e.g. Overreacted)',
+        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
+      h('input',{value:form.url,onChange:e=>setForm({...form,url:e.target.value}),placeholder:'Blog URL or feed (https://…)',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        onKeyDown:e=>{if(e.key==='Enter')save()},
+        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
+      h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.45}},'Paste a blog homepage — we\'ll find its feed automatically. Sites without a feed open in the browser.'),
+      h('div',{style:{display:'flex',gap:10,marginTop:10}},
+        h('button',{onClick:save,disabled:!canSave,className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:8,opacity:canSave?1:0.45}},busy?h(Spinner,{T,size:15}):null,busy?'Finding feed…':(form.id?'Save':'Add blog')),
+        h('button',{onClick:()=>setForm(null),disabled:busy,className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Cancel')))
+    :h('button',{onClick:()=>setForm({name:'',url:''}),className:'act98',style:{display:'block',width:'100%',padding:'12px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600,textAlign:'center',marginTop:12}},'+ Add a blog'));
+}
+function BlogsView({T,feeds,sel,onConfig,onFeeds,onOpenItem,onBrowse}){
+  const [managing,setManaging]=useState(false);
+  const [items,setItems]=useState(null); // null = loading
+  const [err,setErr]=useState('');
+  const [busyUrl,setBusyUrl]=useState('');
+  const reqRef=useRef(0);
+  const current=sel?feeds.find(f=>f.id===sel):null;
+  /* if the selected blog was deleted, fall back to All */
+  useEffect(()=>{if(sel&&!feeds.some(f=>f.id===sel))onConfig({blogSel:''})},[sel,feeds]);
+  const load=useCallback(()=>{
+    const id=++reqRef.current;
+    setItems(null);setErr('');
+    const cur=sel?feeds.find(f=>f.id===sel):null;
+    let targets;
+    if(sel){if(!cur||!cur.feedUrl){setItems([]);return}targets=[cur]}
+    else targets=feeds.filter(f=>f.feedUrl);
+    if(!targets.length){setItems([]);return}
+    Promise.all(targets.map(f=>fetchRss(f.feedUrl).then(list=>list.map(e=>({title:e.title,url:e.url,source:f.name,publishedAt:e.publishedMs}))).catch(()=>[])))
+      .then(res=>{
+        if(id!==reqRef.current)return;
+        const all=[].concat.apply([],res).sort((a,b)=>(b.publishedAt||0)-(a.publishedAt||0));
+        if(!all.length)setErr('No posts found — pull to refresh');
+        setItems(all.slice(0,60));
+      });
+  },[sel,feeds]);
+  useEffect(()=>{if(!managing)load()},[load,managing]);
+  const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
+  const options=[{id:'',label:'All'}].concat(feeds.map(f=>({id:f.id,label:f.name})));
+  const toolbar=h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
+    h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},managing?'Manage blogs':'Blogs'),
+    managing
+      ?h('button',{onClick:()=>setManaging(false),className:'act95',style:{padding:'7px 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13,fontWeight:600}},'Done')
+      :h(Fragment,null,
+        h('button',{onClick:()=>setManaging(true),className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg}),title:'Manage blogs'},Icons.pencil(17)),
+        h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))));
+  if(managing)return h('div',null,toolbar,h('div',{style:{borderTop:'1px solid '+T.hair}},h(BlogsManager,{T,feeds,onFeeds})));
+  if(!feeds.length)return h('div',null,toolbar,
+    h(EmptyState,{T,icon:Icons.rss(40),title:'No blogs yet',sub:'Add your favorite blogs and read their latest posts here.'}),
+    h('div',{style:{padding:'0 40px',textAlign:'center'}},
+      h('button',{onClick:()=>setManaging(true),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.plus(17),'Add a blog')));
+  let body;
+  if(current&&!current.feedUrl){
+    body=h('div',{style:{padding:'50px 40px',textAlign:'center',color:T.sub}},
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.globe(40)),
+      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},current.name),
+      h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},'No readable feed for this site — open it in the browser to read.'),
+      h('button',{onClick:()=>onBrowse(current.site),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.globe(17),'Open '+current.name));
+  }else if(items===null){
+    body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
+      h(Spinner,{T,size:24}),
+      h('div',{style:{fontSize:14}},'Gathering the latest posts…'));
+  }else if(err||!items.length){
+    body=h(EmptyState,{T,icon:Icons.rss(40),title:'Nothing to read yet',sub:err||'These blogs have no readable posts right now.'});
+  }else{
+    body=h('div',null,
+      items.map((it,i)=>{
+        const busy=busyUrl===it.url;
+        return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
+          style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'15px 16px 14px',borderBottom:'1px solid '+T.hair,color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
+            h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
+              it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
+              it.source&&it.publishedAt?h('span',null,'·'):null,
+              it.publishedAt?h('span',{style:{flexShrink:0}},timeAgo(it.publishedAt)):null)),
+          h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
+            busy?h(Spinner,{T,size:17}):Icons.download(18)));
+      }),
+      h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},'Tap a post to save it for offline reading.'));
+  }
+  return h('div',null,
+    toolbar,
+    h(BriefChips,{T,options,selected:sel,onSelect:id=>onConfig({blogSel:id})}),
+    h('div',{style:{borderTop:'1px solid '+T.hair}},body));
 }
 
 /* ============================== notes & tags views ============================== */
@@ -3593,6 +3745,7 @@ function scopeTitle(scope,folders){
     case 'photos':return 'Photos';
     case 'brief':return 'My Routine';
     case 'headlines':return 'India Headlines';
+    case 'blogs':return 'Blogs';
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'brief':return 'Daily Brief';
@@ -3991,6 +4144,7 @@ function App(){
       d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
       d.sites=Array.isArray(d.sites)?d.sites:[];
       d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+      d.feeds=Array.isArray(d.feeds)?d.feeds:[];
       d.vault=d.vault&&d.vault.ct?d.vault:null;
       d.seeded=true;
       update(()=>d);setScope({type:'home'});toastFn('Backup restored — '+d.articles.length+' articles');
@@ -4029,7 +4183,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos','brief','headlines'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief','headlines','blogs'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
@@ -4085,6 +4239,10 @@ function App(){
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem,
     onOpenUrl:url=>setBrowserO({url})});
+  else if(scope.type==='blogs')body=h(BlogsView,{T,feeds:data.feeds||[],sel:S.blogSel||'',
+    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
+    onFeeds:fn=>update(d=>({...d,feeds:fn(d.feeds||[])})),
+    onOpenItem:addBriefItem,onBrowse:u=>setBrowserO({url:u})});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(scope.type==='videos'&&!q&&list.length){
     body=h(MyRoutine,{T,videos:list,
