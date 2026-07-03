@@ -1323,6 +1323,20 @@ function ARow({T,icon,label,sub,danger,onClick,right,active}){
     right||null);
 }
 
+/* AssistiveTouch-style quick-action grid (the restyled "+" popup) */
+function TouchGrid({onClose,actions}){
+  return h('div',{style:{position:'fixed',inset:0,zIndex:75}},
+    h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:'rgba(0,0,0,.3)'}}),
+    h('div',{className:'ppin',style:{position:'absolute',left:'50%',top:'50%',transform:'translate(-50%,-50%)',
+      width:'min(86vw,336px)',background:'rgba(40,40,44,.9)',backdropFilter:'blur(22px)',WebkitBackdropFilter:'blur(22px)',
+      border:'1px solid rgba(255,255,255,.08)',borderRadius:26,padding:'20px 12px 16px',boxShadow:'0 24px 70px rgba(0,0,0,.55)',
+      display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'6px 2px'}},
+      actions.map((a,i)=>h('button',{key:i,onClick:()=>{onClose();a.onClick()},className:'act90 trt',
+        style:{display:'flex',flexDirection:'column',alignItems:'center',gap:8,padding:'12px 4px',color:'#fff'}},
+        h('span',{style:{width:52,height:52,borderRadius:'50%',background:'rgba(255,255,255,.15)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},a.icon),
+        h('span',{style:{fontSize:11.5,fontWeight:500,textAlign:'center',lineHeight:1.2,color:'rgba(255,255,255,.9)',maxWidth:82}},a.label)))));
+}
+
 function PrimaryBtn({T,label,onClick,danger,disabled,style}){
   return h('button',{onClick,disabled,className:'act98 trc',style:Object.assign({display:'block',width:'calc(100% - 40px)',margin:'14px 20px 0',padding:'15px',borderRadius:12,background:danger?T.danger:T.fg,color:danger?'#fff':T.bg,fontSize:16.5,fontWeight:600,opacity:disabled?0.45:1,textAlign:'center'},style||{})},label);
 }
@@ -4468,12 +4482,13 @@ function App(){
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
-    sheet&&sheet.type==='plus'?h(Sheet,{T,onClose:()=>setSheet(null)},
-      h(ARow,{T,icon:Icons.link(21),label:'Save a link',sub:'Article, video, or any web page',onClick:()=>{setSheet(null);setAddS({prefill:''})}}),
-      h(ARow,{T,icon:Icons.camera(21),label:'Take photo',sub:'Capture with the camera',onClick:()=>{setSheet(null);pickFiles('image/*','environment')}}),
-      h(ARow,{T,icon:Icons.image(21),label:'Photo library',sub:'Choose photos from your device',onClick:()=>{setSheet(null);pickFiles('image/*')}}),
-      h(ARow,{T,icon:Icons.file(21),label:'Upload files',sub:'Images, PDFs, or any file',onClick:()=>{setSheet(null);pickFiles('')}}),
-      h(ARow,{T,icon:Icons.folder(21),label:'New folder',sub:'Organize your reading',onClick:()=>setSheet({type:'folder'})})):null,
+    sheet&&sheet.type==='plus'?h(TouchGrid,{onClose:()=>setSheet(null),actions:[
+      {icon:Icons.link(24),label:'Save a link',onClick:()=>setAddS({prefill:''})},
+      {icon:Icons.camera(24),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
+      {icon:Icons.image(24),label:'Photo library',onClick:()=>pickFiles('image/*')},
+      {icon:Icons.file(24),label:'Upload files',onClick:()=>pickFiles('')},
+      {icon:Icons.folder(24),label:'New folder',onClick:()=>setSheet({type:'folder'})}
+    ]}):null,
 
     sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
 
