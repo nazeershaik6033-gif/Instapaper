@@ -63,16 +63,17 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 **Settings** are organized like the classic app: General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup.
 
 **AI assistant (✦ icon in the header, on any page)**
-- **Open in Claude — no API key.** Hand any command (with or without an article) straight to the **Claude app** on your phone using your own Claude account — no key, no setup. On an article it packages your instruction plus the article text; tap a quick preset (summarize, key takeaways, explain simply, counterarguments) or type your own. It opens the Claude app (or claude.ai if the app isn't installed) with the prompt pre-filled, and always copies the full prompt to your clipboard as a one-tap paste backup. This unlocks the full power of Claude — anything Claude can do — with zero configuration.
+- **Open in Claude — no API key.** Hand any command (with or without an article) straight to the **Claude app** on your phone using your own Claude account — no key, no setup. On an article it packages your instruction plus the article text; tap a quick preset (summarize, key takeaways, translate, explain simply, counterarguments, turn into a thread) or type your own. It opens the Claude app (or claude.ai if the app isn't installed) with the prompt pre-filled, and always copies the full prompt to your clipboard as a one-tap paste backup. This unlocks the full power of Claude — anything Claude can do — with zero configuration.
+- **Ask Claude about my library** — free-form Q&A over everything you've saved, no API key. Claude receives a compact index (titles, sources, links) of your saved articles and answers things like "which of these cover AI policy?" or "build me a reading plan."
+- **Ask Claude about my routine** — no API key. Pick which updates from your **My Routine** channels (articles and videos) to send, then check any combination of **Transcript** (Claude fetches each video's transcript itself), **Summarize**, and **Newsletter** (a polished, ready-to-send write-up) — Claude does exactly that with the items you picked. Reachable from the ✦ menu or with one tap right on the My Routine screen.
 - Prefer a built-in, in-app model instead? Connect either provider in Settings:
   - **OpenRouter** (free key at [openrouter.ai/keys](https://openrouter.ai/keys)) — DeepSeek R1, Llama, Qwen, Mistral free tiers plus paid models, or any custom model id
   - **Google Gemini** (free key at [aistudio.google.com/apikey](https://aistudio.google.com/apikey)) — Gemini 2.5 Flash / Pro / Flash-Lite with a generous free tier
 - **Summarize** any article into key points + takeaway
 - **Translate** into Telugu, Hindi, Tamil, Kannada, and many more — read the result, listen to it spoken aloud (తెలుగు / हिन्दी voices), or save it as a new article
 - **Rewrite** — simplify, shorten, expand, change tone, or convert to bullet points
-- **Ask** questions about any article (or chat freely without one)
-- **Add to My Routine** — describe a channel, account, or paste a link (e.g. "Diary of a CEO YouTube channel" or "@mufaddal_vohra") and the AI figures out what it is and adds it as a My Routine source. It now resolves to the **real destination** (the actual YouTube channel, Telegram, or site) and, if an exact link can't be determined, falls back to a live search on the right platform — so a routine item always opens somewhere real, never a dead link.
-- The menu leads with these AI actions; your saved articles appear below under "Work with a saved article" so the assistant is about what you want to do, not just a list to scroll.
+- **Ask** questions about any article (or chat freely without one) — open the assistant from an article's own menu to work with it directly
+- **Add to My Routine** — describe a channel, account, or paste a link (e.g. "Diary of a CEO YouTube channel" or "@mufaddal_vohra") and the AI figures out what it is and adds it as a My Routine source. It resolves to the **real destination** (the actual YouTube channel, Telegram, or site) and, if an exact link can't be determined, falls back to a live search on the right platform — so a routine item always opens somewhere real, never a dead link.
 - AI results can be copied, shared, spoken aloud, or saved to Notes
 
 ## The Daily Brief — your personalized newspaper (📱 header icon)
