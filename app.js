@@ -2153,7 +2153,40 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
 function BlogsManager({T,feeds,onFeeds}){
   const [form,setForm]=useState(null); // {id?,name,url}
   const [busy,setBusy]=useState(false);
-  const move=(i,d)=>onFeeds(list=>{const a=list.slice();const j=i+d;if(j<0||j>=a.length)return list;const t=a[i];a[i]=a[j];a[j]=t;return a});
+  /* Reordering mirrors My Routine's group drag: press-and-drag the handle
+     beside any blog's name pill, any time — no separate mode to enter. */
+  const [dragOver,setDragOver]=useState(-1);
+  const dragInfo=useRef({active:false,srcIdx:0,startY:0});
+  const numFeedsRef=useRef(feeds.length);numFeedsRef.current=feeds.length;
+  const startDrag=(idx,e)=>{
+    const y=e.touches?e.touches[0].clientY:e.clientY;
+    dragInfo.current={active:true,srcIdx:idx,startY:y};
+    setDragOver(idx);
+    const onMove=ev=>{
+      if(!dragInfo.current.active)return;
+      const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
+      const dy=y2-dragInfo.current.startY;
+      const n=numFeedsRef.current;
+      const step=Math.round(dy/56);
+      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),n-1));
+    };
+    const onEnd=ev=>{
+      if(!dragInfo.current.active)return;
+      dragInfo.current.active=false;
+      const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:ev.clientY||0;
+      const dy=y2-dragInfo.current.startY;
+      const n=numFeedsRef.current;
+      const src=dragInfo.current.srcIdx;
+      const step=Math.round(dy/56);
+      const dst=Math.min(Math.max(src+step,0),n-1);
+      if(src!==dst)onFeeds(list=>{const a=list.slice();const[mv]=a.splice(src,1);a.splice(dst,0,mv);return a});
+      setDragOver(-1);
+      window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);
+      window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
+    };
+    window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);
+    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
+  };
   const save=async()=>{
     const site=normalizeUrl(form.url);
     if(!site||busy)return;
@@ -2166,16 +2199,21 @@ function BlogsManager({T,feeds,onFeeds}){
     setForm(null);
   };
   const canSave=!!normalizeUrl(form&&form.url)&&!busy;
+  const isDragging=dragOver!==-1;
   return h('div',{style:{padding:'4px 16px 16px'}},
-    feeds.map((f,i)=>h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:10,padding:'11px 0',borderBottom:'1px solid '+T.hair}},
-      h('img',{src:faviconUrl(f.site),alt:'',style:{width:22,height:22,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
-      h('div',{style:{flex:1,minWidth:0}},
-        h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-        h('span',{style:{display:'block',fontSize:11.5,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser')),
-      h('button',{onClick:()=>move(i,-1),disabled:i===0,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===0?0.3:1}},'▲'),
-      h('button',{onClick:()=>move(i,1),disabled:i===feeds.length-1,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===feeds.length-1?0.3:1}},'▼'),
-      h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90',style:{color:T.sub,padding:'4px 6px'}},Icons.pencil(16)),
-      h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90',style:{color:T.danger,padding:'4px 6px'}},Icons.trash(16)))),
+    feeds.map((f,i)=>{
+      const dragThis=isDragging&&dragInfo.current.srcIdx===i;
+      const dropHere=isDragging&&dragOver===i&&dragInfo.current.srcIdx!==i;
+      return h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:6,marginBottom:8,opacity:dragThis?0.4:1,transition:'opacity 120ms'}},
+        h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:9,minWidth:0,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+(dropHere?T.accent:T.hair),overflow:'hidden'}},
+          h('img',{src:faviconUrl(f.site),alt:'',style:{width:20,height:20,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+            h('span',{style:{display:'block',fontSize:11,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser'))),
+        h('button',{onMouseDown:e=>startDrag(i,e),onTouchStart:e=>startDrag(i,e),className:'act90','aria-label':'Reorder blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)),
+        h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90','aria-label':'Edit blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)),
+        h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90','aria-label':'Delete blog',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)));
+    }),
     form?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:12}},
       h('input',{value:form.name,onChange:e=>setForm({...form,name:e.target.value}),placeholder:'Name (e.g. Overreacted)',
         style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
@@ -2607,9 +2645,43 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   // Per-group collapse for the brief; persisted so it survives reloads.
   const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_brief_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_brief_collapsed',JSON.stringify([...n]))}catch(e){}return n});
-  const [reordering,setReordering]=useState(false);const [dragOver,setDragOver]=useState(-1);const dragInfo=useRef({active:false,srcIdx:0,startY:0});const numGroupsRef=useRef(groups.length);numGroupsRef.current=groups.length;
-  const startGroupDrag=(idx,e)=>{const y=e.touches?e.touches[0].clientY:e.clientY;dragInfo.current={active:true,srcIdx:idx,startY:y};setDragOver(idx)};
-  useEffect(()=>{if(!reordering)return;const onMove=e=>{if(!dragInfo.current.active)return;const y=e.touches?e.touches[0].clientY:e.clientY;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const step=Math.round(dy/80);const idx=Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1);setDragOver(idx)};const onEnd=e=>{if(!dragInfo.current.active)return;dragInfo.current.active=false;const y=(e.changedTouches&&e.changedTouches[0])?e.changedTouches[0].clientY:e.clientY||0;const dy=y-dragInfo.current.startY;const ng=numGroupsRef.current;const src=dragInfo.current.srcIdx;const step=Math.round(dy/80);const dst=Math.min(Math.max(src+step,0),ng-1);if(src!==dst)onBrief(b=>{const gs=[...b.groups];const[mv]=gs.splice(src,1);gs.splice(dst,0,mv);return{...b,groups:gs}});setDragOver(-1)};window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);return()=>{window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd)}},[reordering]);
+  /* Group reordering: press-and-drag the handle beside any group's name pill,
+     any time — no separate "reorder mode" to enter or exit. dragOver===-1
+     means idle; while dragging it tracks which group index is under the
+     pointer, both to preview the drop position and to flag the current
+     group being dragged (dragInfo.current.srcIdx). */
+  const [dragOver,setDragOver]=useState(-1);
+  const dragInfo=useRef({active:false,srcIdx:0,startY:0});
+  const numGroupsRef=useRef(groups.length);numGroupsRef.current=groups.length;
+  const startGroupDrag=(idx,e)=>{
+    const y=e.touches?e.touches[0].clientY:e.clientY;
+    dragInfo.current={active:true,srcIdx:idx,startY:y};
+    setDragOver(idx);
+    const onMove=ev=>{
+      if(!dragInfo.current.active)return;
+      const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
+      const dy=y2-dragInfo.current.startY;
+      const ng=numGroupsRef.current;
+      const step=Math.round(dy/80);
+      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1));
+    };
+    const onEnd=ev=>{
+      if(!dragInfo.current.active)return;
+      dragInfo.current.active=false;
+      const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:ev.clientY||0;
+      const dy=y2-dragInfo.current.startY;
+      const ng=numGroupsRef.current;
+      const src=dragInfo.current.srcIdx;
+      const step=Math.round(dy/80);
+      const dst=Math.min(Math.max(src+step,0),ng-1);
+      if(src!==dst)onBrief(b=>{const gs=[...b.groups];const[mv]=gs.splice(src,1);gs.splice(dst,0,mv);return{...b,groups:gs}});
+      setDragOver(-1);
+      window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);
+      window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
+    };
+    window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);
+    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
+  };
   const [briefLog,setBriefLog]=useState(loadBriefLog);
   const [streakDays,setStreakDays]=useState(loadStreakDays);
   const [focus,setFocus]=useState(loadBriefFocus);
@@ -2738,16 +2810,25 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const ungrouped=vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
-  const sectionHead=(g,list,gIdx)=>{const key=g?g.id:'_other';const isOpen=!collapsed.has(key);const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;const allGrpDone=list.length&&doneInGrp===list.length;return h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'13px 2px 7px'}},
-    reordering&&g
-      ?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,cursor:'grab'}},Icons.drag(16))
-      :h('button',{onClick:()=>toggleCollapse(key),className:'act90','aria-label':isOpen?'Collapse group':'Expand group',style:{display:'flex',color:T.sub,padding:4,borderRadius:6,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
-    h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:g?groupColor(g.id):T.sub,boxShadow:allGrpDone?'none':'0 0 0 3px '+hexA(g?groupColor(g.id):'#888888',.16)}}),
-    h('div',{onClick:reordering?undefined:()=>toggleCollapse(key),style:{flex:1,fontSize:13,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:reordering?'default':'pointer'}},g?g.name:'Other'),
-    groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length),
-    reordering?null:g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90',style:{display:'flex',color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
-    reordering?null:g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
-    reordering?null:h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90',style:{display:'flex',color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));};
+  const sectionHead=(g,list,gIdx)=>{
+    const key=g?g.id:'_other';
+    const isOpen=!collapsed.has(key);
+    const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+    const doneInGrp=list.filter(i=>doneIds.includes(i.id)).length;
+    const allGrpDone=list.length&&doneInGrp===list.length;
+    return h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+      h('button',{onClick:()=>toggleCollapse(key),className:'act95','aria-label':isOpen?'Collapse group':'Expand group',
+        style:{display:'flex',alignItems:'center',gap:7,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+T.hair,minWidth:0,overflow:'hidden'}},
+        h('span',{style:{display:'flex',color:T.sub,flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(12)),
+        h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub,boxShadow:allGrpDone?'none':'0 0 0 3px '+hexA(g?groupColor(g.id):'#888888',.16)}}),
+        h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g?g.name:'Other'),
+        groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length)),
+      g?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90','aria-label':'Reorder group',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)):null,
+      h('div',{style:{flex:1}}),
+      g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
+      g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90','aria-label':'Delete group',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
+      h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
+  };
   // Brief history as a collapsible section (open when '_history' is in the set).
   const histMissed=briefLog.reduce((n,e)=>n+e.items.reduce((m,i)=>m+i.entries.length,0),0);
   const historySection=()=>{const isOpen=collapsed.has('_history');return h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair}},
@@ -2789,8 +2870,6 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     h('div',{style:{display:'flex',gap:8,padding:'12px 14px 4px'}},
       rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
       rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
-      h('button',{onClick:()=>setEdit({groupId:groups[0]?groups[0].id:null,kind:'link',name:'',url:''}),'aria-label':'Add item',className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:T.card,color:T.fg,border:'1px solid '+T.card}},Icons.plus(17)),
-      rowBtn(Icons.drag(17),()=>{setReordering(r=>!r);setDragOver(-1);dragInfo.current.active=false},reordering,'Reorder groups'),
       rowBtn(Icons.bell(17,remindOn),toggleRemind,remindOn,'Routine reminders'),
       rowBtn(Icons.chart(17),()=>setStatsOpen(true),false,'Routine stats')),
     h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
@@ -2805,8 +2884,22 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     claudeBtn,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
-      total?(()=>{const rendered=sections.map(({g,list},gIdx)=>{const key=g?g.id:'_other';const flist=list.filter(passesFocus);if((focus!=='all'||q)&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key,style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),(collapsed.has(key)&&!q)?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))});
-        return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;})()
+      total?(()=>{
+        const isDragging=dragOver!==-1;
+        const rendered=sections.map(({g,list},gIdx)=>{
+          const key=g?g.id:'_other';
+          const flist=list.filter(passesFocus);
+          if((focus!=='all'||q)&&!isDragging&&!flist.length)return null;
+          const dragThis=isDragging&&dragInfo.current.srcIdx===gIdx;
+          const dropHere=isDragging&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx;
+          const itemsOpen=!(collapsed.has(key)&&!q);
+          return h('div',{key,style:{opacity:dragThis?0.4:1,transition:'opacity 120ms',marginBottom:14}},
+            h('div',{style:{borderRadius:999,outline:dropHere?'2px solid '+T.accent:'none',outlineOffset:3}},sectionHead(g,list,gIdx)),
+            itemsOpen?h('div',{style:{marginTop:6,background:T.bg,borderRadius:14,border:'1px solid '+T.hair,boxShadow:'0 1px 2px rgba(0,0,0,.04)',padding:'4px 13px 6px'}},
+              flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')):null);
+        });
+        return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;
+      })()
         :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
       historySection(),
       h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
@@ -2944,14 +3037,17 @@ function EditBlocksSheet({T,article,onSave,onClose}){
     });
     setRangeMenu(null);
   };
+  const canSave=count<blocks.length;
   return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
     h('div',{style:{padding:'0 20px 8px'}},
-      h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:count>=blocks.length,className:'act98',
-        style:{display:'block',width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:16,fontWeight:600,textAlign:'center',opacity:count>=blocks.length?0.45:1}},
-        count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save'),
-      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tap the parts you want to remove, or long-press a block to clear everything above or below it, then save your cleaned-up copy.')),
-    h('div',{style:{padding:'0 14px'}},
+      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5}},'Tap the parts you want to remove, or long-press a block to clear everything above or below it, then tap Save.')),
+    h('div',{style:{padding:'0 14px calc(76px + '+SAFE_B+')'}}, // bottom padding keeps the last block clear of the floating Save button
       blocks.map((b,i)=>h(EditBlockRow,{key:i,T,html:b,removed:!!removed[i],onToggle:()=>toggle(i),onLongPress:()=>setRangeMenu(i)}))),
+    h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:!canSave,className:'act90 trt',
+      'aria-label':count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save',
+      style:{position:'fixed',right:18,bottom:'calc(18px + '+SAFE_B+')',width:58,height:58,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',opacity:canSave?1:0.4}},
+      Icons.download(24),
+      count?h('span',{style:{position:'absolute',top:-3,right:-3,minWidth:20,height:20,padding:'0 5px',borderRadius:10,background:T.danger,color:'#fff',fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}},count):null),
     rangeMenu!==null?h(Sheet,{T,onClose:()=>setRangeMenu(null),title:'Block '+(rangeMenu+1)+' of '+blocks.length,z:95},
       h(ARow,{T,icon:h('span',{style:{display:'flex',transform:'rotate(-90deg)'}},Icons.chevR(20)),label:'Remove everything above',sub:'Clears the top through this block',onClick:()=>removeRange(0,rangeMenu)}),
       h(ARow,{T,icon:h('span',{style:{display:'flex',transform:'rotate(90deg)'}},Icons.chevR(20)),label:'Remove everything below',sub:'Clears this block through the end',onClick:()=>removeRange(rangeMenu,blocks.length-1)})):null);
