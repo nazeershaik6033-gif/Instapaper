@@ -472,8 +472,7 @@ async function fetchTelegram(handle){ // public channel preview at t.me/s/<handl
     return{id:post||String(publishedMs),title:title.slice(0,220),url:post?'https://t.me/'+post:'https://t.me/'+handle,publishedMs,thumb};
   }).filter(e=>e.publishedMs).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,25);
 }
-async function fetchRss(url){ // RSS or Atom — news, blogs, Reddit, bridges
-  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t));
+function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddit, bridges
   const doc=new DOMParser().parseFromString(raw,'text/xml');
   let nodes=[].slice.call(doc.getElementsByTagName('item')),atom=false;
   if(!nodes.length){nodes=[].slice.call(doc.getElementsByTagName('entry'));atom=true}
@@ -485,6 +484,28 @@ async function fetchRss(url){ // RSS or Atom — news, blogs, Reddit, bridges
     return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,thumb:''};
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
+async function fetchRss(url){
+  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t));
+  return parseRssText(raw);
+}
+/* Fast fetch for feed discovery: race a direct request against every CORS
+   proxy in parallel (short timeout each) instead of trying them one at a
+   time — trades completeness for speed, since discoverFeed may need to
+   probe several candidate URLs before finding a feed. */
+async function fetchFast(url,ms){
+  ms=ms||9000;
+  const attempt=async fetcher=>{
+    const res=await fetcher();
+    if(!res.ok)throw new Error('http '+res.status);
+    const text=await res.text();
+    if(!text)throw new Error('empty response');
+    return text;
+  };
+  return await Promise.any([
+    attempt(()=>fetchWithTimeout(url,{},ms)),
+    ...CORS_PROXIES.map(p=>attempt(()=>fetchWithTimeout(p(url),{},ms)))
+  ]);
+}
 /* Resolve a page-or-feed URL to its best RSS/Atom feed URL for the Blogs section,
    or '' if none can be found (caller then treats it as a homepage bookmark). */
 const BLOG_FEED_PATHS=['/feed','/rss.xml','/atom.xml','/index.xml','/feed.xml','/rss','/feeds/posts/default'];
@@ -493,9 +514,9 @@ async function discoverFeed(url){
   const base=normalizeUrl(url);
   if(!base)return'';
   let html='';
-  try{html=await fetchRawHtml(base)}catch(e){html=''}
+  try{html=await fetchFast(base)}catch(e){html=''}
   // 1) the pasted URL is already a feed
-  if(html&&looksLikeFeed(html)){try{if((await fetchRss(base)).length)return base}catch(e){}}
+  if(html&&looksLikeFeed(html)){try{if(parseRssText(html).length)return base}catch(e){}}
   // 2) autodiscover via <link rel="alternate" type="application/rss+xml|atom+xml">
   if(html){
     try{
@@ -510,11 +531,16 @@ async function discoverFeed(url){
       }
     }catch(e){}
   }
-  // 3) probe common feed paths
+  // 3) probe common feed paths — all candidates in parallel, first valid one wins
   let origin='';try{origin=new URL(base).origin}catch(e){origin=''}
   if(origin){
-    for(const p of BLOG_FEED_PATHS){
-      try{if((await fetchRss(origin+p)).length)return origin+p}catch(e){}
+    const settled=await Promise.allSettled(BLOG_FEED_PATHS.map(async p=>{
+      const text=await fetchFast(origin+p,7000);
+      if(!looksLikeFeed(text)||!parseRssText(text).length)throw new Error('not a feed');
+      return origin+p;
+    }));
+    for(let i=0;i<BLOG_FEED_PATHS.length;i++){
+      if(settled[i].status==='fulfilled')return settled[i].value;
     }
   }
   return'';
@@ -2891,25 +2917,44 @@ function TagsList({T,articles,onPick}){
 }
 
 /* ============================== content editors ============================== */
+function EditBlockRow({T,html,removed,onToggle,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  return h('div',{onClick:()=>{if(!lp.firedRef.current.fired)onToggle()},
+    onTouchStart:lp.onTouchStart,onTouchMove:lp.onTouchMove,onTouchEnd:lp.onTouchEnd,
+    onMouseDown:lp.onMouseDown,onMouseUp:lp.onMouseUp,onMouseLeave:lp.onMouseLeave,
+    onContextMenu:e=>{e.preventDefault();onLongPress()},
+    style:{display:'flex',gap:10,alignItems:'flex-start',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px solid '+(removed?T.danger:T.hair),opacity:removed?0.45:1,background:removed?'transparent':T.card}},
+    h('span',{style:{width:22,height:22,borderRadius:6,flexShrink:0,marginTop:1,border:'2px solid '+(removed?T.danger:T.sub),background:removed?T.danger:'transparent',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},removed?Icons.check(14):null),
+    h('div',{className:'rc',style:{fontFamily:"'Lora',Georgia,serif",fontSize:14,lineHeight:1.5,color:T.fg,'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta,pointerEvents:'none',maxHeight:170,overflow:'hidden',flex:1,minWidth:0},dangerouslySetInnerHTML:{__html:html}}));
+}
 function EditBlocksSheet({T,article,onSave,onClose}){
   const blocks=useMemo(()=>{
     const d=document.createElement('div');d.innerHTML=article.html;
     return Array.from(d.children).map(c=>c.outerHTML);
   },[article.id]);
   const [removed,setRemoved]=useState({});
+  const [rangeMenu,setRangeMenu]=useState(null); // index of the long-pressed block, or null
   const count=Object.keys(removed).filter(k=>removed[k]).length;
   const toggle=i=>setRemoved(r=>({...r,[i]:!r[i]}));
+  const removeRange=(from,to)=>{ // inclusive
+    setRemoved(r=>{
+      const n={...r};
+      for(let j=from;j<=to;j++)n[j]=true;
+      return n;
+    });
+    setRangeMenu(null);
+  };
   return h(Sheet,{T,onClose,title:'Remove blocks',maxH:'94%'},
     h('div',{style:{padding:'0 20px 8px'}},
       h('button',{onClick:()=>onSave(blocks.filter((_,i)=>!removed[i]).join('\n')),disabled:count>=blocks.length,className:'act98',
         style:{display:'block',width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:16,fontWeight:600,textAlign:'center',opacity:count>=blocks.length?0.45:1}},
         count?('Save — remove '+count+' block'+(count>1?'s':'')):'Save'),
-      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tick the parts you want to remove, then save your cleaned-up copy.')),
+      h('div',{style:{fontSize:12.5,color:T.meta,lineHeight:1.5,marginTop:8}},'Tap the parts you want to remove, or long-press a block to clear everything above or below it, then save your cleaned-up copy.')),
     h('div',{style:{padding:'0 14px'}},
-      blocks.map((b,i)=>h('div',{key:i,onClick:()=>toggle(i),
-        style:{display:'flex',gap:10,alignItems:'flex-start',borderRadius:10,padding:'10px 12px',marginBottom:8,cursor:'pointer',border:'1.5px solid '+(removed[i]?T.danger:T.hair),opacity:removed[i]?0.45:1,background:removed[i]?'transparent':T.card}},
-        h('span',{style:{width:22,height:22,borderRadius:6,flexShrink:0,marginTop:1,border:'2px solid '+(removed[i]?T.danger:T.sub),background:removed[i]?T.danger:'transparent',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},removed[i]?Icons.check(14):null),
-        h('div',{className:'rc',style:{fontFamily:"'Lora',Georgia,serif",fontSize:14,lineHeight:1.5,color:T.fg,'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta,pointerEvents:'none',maxHeight:170,overflow:'hidden',flex:1,minWidth:0},dangerouslySetInnerHTML:{__html:b}})))));
+      blocks.map((b,i)=>h(EditBlockRow,{key:i,T,html:b,removed:!!removed[i],onToggle:()=>toggle(i),onLongPress:()=>setRangeMenu(i)}))),
+    rangeMenu!==null?h(Sheet,{T,onClose:()=>setRangeMenu(null),title:'Block '+(rangeMenu+1)+' of '+blocks.length,z:95},
+      h(ARow,{T,icon:h('span',{style:{display:'flex',transform:'rotate(-90deg)'}},Icons.chevR(20)),label:'Remove everything above',sub:'Clears the top through this block',onClick:()=>removeRange(0,rangeMenu)}),
+      h(ARow,{T,icon:h('span',{style:{display:'flex',transform:'rotate(90deg)'}},Icons.chevR(20)),label:'Remove everything below',sub:'Clears this block through the end',onClick:()=>removeRange(rangeMenu,blocks.length-1)})):null);
 }
 
 function EditTextSheet({T,article,onSave,onClose}){
