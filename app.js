@@ -2415,7 +2415,7 @@ function computeStreak(days){
 const BRIEF_PALETTE=['#d4564a','#e8801f','#e0a020','#5cb85c','#2bb5a0','#3aa0e0','#6a7ef0','#9b59b6','#e0517f'];
 function groupColor(id){let n=0;const s=String(id||'');for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return BRIEF_PALETTE[n%BRIEF_PALETTE.length]}
 function hexA(hex,a){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex||'');if(!m)return hex||'transparent';const n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
-function BriefView({T,S,brief,onBrief,toastFn}){
+function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const vis=items.filter(i=>!snoozedNow(i.id));
@@ -2627,6 +2627,9 @@ function BriefView({T,S,brief,onBrief,toastFn}){
   const digestBtn=(!win.future&&newCount>0)?h('div',{style:{padding:'0 14px 10px'}},
     h('button',{onClick:runDigest,disabled:aiBusy,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'11px',borderRadius:12,background:hexA(T.accent,.12),color:T.accent,fontSize:14,fontWeight:700,border:'1px solid '+hexA(T.accent,.32),opacity:aiBusy?.7:1}},
       aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),aiBusy?'Summarizing…':'Summarize what’s new · '+newCount)):null;
+  const claudeBtn=(total&&onAskClaude)?h('div',{style:{padding:'0 14px 10px'}},
+    h('button',{onClick:onAskClaude,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'11px',borderRadius:12,background:'transparent',color:T.fg,fontSize:14,fontWeight:700,border:'1px solid '+T.hair}},
+      Icons.send(16),'Ask Claude about my routine')):null;
   return h('div',null,
     hero,
     h('div',{style:{display:'flex',gap:8,padding:'8px 14px 4px'}},
@@ -2644,6 +2647,7 @@ function BriefView({T,S,brief,onBrief,toastFn}){
     focusRow,
     searchRow,
     digestBtn,
+    claudeBtn,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
       total?(()=>{const rendered=sections.map(({g,list},gIdx)=>{const key=g?g.id:'_other';const flist=list.filter(passesFocus);if((focus!=='all'||q)&&!reordering&&!flist.length)return null;const dragging=reordering&&dragInfo.current.active;return h('div',{key,style:{opacity:dragging&&dragInfo.current.srcIdx===gIdx?0.4:1,transition:'opacity 120ms',background:T.bg,borderRadius:16,border:'1px solid '+T.hair,boxShadow:dragging?'0 8px 24px rgba(0,0,0,.14)':'0 1px 2px rgba(0,0,0,.04)',marginBottom:12,padding:'2px 13px 8px',borderTop:reordering&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx?'2px solid '+T.accent:('1px solid '+T.hair)}},sectionHead(g,list,gIdx),(collapsed.has(key)&&!q)?null:(flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')))});
@@ -2793,9 +2797,9 @@ function EditTextSheet({T,article,onSave,onClose}){
 }
 
 /* ============================== AI assistant ============================== */
-function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNote,toastFn}){
+function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCopy,onSaveNote,toastFn}){
   const [ctx,setCtx]=useState(article||null);
-  const [view,setView]=useState('menu'); // menu | langs | styles | ask | result | addRoutine | addRoutineConfirm
+  const [view,setView]=useState(initialView||'menu'); // menu | langs | styles | ask | result | addRoutine | addRoutineConfirm | claude | claudeLib | claudeRoutine
   const [busy,setBusy]=useState('');
   const [error,setError]=useState('');
   const [result,setResult]=useState(null); // {kind,text,lang}
@@ -2804,6 +2808,8 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
   const [routineText,setRoutineText]=useState('');
   const [routinePick,setRoutinePick]=useState(null); // {kind,query,name,groupId}
   const [claudeText,setClaudeText]=useState('');
+  const [routineSel,setRoutineSel]=useState(null); // Set of entry urls picked for the Claude routine digest; null = not yet defaulted
+  const [routineModes,setRoutineModes]=useState({transcript:false,summarize:true,newsletter:false});
   const [speaking,setSpeaking]=useState(false);
   const sess=useRef(0);
   const speakingRef=useRef(false);
@@ -2814,6 +2820,32 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
   const isVid=!!(ctx&&ctx.isVideo); // videos are summarised/transcribed via Gemini's video understanding
+
+  /* Recent entries per My Routine source, newest first, capped per source so the
+     picker stays scannable. isNew mirrors BriefView's current window so "what's
+     new" defaults to checked without forcing the user to hand-pick everything. */
+  const routineGroups=useMemo(()=>{
+    if(!brief)return[];
+    const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0);
+    const win=briefWindow(slots,null,new Date())||{start:0,end:0};
+    const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
+    return(brief.items||[]).filter(it=>hasFeed(it)&&!snoozedNow(it.id)).map(it=>{
+      const c=(brief.feeds||{})[it.id];
+      const entries=(c&&c.entries?c.entries:[]).filter(e=>e.url).slice().sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,8)
+        .map(e=>({...e,isNew:e.publishedMs>=win.start&&e.publishedMs<=win.end,isVideo:it.kind==='youtube',sourceName:it.name}));
+      return{item:it,entries};
+    }).filter(g=>g.entries.length);
+  },[brief]);
+  useEffect(()=>{ // default-select this window's new items the first time the picker opens
+    if(view==='claudeRoutine'&&routineSel===null){
+      const s=new Set();
+      routineGroups.forEach(g=>g.entries.forEach(e=>{if(e.isNew)s.add(e.url)}));
+      setRoutineSel(s);
+    }
+  },[view]);
+  const toggleRoutineEntry=url=>setRoutineSel(prev=>{const s=new Set(prev||[]);s.has(url)?s.delete(url):s.add(url);return s});
+  const toggleRoutineMode=k=>setRoutineModes(m=>({...m,[k]:!m[k]}));
+  const selectAllNewRoutine=()=>{const s=new Set();routineGroups.forEach(g=>g.entries.forEach(e=>{if(e.isNew)s.add(e.url)}));setRoutineSel(s)};
 
   const run=async(label,fn)=>{
     setError('');setBusy(label);
@@ -2915,6 +2947,25 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
     const p=q+'\n\n----- MY SAVED READING LIBRARY ('+arts.length+' item'+(arts.length===1?'':'s')+') -----\n'+index;
     if(openInClaude(p,toastFn)){setClaudeText('');onClose()}
   };
+  /* Hand a picked set of My Routine updates (articles + videos) to the Claude
+     app. The three modes combine into one instruction — e.g. Transcript +
+     Newsletter asks Claude to pull each video's transcript itself (we have no
+     API key to fetch it locally) and fold everything into a newsletter. */
+  const doClaudeRoutine=()=>{
+    const sel=routineSel||new Set();
+    const chosen=[];
+    routineGroups.forEach(g=>g.entries.forEach(e=>{if(sel.has(e.url))chosen.push(e)}));
+    if(!chosen.length){toastFn('Pick at least one item');return}
+    const m=routineModes;
+    const instrParts=[];
+    if(m.transcript)instrParts.push('For any YouTube video links below, fetch the transcript yourself and base your response on the actual spoken content, not just the title.');
+    if(m.summarize)instrParts.push('Summarize the key points across everything below, grouped by theme, as concise bullets.');
+    if(m.newsletter)instrParts.push('Compile everything into a polished, ready-to-send newsletter — a short friendly intro, one section per topic with a couple of sentences each, and a closing line.');
+    if(!instrParts.length){toastFn('Pick what Claude should do');return}
+    const lines=chosen.map((e,i)=>(i+1)+'. '+(e.isVideo?'[Video] ':'')+e.sourceName+' — '+(e.title||'Untitled')+'\n   '+e.url);
+    const p=instrParts.join(' ')+'\n\n----- MY ROUTINE — SELECTED ITEMS ('+chosen.length+') -----\n'+lines.join('\n');
+    if(openInClaude(p,toastFn)){setRoutineSel(null);onClose()}
+  };
 
   const listen=()=>{
     if(speaking){sess.current++;speakingRef.current=false;setSpeaking(false);try{speechSynthesis.cancel()}catch(e){}return}
@@ -2966,6 +3017,36 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
           CLAUDE_LIB_PRESETS.map(p=>chip(p,claudeText===p,()=>setClaudeText(p)))),
         h(PrimaryBtn,{T,label:'Ask Claude',disabled:!n,style:{margin:'14px 0 0',width:'100%'},onClick:doClaudeLibrary}),
         h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full library index is copied to your clipboard as a backup.')));
+  }else if(view==='claudeRoutine'){
+    const sel=routineSel||new Set();
+    const m=routineModes;
+    const newCount=routineGroups.reduce((n,g)=>n+g.entries.filter(e=>e.isNew).length,0);
+    const anyMode=m.transcript||m.summarize||m.newsletter;
+    const modeRow=(key,label,sub)=>h('button',{key,onClick:()=>toggleRoutineMode(key),className:'act95',style:{display:'flex',alignItems:'center',gap:10,width:'100%',padding:'9px 4px',textAlign:'left'}},
+      h('span',{style:{display:'flex',flexShrink:0,color:m[key]?T.accent:T.sub}},Icons.checkCircle(21,m[key])),
+      h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14.5,color:T.fg,fontWeight:500}},label),h('div',{style:{fontSize:12,color:T.sub,marginTop:1}},sub)));
+    const entryRow=e=>h('button',{key:e.url,onClick:()=>toggleRoutineEntry(e.url),className:'act95',style:{display:'flex',alignItems:'flex-start',gap:9,width:'100%',padding:'6px 4px',textAlign:'left'}},
+      h('span',{style:{display:'flex',flexShrink:0,color:sel.has(e.url)?T.accent:T.sub,marginTop:1}},Icons.checkCircle(18,sel.has(e.url))),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:13.5,color:T.fg,lineHeight:1.35}},(e.isVideo?'▶ ':'')+(e.title||'Untitled')),
+        e.isNew?h('span',{style:{fontSize:10,fontWeight:700,color:T.accent,letterSpacing:'.03em'}},'NEW'):null));
+    body=h('div',null,backBtn,
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'My Routine'),' updates to the ',h('strong',{style:{color:T.fg}},'Claude app'),' — no API key.'),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should Claude do?'),
+        modeRow('transcript','Transcript','For videos — Claude fetches the transcript itself'),
+        modeRow('summarize','Summarize','Key points across everything selected'),
+        modeRow('newsletter','Newsletter','Compile into a ready-to-send newsletter'),
+        routineGroups.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'18px 0 4px'}},
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Items · '+sel.size+' selected'),
+          h('div',{style:{display:'flex',gap:14}},
+            h('button',{onClick:selectAllNewRoutine,style:{fontSize:12.5,color:T.accent,fontWeight:600}},'New ('+newCount+')'),
+            h('button',{onClick:()=>setRoutineSel(new Set()),style:{fontSize:12.5,color:T.sub,fontWeight:600}},'Clear'))):null,
+        routineGroups.length?routineGroups.map(g=>h('div',{key:g.item.id,style:{marginBottom:8}},
+          h('div',{style:{fontSize:12,fontWeight:600,color:T.meta,padding:'6px 0 2px'}},g.item.name),
+          g.entries.map(entryRow))):h('div',{style:{padding:'10px 0',fontSize:13.5,color:T.sub,lineHeight:1.5}},'No routine items with recent updates yet — add channels, accounts, or sites in My Routine first.'),
+        h(PrimaryBtn,{T,label:'Ask Claude',disabled:!(anyMode&&sel.size),style:{margin:'16px 0 0',width:'100%'},onClick:doClaudeRoutine}),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full list is copied to your clipboard as a backup.')));
   }else if(!ready){
     const prov=S.aiProvider||'openrouter';
     const isGem=prov==='gemini';
@@ -2982,7 +3063,8 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
       h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,[isGem?'geminiKey':'aiKey']:keyDraft.trim()}}));toastFn('AI connected')}}),
       h('div',{style:{display:'flex',alignItems:'center',gap:10,margin:'18px 0 4px'}},h('div',{style:{flex:1,height:1,background:T.hair}}),h('span',{style:{fontSize:12,color:T.sub}},'or, no key needed'),h('div',{style:{flex:1,height:1,background:T.hair}})),
       h(ARow,{T,icon:Icons.send(20),label:ctx?'Use the Claude app instead':'Open in Claude',sub:'Send commands to Claude with your own account',onClick:()=>{setClaudeText('');setView('claude')}}),
-      ctx?null:h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved',onClick:()=>{setClaudeText('');setView('claudeLib')}}));
+      ctx?null:h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
+      ctx?null:h(ARow,{T,icon:Icons.newspaper(20),label:'Ask Claude about my routine',sub:'Transcript, summary, or newsletter',onClick:()=>{setView('claudeRoutine')}}));
   }else if(busy){
     body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
       h(Spinner,{T,size:26}),
@@ -3041,16 +3123,13 @@ function AISheet({T,S,article,articles,brief,update,onClose,onSaveCopy,onSaveNot
         :null,
       h('div',{style:{padding:'16px 20px 0'}},h(PrimaryBtn,{T,label:'Add to My Routine',onClick:doAddRoutine})));
   }else if(!ctx){
-    const pick=articles.filter(a=>!a.isVideo&&a.text).slice(0,15);
-    const secHead=t=>h('div',{style:{padding:'14px 20px 6px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},t);
     body=h('div',null,
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
       h(ARow,{T,icon:Icons.send(20),label:'Open in Claude',sub:'Send any command to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}}),
       h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved — no API key',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
+      h(ARow,{T,icon:Icons.newspaper(20),label:'Ask Claude about my routine',sub:'Transcript, summary, or newsletter from what you follow',onClick:()=>{setView('claudeRoutine')}}),
       h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat with the built-in AI'+(ready?'':' (needs a key)'),onClick:()=>setView('ask')}),
-      h(ARow,{T,icon:Icons.sun(20),label:'Add to My Routine',sub:'Follow a channel, account, or site',onClick:()=>{setRoutineText('');setRoutinePick(null);setView('addRoutine')}}),
-      secHead('Work with a saved article'),
-      pick.length?pick.map(a=>h(ARow,{key:a.id,T,icon:Icons.notes(19),label:a.title,sub:(a.source||'')+(a.readMin?' · '+a.readMin+' min':''),onClick:()=>setCtx(a)})):h('div',{style:{padding:'6px 20px 10px',fontSize:13.5,color:T.sub}},'Nothing saved yet — save an article to summarize, translate, or ask about it.'));
+      h(ARow,{T,icon:Icons.sun(20),label:'Add to My Routine',sub:'Follow a channel, account, or site',onClick:()=>{setRoutineText('');setRoutinePick(null);setView('addRoutine')}}));
   }else{
     body=h('div',null,
       h('div',{style:{padding:'0 20px 10px'}},
@@ -4000,7 +4079,8 @@ function App(){
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
-    onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn});
+    onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn,
+    onAskClaude:()=>setAiOpen({routine:true})});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem,
@@ -4154,6 +4234,7 @@ function App(){
 
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
       articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),brief:data.brief,
+      initialView:aiOpen.routine?'claudeRoutine':null,
       update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
     sheet&&sheet.type==='confirm'?h(ConfirmSheet,{T,
