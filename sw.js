@@ -1,4 +1,5 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
+/* redeploy trigger: retry Pages deploy after a transient GitHub Pages failure */
 const CACHE = 'instapaper-shell-v90';
 const SHELL = ['./', './index.html', './app.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   './newspaper.html', './newspaper.js', './newspaper.manifest.json',
