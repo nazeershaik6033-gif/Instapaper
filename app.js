@@ -1176,6 +1176,8 @@ function loadStore(){
   d.feeds=Array.isArray(d.feeds)?d.feeds:[];
   d.feeds.forEach(f=>{if(typeof f.groupId==='undefined')f.groupId=null});
   d.blogGroups=Array.isArray(d.blogGroups)?d.blogGroups:[];
+  if(!d.blogFeeds||typeof d.blogFeeds!=='object')d.blogFeeds={};
+  if(!d.blogSeen||typeof d.blogSeen!=='object')d.blogSeen={};
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.brief||typeof d.brief!=='object')d.brief={};
   d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
@@ -2166,15 +2168,103 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
 
 /* ============================== blogs view ============================== */
 /* Add / edit / reorder saved blogs; feed autodiscovery runs on save. */
-function BlogsManager({T,feeds,onFeeds}){
-  const [form,setForm]=useState(null); // {id?,name,url}
-  const [busy,setBusy]=useState(false);
-  /* Reordering mirrors My Routine's group drag: press-and-drag the handle
-     beside any blog's name pill, any time — no separate mode to enter. */
+/* one blog's row — favicon-less rss icon, name, "N new" badge, expand to preview posts */
+function BlogFeedRow({T,f,entries,loading,newCount,collapsed,onToggleCollapse,onOpen,onEntry,onLongPress,busyUrl}){
+  const lp=useLongPress(onLongPress);
+  if(!f.feedUrl){
+    return h('div',Object.assign({},lp,{style:{display:'flex',gap:10,padding:'11px 4px',alignItems:'center'}}),
+      h('div',{onClick:onOpen,style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:11,cursor:'pointer'}},
+        h('span',{style:{width:32,height:32,borderRadius:9,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',flexShrink:0}},
+          h('img',{src:faviconUrl(f.site),alt:'',style:{width:19,height:19},onError:e=>{e.target.style.opacity=0}})),
+        h('div',{style:{minWidth:0}},
+          h('div',{style:{fontSize:14.5,fontWeight:500,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+          h('div',{style:{fontSize:11.5,color:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'No feed — opens in browser'))),
+      h('span',{onClick:onOpen,style:{color:T.sub,display:'flex',cursor:'pointer',flexShrink:0}},Icons.external(17)));
+  }
+  const es=entries||[];
+  const card=e=>{const busy=busyUrl===e.url;return h('button',{key:e.id||e.url,onClick:()=>onEntry(e),disabled:busy,className:'act98',
+    style:{display:'flex',gap:8,width:'100%',textAlign:'left',background:T.card,borderRadius:10,overflow:'hidden',alignItems:'flex-start',padding:'8px 10px',opacity:busyUrl&&!busy?0.5:1}},
+    h('span',{style:{color:'#e8801f',marginTop:1,flexShrink:0,display:'flex'}},Icons.rss(13)),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{fontSize:12.5,color:T.fg,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.title||'Untitled'),
+      e.publishedMs?h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},fmtDateShort(e.publishedMs)):null),
+    h('span',{style:{flexShrink:0,color:T.sub,display:'flex',paddingTop:2}},busy?h(Spinner,{T,size:14}):Icons.download(15)));};
+  return h('div',Object.assign({},lp,{style:{display:'flex',gap:8,padding:'10px 4px',alignItems:'flex-start'}}),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+        h('div',{onClick:onToggleCollapse,style:{display:'flex',alignItems:'center',gap:6,cursor:'pointer',flex:1,minWidth:0}},
+          h('span',{style:{color:'#e8801f',display:'flex',flexShrink:0}},Icons.rss(15)),
+          h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+          loading?h(Spinner,{T,size:12}):(newCount?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:'#e8801f',borderRadius:5,padding:'2px 6px'}},newCount+' new'):null)),
+        h('button',{onClick:onToggleCollapse,className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:2,transform:collapsed?'none':'rotate(90deg)',transition:'transform 160ms'}},Icons.chevR(13))),
+      collapsed?null:(es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,8).map(card))
+        :h('div',{style:{marginTop:5,fontSize:12,color:T.sub}},loading?'Loading…':'No posts found yet.'))));
+}
+
+/* "Ask Claude about my blogs" — hand recent posts to the Claude app, no API key */
+function BlogsClaudeSheet({T,feeds,blogFeeds,seen,onClose,toastFn}){
+  const [modes,setModes]=useState({summarize:true,newsletter:false});
+  const groupsData=useMemo(()=>feeds.filter(f=>f.feedUrl).map(f=>{
+    const c=blogFeeds[f.id];const since=seen[f.id]||0;
+    const entries=(c&&c.entries?c.entries:[]).filter(e=>e.url).slice().sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,8)
+      .map(e=>({...e,isNew:e.publishedMs>since,sourceName:f.name}));
+    return{feed:f,entries};
+  }).filter(g=>g.entries.length),[feeds,blogFeeds,seen]);
+  const [sel,setSel]=useState(null);
+  useEffect(()=>{if(sel===null){const s=new Set();groupsData.forEach(g=>g.entries.forEach(e=>{if(e.isNew)s.add(e.url)}));setSel(s)}},[]);// eslint-disable-line
+  const selSet=sel||new Set();
+  const toggleEntry=url=>setSel(prev=>{const s=new Set(prev||[]);s.has(url)?s.delete(url):s.add(url);return s});
+  const toggleMode=k=>setModes(m=>({...m,[k]:!m[k]}));
+  const newCount=groupsData.reduce((n,g)=>n+g.entries.filter(e=>e.isNew).length,0);
+  const selectAllNew=()=>{const s=new Set();groupsData.forEach(g=>g.entries.forEach(e=>{if(e.isNew)s.add(e.url)}));setSel(s)};
+  const modeRow=(key,label,sub)=>h('button',{key,onClick:()=>toggleMode(key),className:'act95',style:{display:'flex',alignItems:'center',gap:10,width:'100%',padding:'9px 4px',textAlign:'left'}},
+    h('span',{style:{display:'flex',flexShrink:0,color:modes[key]?T.accent:T.sub}},Icons.checkCircle(21,modes[key])),
+    h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14.5,color:T.fg,fontWeight:500}},label),h('div',{style:{fontSize:12,color:T.sub,marginTop:1}},sub)));
+  const entryRow=e=>h('button',{key:e.url,onClick:()=>toggleEntry(e.url),className:'act95',style:{display:'flex',alignItems:'flex-start',gap:9,width:'100%',padding:'6px 4px',textAlign:'left'}},
+    h('span',{style:{display:'flex',flexShrink:0,color:selSet.has(e.url)?T.accent:T.sub,marginTop:1}},Icons.checkCircle(18,selSet.has(e.url))),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{fontSize:13.5,color:T.fg,lineHeight:1.35}},e.title||'Untitled'),
+      e.isNew?h('span',{style:{fontSize:10,fontWeight:700,color:T.accent,letterSpacing:'.03em'}},'NEW'):null));
+  const anyMode=modes.summarize||modes.newsletter;
+  const doAsk=()=>{
+    const chosen=[];groupsData.forEach(g=>g.entries.forEach(e=>{if(selSet.has(e.url))chosen.push(e)}));
+    if(!chosen.length){toastFn('Pick at least one item');return}
+    const instrParts=[];
+    if(modes.summarize)instrParts.push('Summarize the key points across everything below, grouped by theme, as concise bullets.');
+    if(modes.newsletter)instrParts.push('Compile everything into a polished, ready-to-send newsletter — a short friendly intro, one section per topic with a couple of sentences each, and a closing line.');
+    if(!instrParts.length){toastFn('Pick what Claude should do');return}
+    const lines=chosen.map((e,i)=>(i+1)+'. '+e.sourceName+' — '+(e.title||'Untitled')+'\n   '+e.url);
+    const p=instrParts.join(' ')+'\n\n----- MY BLOGS — SELECTED ITEMS ('+chosen.length+') -----\n'+lines.join('\n');
+    if(openInClaude(p,toastFn))onClose();
+  };
+  return h(Sheet,{T,title:'Ask Claude about my blogs',onClose},
+    h('div',{style:{padding:'0 20px calc(18px + '+SAFE_B+')'}},
+      h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'Blogs'),' updates to the ',h('strong',{style:{color:T.fg}},'Claude app'),' — no API key.'),
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should Claude do?'),
+      modeRow('summarize','Summarize','Key points across everything selected'),
+      modeRow('newsletter','Newsletter','Compile into a ready-to-send newsletter'),
+      groupsData.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'18px 0 4px'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Items · '+selSet.size+' selected'),
+        h('div',{style:{display:'flex',gap:14}},
+          h('button',{onClick:selectAllNew,style:{fontSize:12.5,color:T.accent,fontWeight:600}},'New ('+newCount+')'),
+          h('button',{onClick:()=>setSel(new Set()),style:{fontSize:12.5,color:T.sub,fontWeight:600}},'Clear'))):null,
+      groupsData.length?groupsData.map(g=>h('div',{key:g.feed.id,style:{marginBottom:8}},
+        h('div',{style:{fontSize:12,fontWeight:600,color:T.meta,padding:'6px 0 2px'}},g.feed.name),
+        g.entries.map(entryRow))):h('div',{style:{padding:'10px 0',fontSize:13.5,color:T.sub,lineHeight:1.5}},'No blog posts with recent updates yet — add blogs first.'),
+      h(PrimaryBtn,{T,label:'Ask Claude',disabled:!(anyMode&&selSet.size),style:{margin:'16px 0 0',width:'100%'},onClick:doAsk}),
+      h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full list is copied to your clipboard as a backup.')));
+}
+
+/* Blogs — grouped like My Routine: collapsible groups of feeds, drag to reorder,
+   edit/delete/add per group, "N new" badges, and the same AI actions. No
+   checklist/streaks — tapping a post still saves it for offline reading. */
+function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds,onSeen,onOpenItem,onBrowse,toastFn}){
+  const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_blogs_collapsed')||'[]'))}catch(e){return new Set()}});
+  const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_blogs_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const [dragOver,setDragOver]=useState(-1);
   const dragInfo=useRef({active:false,srcIdx:0,startY:0});
-  const numFeedsRef=useRef(feeds.length);numFeedsRef.current=feeds.length;
-  const startDrag=(idx,e)=>{
+  const numGroupsRef=useRef(groups.length);numGroupsRef.current=groups.length;
+  const startGroupDrag=(idx,e)=>{
     const y=e.touches?e.touches[0].clientY:e.clientY;
     dragInfo.current={active:true,srcIdx:idx,startY:y};
     setDragOver(idx);
@@ -2182,20 +2272,20 @@ function BlogsManager({T,feeds,onFeeds}){
       if(!dragInfo.current.active)return;
       const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
       const dy=y2-dragInfo.current.startY;
-      const n=numFeedsRef.current;
-      const step=Math.round(dy/56);
-      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),n-1));
+      const ng=numGroupsRef.current;
+      const step=Math.round(dy/80);
+      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1));
     };
     const onEnd=ev=>{
       if(!dragInfo.current.active)return;
       dragInfo.current.active=false;
       const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:ev.clientY||0;
       const dy=y2-dragInfo.current.startY;
-      const n=numFeedsRef.current;
+      const ng=numGroupsRef.current;
       const src=dragInfo.current.srcIdx;
-      const step=Math.round(dy/56);
-      const dst=Math.min(Math.max(src+step,0),n-1);
-      if(src!==dst)onFeeds(list=>{const a=list.slice();const[mv]=a.splice(src,1);a.splice(dst,0,mv);return a});
+      const step=Math.round(dy/80);
+      const dst=Math.min(Math.max(src+step,0),ng-1);
+      if(src!==dst)onGroups(gs=>{const a=[...gs];const[mv]=a.splice(src,1);a.splice(dst,0,mv);return a});
       setDragOver(-1);
       window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);
       window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
@@ -2203,119 +2293,187 @@ function BlogsManager({T,feeds,onFeeds}){
     window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);
     window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
   };
-  const save=async()=>{
-    const site=normalizeUrl(form.url);
-    if(!site||busy)return;
+  const [busyUrl,setBusyUrl]=useState('');
+  const [act,setAct]=useState(null); // feed for long-press action sheet
+  const [edit,setEdit]=useState(null); // {id?,groupId,name,url}
+  const [moveIt,setMoveIt]=useState(null); // feed being moved to a group
+  const [grp,setGrp]=useState(null); // {} new | {rename:id}
+  const [gName,setGName]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [query,setQuery]=useState('');
+  const [searchOpen,setSearchOpen]=useState(false);
+  const toggleSearch=()=>setSearchOpen(o=>{const n=!o;if(!n)setQuery('');return n});
+  const [aiBusy,setAiBusy]=useState(false);
+  const [digest,setDigest]=useState(null);
+  const [claudeOpen,setClaudeOpen]=useState(false);
+
+  useEffect(()=>{ // best-effort refresh of each feed's recent items (persisted cache)
+    let live=true;
+    (async()=>{for(const f of feeds){
+      if(!f.feedUrl)continue;
+      const c=blogFeeds[f.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
+      try{const es=await fetchRss(f.feedUrl);if(es&&live)onBlogFeeds(m=>({...m,[f.id]:{fetchedAt:Date.now(),entries:es}}))}catch(e){}
+    }})();
+    return()=>{live=false};
+  },[]);// eslint-disable-line
+
+  const newEntriesFor=f=>{const c=blogFeeds[f.id];if(!c||!c.entries)return[];const since=seen[f.id]||0;return c.entries.filter(e=>e.publishedMs>since)};
+  const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
+  const saveFeed=async f=>{
+    const site=normalizeUrl(f.url);if(!site)return;
     setBusy(true);
     let feedUrl='';try{feedUrl=await discoverFeed(site)}catch(e){feedUrl=''}
     setBusy(false);
-    const name=(form.name||'').trim()||domainOf(site)||form.url;
-    if(form.id)onFeeds(list=>list.map(x=>x.id===form.id?{...x,name,site,feedUrl}:x));
-    else onFeeds(list=>list.concat([{id:uid(),name,site,feedUrl}]));
-    setForm(null);
+    const name=(f.name||'').trim()||domainOf(site)||f.url;
+    let feedId=f.id;
+    if(f.id)onFeeds(list=>list.map(x=>x.id===f.id?{...x,name,site,feedUrl}:x));
+    else{
+      feedId=uid();
+      onFeeds(list=>list.concat([{id:feedId,name,site,feedUrl,groupId:f.groupId||null}]));
+      onSeen(m=>({...m,[feedId]:Date.now()})); // a brand-new feed's back catalog isn't "new"
+    }
+    setEdit(null);
+    if(feedUrl){try{const es=await fetchRss(feedUrl);if(es)onBlogFeeds(m=>({...m,[feedId]:{fetchedAt:Date.now(),entries:es}}))}catch(e){}}
   };
-  const canSave=!!normalizeUrl(form&&form.url)&&!busy;
-  const isDragging=dragOver!==-1;
-  return h('div',{style:{padding:'4px 16px 16px'}},
-    feeds.map((f,i)=>{
-      const dragThis=isDragging&&dragInfo.current.srcIdx===i;
-      const dropHere=isDragging&&dragOver===i&&dragInfo.current.srcIdx!==i;
-      return h('div',{key:f.id,style:{display:'flex',alignItems:'center',gap:6,marginBottom:8,opacity:dragThis?0.4:1,transition:'opacity 120ms'}},
-        h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:9,minWidth:0,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+(dropHere?T.accent:T.hair),overflow:'hidden'}},
-          h('img',{src:faviconUrl(f.site),alt:'',style:{width:20,height:20,borderRadius:5,flexShrink:0},onError:e=>{e.target.style.display='none'}}),
-          h('div',{style:{flex:1,minWidth:0}},
-            h('span',{style:{display:'block',fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-            h('span',{style:{display:'block',fontSize:11,color:f.feedUrl?T.sub:T.danger,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.feedUrl?f.site:'No feed — opens in browser'))),
-        h('button',{onMouseDown:e=>startDrag(i,e),onTouchStart:e=>startDrag(i,e),className:'act90','aria-label':'Reorder blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)),
-        h('button',{onClick:()=>setForm({id:f.id,name:f.name,url:f.site}),className:'act90','aria-label':'Edit blog',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)),
-        h('button',{onClick:()=>onFeeds(list=>list.filter(x=>x.id!==f.id)),className:'act90','aria-label':'Delete blog',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)));
-    }),
-    form?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:12}},
-      h('input',{value:form.name,onChange:e=>setForm({...form,name:e.target.value}),placeholder:'Name (e.g. Overreacted)',
-        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-      h('input',{value:form.url,onChange:e=>setForm({...form,url:e.target.value}),placeholder:'Blog URL or feed (https://…)',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-        onKeyDown:e=>{if(e.key==='Enter')save()},
-        style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
-      h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.45}},'Paste a blog homepage — we\'ll find its feed automatically. Sites without a feed open in the browser.'),
-      h('div',{style:{display:'flex',gap:10,marginTop:10}},
-        h('button',{onClick:save,disabled:!canSave,className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:600,display:'flex',alignItems:'center',justifyContent:'center',gap:8,opacity:canSave?1:0.45}},busy?h(Spinner,{T,size:15}):null,busy?'Finding feed…':(form.id?'Save':'Add blog')),
-        h('button',{onClick:()=>setForm(null),disabled:busy,className:'act98',style:{flex:1,padding:'12px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Cancel')))
-    :h('button',{onClick:()=>setForm({name:'',url:''}),className:'act98',style:{display:'block',width:'100%',padding:'12px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600,textAlign:'center',marginTop:12}},'+ Add a blog'));
-}
-function BlogsView({T,feeds,sel,onConfig,onFeeds,onOpenItem,onBrowse}){
-  const [managing,setManaging]=useState(false);
-  const [items,setItems]=useState(null); // null = loading
-  const [err,setErr]=useState('');
-  const [busyUrl,setBusyUrl]=useState('');
-  const reqRef=useRef(0);
-  const current=sel?feeds.find(f=>f.id===sel):null;
-  /* if the selected blog was deleted, fall back to All */
-  useEffect(()=>{if(sel&&!feeds.some(f=>f.id===sel))onConfig({blogSel:''})},[sel,feeds]);
-  const load=useCallback(()=>{
-    const id=++reqRef.current;
-    setItems(null);setErr('');
-    const cur=sel?feeds.find(f=>f.id===sel):null;
-    let targets;
-    if(sel){if(!cur||!cur.feedUrl){setItems([]);return}targets=[cur]}
-    else targets=feeds.filter(f=>f.feedUrl);
-    if(!targets.length){setItems([]);return}
-    Promise.all(targets.map(f=>fetchRss(f.feedUrl).then(list=>list.map(e=>({title:e.title,url:e.url,source:f.name,publishedAt:e.publishedMs}))).catch(()=>[])))
-      .then(res=>{
-        if(id!==reqRef.current)return;
-        const all=[].concat.apply([],res).sort((a,b)=>(b.publishedAt||0)-(a.publishedAt||0));
-        if(!all.length)setErr('No posts found — pull to refresh');
-        setItems(all.slice(0,60));
-      });
-  },[sel,feeds]);
-  useEffect(()=>{if(!managing)load()},[load,managing]);
-  const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
-  const options=[{id:'',label:'All'}].concat(feeds.map(f=>({id:f.id,label:f.name})));
-  const toolbar=h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
-    h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},managing?'Manage blogs':'Blogs'),
-    managing
-      ?h('button',{onClick:()=>setManaging(false),className:'act95',style:{padding:'7px 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13,fontWeight:600}},'Done')
-      :h(Fragment,null,
-        h('button',{onClick:()=>setManaging(true),className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg}),title:'Manage blogs'},Icons.pencil(17)),
-        h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))));
-  if(managing)return h('div',null,toolbar,h('div',{style:{borderTop:'1px solid '+T.hair}},h(BlogsManager,{T,feeds,onFeeds})));
-  if(!feeds.length)return h('div',null,toolbar,
-    h(EmptyState,{T,icon:Icons.rss(40),title:'No blogs yet',sub:'Add your favorite blogs and read their latest posts here.'}),
-    h('div',{style:{padding:'0 40px',textAlign:'center'}},
-      h('button',{onClick:()=>setManaging(true),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.plus(17),'Add a blog')));
-  let body;
-  if(current&&!current.feedUrl){
-    body=h('div',{style:{padding:'50px 40px',textAlign:'center',color:T.sub}},
-      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:14,opacity:.5}},Icons.globe(40)),
-      h('div',{style:{fontSize:16.5,fontWeight:600,color:T.meta,marginBottom:6}},current.name),
-      h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},'No readable feed for this site — open it in the browser to read.'),
-      h('button',{onClick:()=>onBrowse(current.site),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.globe(17),'Open '+current.name));
-  }else if(items===null){
-    body=h('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,padding:'70px 40px',color:T.meta}},
-      h(Spinner,{T,size:24}),
-      h('div',{style:{fontSize:14}},'Gathering the latest posts…'));
-  }else if(err||!items.length){
-    body=h(EmptyState,{T,icon:Icons.rss(40),title:'Nothing to read yet',sub:err||'These blogs have no readable posts right now.'});
-  }else{
-    body=h('div',null,
-      items.map((it,i)=>{
-        const busy=busyUrl===it.url;
-        return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
-          style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'15px 16px 14px',borderBottom:'1px solid '+T.hair,color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
-          h('div',{style:{flex:1,minWidth:0}},
-            h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
-            h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
-              it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
-              it.source&&it.publishedAt?h('span',null,'·'):null,
-              it.publishedAt?h('span',{style:{flexShrink:0}},timeAgo(it.publishedAt)):null)),
-          h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
-            busy?h(Spinner,{T,size:17}):Icons.download(18)));
-      }),
-      h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},'Tap a post to save it for offline reading.'));
-  }
+  const refreshAll=()=>{feeds.forEach(f=>{if(!f.feedUrl)return;fetchRss(f.feedUrl).then(es=>{if(es)onBlogFeeds(m=>({...m,[f.id]:{fetchedAt:Date.now(),entries:es}}))}).catch(()=>{})})};
+  const itemRow=f=>{
+    const c=blogFeeds[f.id]||{};
+    const entries=(c.entries||[]).slice().sort((a,b)=>b.publishedMs-a.publishedMs);
+    const nc=f.feedUrl?newEntriesFor(f).length:0;
+    const isCollapsed=collapsed.has(f.id);
+    return h(BlogFeedRow,{key:f.id,T,f,entries,loading:!!(f.feedUrl&&!c.entries),newCount:nc,
+      collapsed:isCollapsed,
+      onToggleCollapse:f.feedUrl?()=>{toggleCollapse(f.id);if(isCollapsed)onSeen(m=>({...m,[f.id]:Date.now()}))}:null,
+      onOpen:()=>{if(!f.feedUrl)onBrowse(f.site)},
+      onEntry:e=>open({title:e.title,url:e.url,source:f.name,publishedAt:e.publishedMs}),
+      onLongPress:()=>setAct(f),
+      busyUrl});
+  };
+  const sectionHead=(g,list,gIdx)=>{
+    const key=g?g.id:'_other';
+    const isOpen=!collapsed.has(key);
+    const groupNew=list.reduce((n,f)=>n+(f.feedUrl?newEntriesFor(f).length:0),0);
+    return h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+      h('button',{onClick:()=>toggleCollapse(key),className:'act95','aria-label':isOpen?'Collapse group':'Expand group',
+        style:{display:'flex',alignItems:'center',gap:7,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+T.hair,minWidth:0,overflow:'hidden'}},
+        h('span',{style:{display:'flex',color:T.sub,flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(12)),
+        h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
+        h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g?g.name:'Other'),
+        groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},String(list.length))),
+      g?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90','aria-label':'Reorder group',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)):null,
+      h('div',{style:{flex:1}}),
+      g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
+      g?h('button',{onClick:()=>{onGroups(gs=>gs.filter(x=>x.id!==g.id));onFeeds(list=>list.map(x=>x.groupId===g.id?{...x,groupId:null}:x))},className:'act90','aria-label':'Delete group',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
+      h('button',{onClick:()=>setEdit({groupId:g?g.id:null,name:'',url:''}),className:'act90','aria-label':'Add blog',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
+  };
+  const digestSource=()=>{
+    const out=[];
+    for(const f of feeds){if(!f.feedUrl)continue;for(const e of newEntriesFor(f))out.push(f.name+': '+(e.title||'').slice(0,160))}
+    if(!out.length){
+      const all=[];for(const f of feeds){const c=blogFeeds[f.id];if(c&&c.entries)for(const e of c.entries)all.push({name:f.name,e})}
+      all.sort((a,b)=>b.e.publishedMs-a.e.publishedMs);
+      for(const{name,e}of all.slice(0,20))out.push(name+': '+(e.title||'').slice(0,160));
+    }
+    return out.slice(0,60);
+  };
+  const runDigest=async()=>{
+    if(!aiReady(S)){toastFn('Connect an AI key in Settings first');return}
+    const lines=digestSource();if(!lines.length){toastFn('Nothing new to summarize');return}
+    setAiBusy(true);setDigest(null);
+    try{const out=await aiChat(S,[
+      {role:'system',content:'You turn a list of new blog posts someone follows into a short, skimmable briefing.'},
+      {role:'user',content:'These are new posts from blogs I follow. Group them by theme and give me a concise briefing of 4–8 bullet points on what actually matters, then a final line starting with "Worth your time:" naming the single most important post. Respond entirely in '+(S.aiLang||'English')+'.\n\n'+lines.join('\n')}],
+      1200,()=>{});
+      setDigest({text:out})}
+    catch(e){setDigest({err:(e&&e.message)||'Could not summarize right now'})}
+    setAiBusy(false);
+  };
+  const totalNew=feeds.reduce((n,f)=>n+(f.feedUrl?newEntriesFor(f).length:0),0);
+  const q=query.trim().toLowerCase();
+  const matchQ=f=>!q||f.name.toLowerCase().includes(q);
+  const sections=groups.map(g=>({g,list:feeds.filter(f=>f.groupId===g.id)}));
+  const ungrouped=feeds.filter(f=>!f.groupId||!groups.some(g=>g.id===f.groupId));
+  if(ungrouped.length)sections.push({g:null,list:ungrouped});
+
+  const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
+  const rowBtnBadge=(icon,onClick,label,badge,disabled)=>h('div',{style:{position:'relative',flexShrink:0}},
+    rowBtn(icon,onClick,false,label,disabled),
+    badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
+
   return h('div',null,
-    toolbar,
-    h(BriefChips,{T,options,selected:sel,onSelect:id=>onConfig({blogSel:id})}),
-    h('div',{style:{borderTop:'1px solid '+T.hair}},body));
+    h('div',{style:{display:'flex',gap:8,padding:'12px 14px 4px'}},
+      rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
+      rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
+      rowBtn(Icons.refresh(17),refreshAll,false,'Refresh all'),
+      rowBtnBadge(aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),runDigest,'Summarize what’s new',totalNew>0?String(totalNew):'',aiBusy),
+      rowBtn(Icons.send(17),()=>setClaudeOpen(true),false,'Ask Claude about my blogs')),
+    (feeds.length&&searchOpen)?h('div',{style:{padding:'0 14px 10px'}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,border:'1px solid '+(q?T.accent:T.hair),borderRadius:12,padding:'9px 12px'}},
+        h('span',{style:{display:'flex',color:q?T.accent:T.sub,flexShrink:0}},Icons.search(17)),
+        h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search blogs',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
+        query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null,
+    h('div',{style:{padding:'2px 14px 0'}},
+      (feeds.length||groups.length)?(()=>{
+        const isDragging=dragOver!==-1;
+        const rendered=sections.map(({g,list},gIdx)=>{
+          const key=g?g.id:'_other';
+          const flist=list.filter(matchQ);
+          if(q&&!flist.length)return null;
+          const dragThis=isDragging&&dragInfo.current.srcIdx===gIdx;
+          const dropHere=isDragging&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx;
+          const itemsOpen=!(collapsed.has(key)&&!q);
+          return h('div',{key,style:{opacity:dragThis?0.4:1,transition:'opacity 120ms',marginBottom:14}},
+            h('div',{style:{borderRadius:999,outline:dropHere?'2px solid '+T.accent:'none',outlineOffset:3}},sectionHead(g,list,gIdx)),
+            itemsOpen?h('div',{style:{marginTop:6,background:T.bg,borderRadius:14,border:'1px solid '+T.hair,boxShadow:'0 1px 2px rgba(0,0,0,.04)',padding:'4px 13px 6px'}},
+              flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},'Nothing here yet — tap + to add.')):null);
+        });
+        return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No blogs match “'+query.trim()+'”.'):rendered;
+      })()
+        :h(EmptyState,{T,icon:Icons.rss(40),title:'No blogs yet',sub:'Add your favorite blogs and read their latest posts here, grouped the way you like.'}),
+      !feeds.length?h('div',{style:{padding:'0 26px',textAlign:'center'}},
+        h('button',{onClick:()=>setEdit({groupId:null,name:'',url:''}),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.plus(17),'Add a blog')):null,
+      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+
+    digest?h(Sheet,{T,title:'What’s new',onClose:()=>setDigest(null)},
+      h('div',{style:{padding:'0 20px calc(18px + '+SAFE_B+')'}},
+        digest.err?h('div',{style:{color:T.danger,fontSize:14,lineHeight:1.5}},digest.err)
+          :h(Fragment,null,
+            h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:10}},'Summarized by '+aiModelLabel(S)),
+            h('div',{style:{fontSize:15,color:T.fg,lineHeight:1.62,whiteSpace:'pre-wrap'}},digest.text),
+            h('div',{style:{display:'flex',gap:8,marginTop:18}},
+              h('button',{onClick:()=>{copyText(digest.text);toastFn('Copied')},className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Copy'),
+              h('button',{onClick:()=>setDigest(null),className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Done'))))):null,
+
+    claudeOpen?h(BlogsClaudeSheet,{T,feeds,blogFeeds,seen,onClose:()=>setClaudeOpen(false),toastFn}):null,
+
+    act?h(Sheet,{T,onClose:()=>setAct(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},act.name),
+      h(ARow,{T,icon:Icons.globe(21),label:'Open site',onClick:()=>{const f=act;setAct(null);onBrowse(f.site)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const f=act;setAct(null);setEdit({id:f.id,groupId:f.groupId,name:f.name,url:f.site})}}),
+      h(ARow,{T,icon:Icons.folder(21),label:'Move to group…',onClick:()=>{const f=act;setAct(null);setMoveIt(f)}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onFeeds(list=>list.filter(x=>x.id!==act.id));setAct(null)}})):null,
+
+    moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
+      h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{onFeeds(list=>list.map(x=>x.id===moveIt.id?{...x,groupId:null}:x));setMoveIt(null)}}),
+      groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{onFeeds(list=>list.map(x=>x.id===moveIt.id?{...x,groupId:g.id}:x));setMoveIt(null)}})),
+      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with "New group".')):null,
+
+    grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:gName,autoFocus:true,onChange:e=>setGName(e.target.value),placeholder:'Group name (e.g. Design, Cooking)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
+        h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onGroups(gs=>gs.map(g=>g.id===grp.rename?{...g,name:nm}:g));else onGroups(gs=>gs.concat([{id:uid(),name:nm}]));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
+
+    edit?h(Sheet,{T,title:edit.id?'Edit blog':'Add blog',onClose:()=>setEdit(null)},
+      h('div',{style:{padding:'4px 18px 18px'}},
+        h('input',{value:edit.name,onChange:e=>setEdit({...edit,name:e.target.value}),placeholder:'Name (optional)',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
+        h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value}),placeholder:'Blog URL or feed (https://…)',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          onKeyDown:e=>{if(e.key==='Enter')saveFeed(edit)},
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:6}}),
+        h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},'Paste a blog homepage — we\'ll find its feed automatically. Sites without a feed open in the browser.'),
+        h('button',{onClick:()=>saveFeed(edit),disabled:busy||!normalizeUrl(edit.url),className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600,opacity:(busy||!normalizeUrl(edit.url))?.6:1}},busy?h(Spinner,{T,size:15}):null,busy?'Finding feed…':(edit.id?'Save':'Add')))):null);
 }
 
 /* ============================== notes & tags views ============================== */
@@ -4373,10 +4531,13 @@ function App(){
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem,
     onOpenUrl:url=>setBrowserO({url})});
-  else if(scope.type==='blogs')body=h(BlogsView,{T,feeds:data.feeds||[],sel:S.blogSel||'',
-    onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
+  else if(scope.type==='blogs')body=h(BlogsView,{T,S,feeds:data.feeds||[],groups:data.blogGroups||[],
+    blogFeeds:data.blogFeeds||{},seen:data.blogSeen||{},
     onFeeds:fn=>update(d=>({...d,feeds:fn(d.feeds||[])})),
-    onOpenItem:addBriefItem,onBrowse:u=>setBrowserO({url:u})});
+    onGroups:fn=>update(d=>({...d,blogGroups:fn(d.blogGroups||[])})),
+    onBlogFeeds:fn=>update(d=>({...d,blogFeeds:fn(d.blogFeeds||{})})),
+    onSeen:fn=>update(d=>({...d,blogSeen:fn(d.blogSeen||{})})),
+    onOpenItem:addBriefItem,onBrowse:u=>setBrowserO({url:u}),toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(scope.type==='videos'&&!q&&list.length){
     body=h(MyRoutine,{T,videos:list,
