@@ -1174,6 +1174,8 @@ function loadStore(){
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
   d.feeds=Array.isArray(d.feeds)?d.feeds:[];
+  d.feeds.forEach(f=>{if(typeof f.groupId==='undefined')f.groupId=null});
+  d.blogGroups=Array.isArray(d.blogGroups)?d.blogGroups:[];
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.brief||typeof d.brief!=='object')d.brief={};
   d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
@@ -1186,7 +1188,7 @@ function loadStore(){
   }
   d.brief.seeded=true;
   if(!Array.isArray(d.brief.slots)||!d.brief.slots.length)d.brief.slots=BRIEF_SLOTS0.map(s=>({...s}));
-  if(!d.brief.done||typeof d.brief.done!=='object'||!('key'in d.brief.done))d.brief.done={key:'',ids:[]};
+  d.brief.done=normalizeDone(d.brief.done);
   if(!d.brief.yt||typeof d.brief.yt!=='object')d.brief.yt={};
   if(!d.brief.feeds||typeof d.brief.feeds!=='object')d.brief.feeds={};
   if(!d.seeded){d.articles.unshift(makeSeed());d.seeded=true}
@@ -2836,7 +2838,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
         h('span',{style:{display:'flex',color:T.sub,flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(12)),
         h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub,boxShadow:allGrpDone?'none':'0 0 0 3px '+hexA(g?groupColor(g.id):'#888888',.16)}}),
         h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g?g.name:'Other'),
-        groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},doneInGrp+'/'+list.length)),
+        h('span',{style:{display:'flex',alignItems:'center',gap:5,flexShrink:0}},
+          groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):null,
+          h('span',{style:{fontSize:10,fontWeight:700,color:allGrpDone?'#2fa84f':T.sub,background:allGrpDone?'rgba(47,168,79,.14)':T.bg,border:'1px solid '+(allGrpDone?'rgba(47,168,79,.4)':T.hair),borderRadius:999,padding:'2px 7px',flexShrink:0}},'Completed '+doneInGrp+'/'+list.length))),
       g?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90','aria-label':'Reorder group',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)):null,
       h('div',{style:{flex:1}}),
       g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
@@ -2873,19 +2877,18 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
       h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search channels & sites',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
         style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
       query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null;
-  const digestBtn=(!win.future&&newCount>0)?h('div',{style:{padding:'0 14px 10px'}},
-    h('button',{onClick:runDigest,disabled:aiBusy,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'11px',borderRadius:12,background:hexA(T.accent,.12),color:T.accent,fontSize:14,fontWeight:700,border:'1px solid '+hexA(T.accent,.32),opacity:aiBusy?.7:1}},
-      aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),aiBusy?'Summarizing…':'Summarize what’s new · '+newCount)):null;
-  const claudeBtn=(total&&onAskClaude)?h('div',{style:{padding:'0 14px 10px'}},
-    h('button',{onClick:onAskClaude,className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'11px',borderRadius:12,background:'transparent',color:T.fg,fontSize:14,fontWeight:700,border:'1px solid '+T.hair}},
-      Icons.send(16),'Ask Claude about my routine')):null;
-  const rowBtn=(icon,onClick,active,label)=>h('button',{onClick,'aria-label':label,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair)}},icon);
+  const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
+  const rowBtnBadge=(icon,onClick,label,badge,disabled)=>h('div',{style:{position:'relative',flexShrink:0}},
+    rowBtn(icon,onClick,false,label,disabled),
+    badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
   return h('div',null,
     h('div',{style:{display:'flex',gap:8,padding:'12px 14px 4px'}},
       rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
       rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
       rowBtn(Icons.bell(17,remindOn),toggleRemind,remindOn,'Routine reminders'),
-      rowBtn(Icons.chart(17),()=>setStatsOpen(true),false,'Routine stats')),
+      rowBtn(Icons.chart(17),()=>setStatsOpen(true),false,'Routine stats'),
+      rowBtnBadge(aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),runDigest,'Summarize what’s new',newCount>0?String(newCount):'',aiBusy),
+      onAskClaude?rowBtn(Icons.send(17),onAskClaude,false,'Ask Claude about my routine'):null),
     h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
       slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',
         style:{flexShrink:0,padding:'8px 18px',borderRadius:20,fontSize:14,fontWeight:600,border:'none',
@@ -2894,8 +2897,6 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
       h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
     focusRow,
     searchRow,
-    digestBtn,
-    claudeBtn,
     h('div',{style:{padding:'2px 14px 0'}},
       win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
       total?(()=>{
