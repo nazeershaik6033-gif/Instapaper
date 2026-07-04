@@ -69,8 +69,8 @@ a{-webkit-touch-callout:default}
 .slid{animation:slk 260ms cubic-bezier(.2,.9,.2,1) both}
 @keyframes spk{to{transform:rotate(360deg)}}
 .spin{animation:spk 800ms linear infinite}
-@keyframes ppk{from{transform:translate(-50%,-50%) scale(.82);opacity:0}to{transform:translate(-50%,-50%) scale(1);opacity:1}}
-.ppin{animation:ppk 200ms cubic-bezier(.2,.9,.2,1) both}
+@keyframes ppk{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
+.ppin{transform-origin:bottom right;animation:ppk 190ms cubic-bezier(.2,.9,.2,1) both}
 .act90:active{transform:scale(.9)}
 .act95:active{transform:scale(.95)}
 .act98{transition:background-color 150ms}
