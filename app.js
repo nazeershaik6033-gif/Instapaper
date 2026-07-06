@@ -4084,7 +4084,7 @@ function App(){
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
 
-  const [scope,setScope]=useState({type:'home'});
+  const [scope,setScope]=useState({type:'headlines'});
   const [query,setQuery]=useState('');
   const [readingId,setReadingId]=useState(null);
   const [sidebar,setSidebar]=useState(false);
