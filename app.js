@@ -31,7 +31,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,readingMode:'scroll',sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,readingMode:'scroll',sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -164,10 +164,27 @@ function aiChat(S,messages,maxTokens,onWait){
   if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens,onWait);
   return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens,onWait);
 }
-const aiReady=S=>S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
+const aiReady=S=>S.aiProvider==='claude'?true:S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
 function aiModelLabel(S){
+  if(S.aiProvider==='claude')return'Claude app';
   if(S.aiProvider==='gemini'){const m=GEMINI_MODELS.find(x=>x[0]===S.geminiModel);return m?m[1]:(S.geminiModel||'Gemini')}
   const m=AI_MODELS.find(x=>x[0]===S.aiModel);return m?m[1]:S.aiModel;
+}
+
+/* ---------- Claude app hand-off (no API key needed) ----------
+   Composes the request and opens it in the Claude app / claude.ai,
+   which prefills the chat via the ?q= parameter. */
+function claudeCtxBlock(ctx){
+  if(!ctx)return'';
+  let s='\n\n';
+  if(ctx.title)s+='Article: '+ctx.title+'\n';
+  if(ctx.url)s+='Link: '+ctx.url+'\n';
+  const txt=String(ctx.text||'').trim();
+  if(txt)s+='\nArticle text:\n"""\n'+txt.slice(0,2500)+(txt.length>2500?'\n… (text truncated — full article at the link above)':'')+'\n"""';
+  return s;
+}
+function openInClaude(prompt){
+  openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(prompt));
 }
 
 /* ============================== password vault (AES-256-GCM, PBKDF2) ============================== */
@@ -439,19 +456,23 @@ async function fetchViaJina(url){
   return{title,html,text,image,publishedAt,author:''};
 }
 
-const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u)];
+const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u),u=>'https://api.codetabs.com/v1/proxy?quest='+encodeURIComponent(u)];
+/* resolves with the first promise that fulfills; rejects only if every one fails */
+function firstSuccess(promises){
+  return new Promise((resolve,reject)=>{
+    let pending=promises.length,firstErr=null;
+    promises.forEach(p=>p.then(resolve,e=>{if(!firstErr)firstErr=e;if(--pending===0)reject(firstErr||new Error('all failed'))}));
+  });
+}
 async function fetchRawHtml(url){
-  let lastErr=null;
-  for(const p of PROXIES){
-    try{
-      const res=await fetchWithTimeout(p(url),{},25000);
-      if(!res.ok)throw new Error('proxy '+res.status);
-      const text=await res.text();
-      if(text&&text.length>200)return text;
-      throw new Error('empty proxy response');
-    }catch(e){lastErr=e}
-  }
-  throw lastErr||new Error('all proxies failed');
+  // race every proxy in parallel — the fastest healthy one wins
+  return firstSuccess(PROXIES.map(async p=>{
+    const res=await fetchWithTimeout(p(url),{},18000);
+    if(!res.ok)throw new Error('proxy '+res.status);
+    const text=await res.text();
+    if(!text||text.length<=200)throw new Error('empty proxy response');
+    return text;
+  }));
 }
 
 const SAN_ALLOW={P:'p',H1:'h2',H2:'h2',H3:'h3',H4:'h4',H5:'h5',H6:'h6',BLOCKQUOTE:'blockquote',UL:'ul',OL:'ol',LI:'li',PRE:'pre',CODE:'code',EM:'em',I:'em',STRONG:'strong',B:'strong',A:'a',IMG:'img',FIGURE:'figure',FIGCAPTION:'figcaption',BR:'br',HR:'hr',MARK:'em',CITE:'cite',SUP:'sup',SUB:'sub'};
@@ -719,6 +740,32 @@ async function fetchBrief(regionId,topic){
   if(!items.length)throw new Error('No stories found for this region');
   return items;
 }
+/* headlines cache — the brief shows instantly from the last fetch and refreshes in the background */
+const BRIEF_TTL=20*60*1000;
+const briefCacheKey=(regionId,topic)=>'brief_v2:'+(regionId||'IN')+':'+(topic||'top');
+function readBriefCache(regionId,topic){
+  try{
+    const c=JSON.parse(localStorage.getItem(briefCacheKey(regionId,topic))||'null');
+    if(c&&Array.isArray(c.items)&&c.items.length)return c;
+  }catch(e){}
+  return null;
+}
+function writeBriefCache(regionId,topic,items){
+  try{localStorage.setItem(briefCacheKey(regionId,topic),JSON.stringify({at:Date.now(),items}))}catch(e){}
+}
+/* cached-first load used by the story circles on Home */
+async function loadBriefCached(regionId,topic){
+  const c=readBriefCache(regionId,topic);
+  if(c&&Date.now()-c.at<BRIEF_TTL)return c.items;
+  try{
+    const items=await fetchBrief(regionId,topic);
+    writeBriefCache(regionId,topic,items);
+    return items;
+  }catch(e){
+    if(c)return c.items; // stale headlines beat a spinner
+    throw e;
+  }
+}
 
 /* ============================== seed content ============================== */
 const WELCOME_HTML=[
@@ -819,7 +866,8 @@ const Icons={
   key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
   news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
   scroll:s=>Svg({size:s},P('M5 5h14M5 9.5h14M5 14h8'),P('M17.5 13v6M15.3 16.8l2.2 2.2 2.2-2.2')),
-  book:s=>Svg({size:s},P('M12 6.4C10.4 5.1 8.3 4.5 5.5 4.5v13c2.8 0 4.9.6 6.5 1.9 1.6-1.3 3.7-1.9 6.5-1.9v-13c-2.8 0-4.9.6-6.5 1.9Z'),P('M12 6.4v13'))
+  book:s=>Svg({size:s},P('M12 6.4C10.4 5.1 8.3 4.5 5.5 4.5v13c2.8 0 4.9.6 6.5 1.9 1.6-1.3 3.7-1.9 6.5-1.9v-13c-2.8 0-4.9.6-6.5 1.9Z'),P('M12 6.4v13')),
+  pin:(s,fill)=>Svg({size:s},P('M12 15.5V21'),h('path',{d:'M8.7 3.5h6.6l-.9 6.2 2.9 2.6v1.7H6.7v-1.7l2.9-2.6-.9-6.2Z',stroke:'currentColor',strokeWidth:1.7,strokeLinejoin:'round',fill:fill?'currentColor':'none'}))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -950,6 +998,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
             h('span',{style:{display:'flex'}},Icons.link(13)),
             h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(a.url)||a.source),
             h('span',{style:{flexShrink:0}},timeAgo(a.addedAt)),
+            a.pinned?h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.pin(12,true)):null,
             a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
             a.tags.slice(0,2).map(t=>h('span',{key:t,style:{color:T.accent,flexShrink:0}},'#'+t))
           )
@@ -960,6 +1009,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
         snippet?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5}},snippet)
           :(a.excerpt?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.excerpt):null),
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:7,fontSize:11.5,color:T.sub}},
+          a.pinned?h('span',{style:{color:T.accent,display:'flex'}},Icons.pin(12,true)):null,
           a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
           h('span',null,footer),
           a.highlights.length?h('span',{style:{display:'flex',alignItems:'center',gap:3}},Icons.highlight(12),String(a.highlights.length)):null,
@@ -1016,6 +1066,19 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
 const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular']];
 const FILTERS=[['all','All'],['unread','Unread'],['liked','Liked'],['articles','Articles'],['videos','Videos'],['completed','Completed']];
 
+/* WhatsApp-style filter chips under the search bar, with a live unread badge */
+function FilterChips({T,filter,unread,onPick}){
+  const defs=[['all','All'],['unread','Unread'],['liked','Liked'],['videos','Videos'],['completed','Completed']];
+  return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'0 16px 10px',flexShrink:0}},
+    defs.map(([v,l])=>{
+      const active=filter===v||(v==='all'&&!filter);
+      return h('button',{key:v,onClick:()=>onPick(v),className:'act95 trc',
+        style:{display:'flex',alignItems:'center',gap:6,flexShrink:0,padding:'7px 13px',borderRadius:17,fontSize:13,fontWeight:active?600:500,background:active?T.fg:T.card,color:active?T.bg:T.fg}},
+        l,
+        v==='unread'&&unread>0?h('span',{style:{minWidth:18,height:18,padding:'0 5px',borderRadius:9,background:active?T.bg:T.accent,color:active?T.fg:'#fff',fontSize:11,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}},unread>99?'99+':String(unread)):null);
+    }));
+}
+
 function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,showListOps,onClose}){
   const [open,setOpen]=useState(null);
   const row=(label,iconRight,onClick,opts)=>h('button',{onClick,className:'act98',style:{display:'flex',alignItems:'center',width:'100%',padding:'13px 16px',color:T.menuFg,textAlign:'left',borderBottom:'1px solid '+T.menuHair,gap:10}},
@@ -1070,6 +1133,18 @@ function AddSheet({T,folders,prefill,defaultFolder,onSave,onSaveStub,onClose}){
     err&&!busy?h('button',{onClick:()=>onSaveStub(normalizeUrl(url),folderId),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:4,color:T.accent,fontSize:15,fontWeight:500,textAlign:'center'}},'Save link without content'):null);
 }
 
+/* ============================== note to self (WhatsApp "message yourself") ============================== */
+function QuickNoteSheet({T,onSave,onClose}){
+  const [text,setText]=useState('');
+  return h(Sheet,{T,onClose,title:'Note to self'},
+    h('div',{style:{padding:'4px 20px 0'}},
+      h('textarea',{value:text,onChange:e=>setText(e.target.value),rows:6,autoFocus:true,
+        placeholder:'Jot down a thought, an idea, a quote — it’s saved like an article, searchable and readable offline.',
+        style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15.5,lineHeight:1.55,resize:'vertical',fontFamily:"'Lora',Georgia,serif",minHeight:150}}),
+      h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.5}},'Formatting: **bold** · *italic* · # heading · - list · blank line = new paragraph')),
+    h(PrimaryBtn,{T,label:'Save note',disabled:!text.trim(),onClick:()=>onSave(text.trim())}));
+}
+
 /* ============================== folder / move / tags / confirm sheets ============================== */
 function FolderEditSheet({T,folder,onSave,onDelete,onClose}){
   const [name,setName]=useState(folder?folder.name:'');
@@ -1122,6 +1197,7 @@ function ArticleSheet({T,a,onAction,onClose}){
     h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair}},
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
+    h(ARow,{T,icon:Icons.pin(21,a.pinned),label:a.pinned?'Unpin':'Pin to top',onClick:act('pin')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
     h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:act('move')}),
@@ -1559,14 +1635,18 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
   const reqRef=useRef(0);
-  const load=useCallback(()=>{
+  const load=useCallback(force=>{
     const id=++reqRef.current;
-    setItems(null);setErr('');
+    setErr('');
+    // cached headlines show instantly; the network refresh happens behind them
+    const c=readBriefCache(regionId,category);
+    setItems(c?c.items:null);
+    if(c&&Date.now()-c.at<BRIEF_TTL&&!force)return;
     fetchBrief(regionId,category)
-      .then(r=>{if(id===reqRef.current)setItems(r)})
-      .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
+      .then(r=>{writeBriefCache(regionId,category,r);if(id===reqRef.current)setItems(r)})
+      .catch(e=>{if(id===reqRef.current&&!c){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
   },[regionId,category]);
-  useEffect(load,[load]);
+  useEffect(()=>{load(false)},[load]);
   const region=briefRegion(regionId);
   const open=async it=>{
     if(busyUrl)return;
@@ -1605,11 +1685,89 @@ function DailyBrief({T,regionId,category,onConfig,onOpenItem}){
   return h('div',null,
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
       h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'),
-      h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
+      h('button',{onClick:()=>load(true),disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
     h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}),
     h('div',{style:{padding:'2px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Category'),
     h(BriefChips,{T,options:BRIEF_CATEGORIES,selected:category,onSelect:id=>onConfig({briefCategory:id})}),
     h('div',{style:{borderTop:'1px solid '+T.hair}},body));
+}
+
+/* ============================== story circles (WhatsApp Status-style headlines) ============================== */
+function StoryViewer({T,items,index,onIndex,onClose,onRead}){
+  const [busy,setBusy]=useState(false);
+  const it=items[index];
+  const next=()=>{index<items.length-1?onIndex(index+1):onClose()};
+  const prev=()=>{if(index>0)onIndex(index-1)};
+  useEffect(()=>{ // auto-advance like a status story
+    if(busy)return;
+    const t=setTimeout(next,8000);
+    return()=>clearTimeout(t);
+  },[index,busy]);
+  const read=async()=>{
+    if(busy)return;
+    setBusy(true);
+    try{await onRead(it)}finally{setBusy(false);onClose()}
+  };
+  if(!it)return null;
+  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:80,background:'linear-gradient(165deg,#232a38 0%,#12141c 70%,#0c0d12 100%)',color:'#f4f4f6',display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:{display:'flex',gap:4,padding:'calc(10px + '+SAFE_T+') 12px 0',flexShrink:0}},
+      items.map((_,i)=>h('div',{key:i,style:{flex:1,height:2.5,borderRadius:2,background:i<index?'#f4f4f6':i===index?'rgba(244,244,246,.85)':'rgba(244,244,246,.28)'}}))),
+    h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px 0',flexShrink:0}},
+      h('div',{style:{width:34,height:34,borderRadius:'50%',background:'rgba(255,255,255,.14)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:16,flexShrink:0}},(it.source||'N')[0].toUpperCase()),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.source||'Headlines'),
+        it.publishedAt?h('div',{style:{fontSize:11.5,color:'rgba(244,244,246,.6)'}},timeAgo(it.publishedAt)):null),
+      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:'#f4f4f6'})},Icons.x(22))),
+    h('div',{style:{flex:1,position:'relative',display:'flex',alignItems:'center',padding:'0 28px'}},
+      h('div',{onClick:prev,style:{position:'absolute',left:0,top:0,bottom:0,width:'33%'}}),
+      h('div',{onClick:next,style:{position:'absolute',right:0,top:0,bottom:0,width:'33%'}}),
+      h('div',{style:{width:'100%',pointerEvents:'none'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'rgba(244,244,246,.55)',marginBottom:14}},'Story '+(index+1)+' of '+items.length),
+        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:26,fontWeight:600,lineHeight:1.32}},it.title))),
+    h('div',{style:{padding:'0 22px calc(26px + '+SAFE_B+')',flexShrink:0}},
+      h('button',{onClick:read,disabled:busy,className:'act95',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'100%',padding:'15px',borderRadius:13,background:'#f4f4f6',color:'#16181f',fontSize:15.5,fontWeight:650}},
+        busy?h(Spinner,{T:THEMES.light,size:17}):Icons.download(18),busy?'Saving story…':'Save & read offline'),
+      h('div',{style:{textAlign:'center',fontSize:11.5,color:'rgba(244,244,246,.5)',marginTop:12}},'Tap right for the next story · left to go back')));
+}
+
+function BriefStories({T,S,onRead}){
+  const [items,setItems]=useState(null); // null = loading
+  const [open,setOpen]=useState(-1);
+  const [seen,setSeen]=useState(()=>{try{return JSON.parse(localStorage.getItem('brief_seen_v1')||'[]')}catch(e){return[]}});
+  useEffect(()=>{
+    let alive=true;
+    setItems(null);
+    loadBriefCached(S.briefRegion||'IN',S.briefCategory||'')
+      .then(r=>{if(alive)setItems(r.slice(0,14))})
+      .catch(()=>{if(alive)setItems([])});
+    return()=>{alive=false};
+  },[S.briefRegion,S.briefCategory]);
+  const markSeen=it=>{
+    if(!it||seen.includes(it.url))return;
+    const ns=[...seen,it.url].slice(-300);
+    setSeen(ns);
+    try{localStorage.setItem('brief_seen_v1',JSON.stringify(ns))}catch(e){}
+  };
+  useEffect(()=>{if(open>=0&&items)markSeen(items[open])},[open,items]);
+  if(items&&!items.length)return null; // offline with no cache — hide the row quietly
+  const region=briefRegion(S.briefRegion||'IN');
+  const circle=(it,i)=>{
+    const unseen=!seen.includes(it.url);
+    return h('button',{key:it.url+i,onClick:()=>setOpen(i),className:'act95',style:{width:66,flexShrink:0,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+      h('div',{style:{width:62,height:62,borderRadius:'50%',padding:2.5,background:unseen?'conic-gradient(from 210deg,'+T.accent+',#3f9d63,#e8c547,'+T.accent+')':T.hair}},
+        h('div',{style:{width:'100%',height:'100%',borderRadius:'50%',background:T.card,border:'2.5px solid '+T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:21,color:T.fg,overflow:'hidden'}},(it.source||'N')[0].toUpperCase())),
+      h('div',{style:{fontSize:10.5,color:unseen?T.meta:T.sub,fontWeight:unseen?600:400,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.source||'News'));
+  };
+  return h('div',{style:{borderBottom:'1px solid '+T.hair,paddingBottom:4}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},
+      h('span',{style:{flex:1}},'Today’s stories · '+region.flag+' '+region.label)),
+    h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 8px'}},
+      items===null
+        ?[0,1,2,3,4,5].map(i=>h('div',{key:i,style:{width:66,flexShrink:0,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+            h('div',{style:{width:62,height:62,borderRadius:'50%',background:T.card}}),
+            h('div',{style:{width:44,height:8,borderRadius:4,background:T.card}})))
+        :items.map(circle)),
+    open>=0&&items?h(StoryViewer,{T,items,index:open,onIndex:setOpen,onClose:()=>setOpen(-1),onRead}):null);
 }
 
 /* ============================== notes & tags views ============================== */
@@ -1699,22 +1857,30 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
   useEffect(()=>()=>{sess.current++;if(speakingRef.current){try{speechSynthesis.cancel()}catch(e){}}},[]);
 
   const ready=aiReady(S);
+  const usingClaude=(S.aiProvider||'openrouter')==='claude';
   const outLang=S.aiLang||'English';
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
+
+  /* Claude-app mode: compose the request and hand it to the Claude app — no key, no waiting here */
+  const handOff=prompt=>{openInClaude(prompt);toastFn('Opened in Claude');onClose()};
 
   const run=async(label,fn)=>{
     setError('');setBusy(label);
     try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
     setBusy('');
   };
-  const doSummarize=()=>run('Summarizing…',async()=>{
+  const doSummarize=()=>{
+    if(usingClaude)return handOff('Summarize this article as 5-8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.'+claudeCtxBlock(ctx));
+    run('Summarizing…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are a precise reading assistant.'},
       {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
-  });
-  const doTranslate=lang=>run('Translating…',async()=>{
+  })};
+  const doTranslate=lang=>{
+    if(usingClaude)return handOff('Translate this article into '+lang+'. Keep the same paragraphs. Output only the translation.'+claudeCtxBlock(ctx));
+    run('Translating…',async()=>{
     const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
     const chunks=chunkParas(paras,2400);
     const out=[];
@@ -1726,14 +1892,18 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
       if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
-  });
-  const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
+  })};
+  const doRewrite=([style,instr])=>{
+    if(usingClaude)return handOff(instr+'. Respond entirely in '+outLang+', output only the rewritten text.'+claudeCtxBlock(ctx));
+    run('Rewriting…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are an expert editor.'},
       {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000,setBusy);
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
-  });
-  const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
+  })};
+  const doAsk=()=>{const q=question.trim();if(!q)return;
+    if(usingClaude)return handOff(q+(ctx?'\n\nAnswer using this article. Respond in '+outLang+'.'+claudeCtxBlock(ctx):''));
+    run('Thinking…',async()=>{
     const msgs=ctx
       ?[{role:'system',content:'Answer using the article below. Be concise and concrete. Respond in '+outLang+'.\n\nARTICLE:\n'+ctxText},{role:'user',content:q}]
       :[{role:'system',content:'You are a helpful assistant. Respond in '+outLang+'.'},{role:'user',content:q}];
@@ -1773,9 +1943,11 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
     const prov=S.aiProvider||'openrouter';
     const isGem=prov==='gemini';
     body=h('div',{style:{padding:'0 20px'}},
-      h('div',{style:{display:'flex',gap:8,marginBottom:14}},
+      h('div',{style:{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}},
+        chip('Claude app',false,()=>{update(d=>({...d,settings:{...d.settings,aiProvider:'claude'}}));toastFn('AI now opens in the Claude app — no key needed')}),
         chip('OpenRouter',!isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'openrouter'}}))),
         chip('Google Gemini',isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'gemini'}})))),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:12,padding:'10px 12px',borderRadius:10,background:T.card}},'✦ Tip: pick "Claude app" above to use AI with no API key at all — every action opens ready-made in the Claude app.'),
       h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},
         isGem?'Connect a free Google Gemini API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ':'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',
         isGem?h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey')
@@ -1839,7 +2011,8 @@ function AISheet({T,S,article,articles,update,onClose,onSaveCopy,onSaveNote,toas
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
     body,
-    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},'Model: '+aiModelLabel(S)+' — change in Settings'):null);
+    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},
+      usingClaude?'Opens in the Claude app — free, no API key. Change in Settings → AI.':'Model: '+aiModelLabel(S)+' — change in Settings'):null);
 }
 
 /* ============================== password vault panel ============================== */
@@ -2129,10 +2302,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 0'}},
         h('div',{style:{display:'flex',gap:8,marginBottom:12}},
-          [['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
+          [['claude','Claude app'],['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
             h('button',{key:id,onClick:()=>set({aiProvider:id}),className:'act95 trc',
-              style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:14,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
-        (S.aiProvider||'openrouter')==='gemini'
+              style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:13.5,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
+        (S.aiProvider||'openrouter')==='claude'
+          ?h(Fragment,null,
+            h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.6,marginBottom:10}},'No API key needed. Summarize, Translate, Rewrite, and Ask open ready-made in the ',h('strong',null,'Claude app'),' (or claude.ai in the browser) with the article attached. Answers appear in Claude, where you can keep chatting about the article.'),
+            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the Claude app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Instapaper? Switch to OpenRouter or Gemini with a free API key.'))
+          :(S.aiProvider||'openrouter')==='gemini'
           ?h(Fragment,null,
             h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Uses Google\u2019s Gemini API directly \u2014 generous free tier. Get a key at ',h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey'),'.'),
             h('input',{value:S.geminiKey,onChange:e=>set({geminiKey:e.target.value.trim()}),placeholder:'API key \u2014 AIza\u2026',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
@@ -2327,9 +2504,15 @@ function App(){
   /* ---------- text-to-speech engine ---------- */
   const tts=useRef({session:0,queue:[],qi:0,sentences:[],si:0,playing:false});
   const syncTts=useCallback(()=>{const st=tts.current;setTtsUI(st.queue.length?{queue:st.queue.slice(),qi:st.qi,si:st.si,total:st.sentences.length,playing:st.playing}:null)},[]);
-  const ttsLoad=(qi,si)=>{const st=tts.current;st.qi=qi;st.si=si||0;
+  const ttsLoad=(qi,si)=>{const st=tts.current;st.qi=qi;
     const a=dataRef.current.articles.find(x=>x.id===st.queue[qi]);
-    st.sentences=a&&a.text?toSentences((a.title?a.title+'. ':'')+a.text):[];};
+    st.sentences=a&&a.text?toSentences((a.title?a.title+'. ':'')+a.text):[];
+    st.si=clamp(si||0,0,Math.max(0,st.sentences.length-1));};
+  /* remember where listening stopped so playback resumes there next time (like a voice note) */
+  const saveTtsPos=useCallback(()=>{
+    const st=tts.current;const id=st.queue[st.qi];if(!id)return;
+    patchArticle(id,{ttsPos:st.si>=st.sentences.length-1?0:st.si});
+  },[patchArticle]);
   const speakCur=useCallback(function speak(){
     const st=tts.current;const sess=++st.session;
     try{speechSynthesis.cancel()}catch(e){}
@@ -2355,6 +2538,7 @@ function App(){
       if(st2.session!==sess||!st2.playing)return;
       st2.si++;
       if(st2.si>=st2.sentences.length){
+        patchArticle(st2.queue[st2.qi],{ttsPos:0}); // finished — next listen starts fresh
         if(st2.qi+1<st2.queue.length){ttsLoad(st2.qi+1,0);speak()}
         else{st2.playing=false;syncTts()}
       }else speak();
@@ -2362,22 +2546,26 @@ function App(){
     u.onend=fin;u.onerror=fin;
     st.playing=true;syncTts();
     try{speechSynthesis.speak(u)}catch(e){st.playing=false;syncTts()}
-  },[syncTts]);
+  },[syncTts,patchArticle]);
   const startTts=(ids,startId)=>{
     if(!('speechSynthesis'in window)){toastFn('Text-to-speech is not supported on this device');return}
     const st=tts.current;
     st.queue=ids.filter(id=>{const a=byId(id);return a&&!a.isVideo&&a.text});
     if(!st.queue.length){toastFn('Nothing to listen to — these items have no text');return}
     let qi=0;if(startId){const k=st.queue.indexOf(startId);if(k>-1)qi=k}
-    ttsLoad(qi,0);speakCur();setTtsOpen(true);
+    const first=byId(st.queue[qi]);
+    const resumeAt=first&&first.ttsPos>0?first.ttsPos:0;
+    ttsLoad(qi,resumeAt);
+    if(st.si>0)toastFn('Resuming where you left off');
+    speakCur();setTtsOpen(true);
   };
   const ttsToggle=()=>{const st=tts.current;
-    if(st.playing){st.session++;st.playing=false;try{speechSynthesis.cancel()}catch(e){}syncTts()}
+    if(st.playing){st.session++;st.playing=false;try{speechSynthesis.cancel()}catch(e){}saveTtsPos();syncTts()}
     else if(st.queue.length)speakCur();
   };
-  const ttsStop=()=>{const st=tts.current;st.session++;st.playing=false;st.queue=[];try{speechSynthesis.cancel()}catch(e){}setTtsUI(null);setTtsOpen(false)};
+  const ttsStop=()=>{const st=tts.current;saveTtsPos();st.session++;st.playing=false;st.queue=[];try{speechSynthesis.cancel()}catch(e){}setTtsUI(null);setTtsOpen(false)};
   const ttsSkipSent=d=>{const st=tts.current;st.si=clamp(st.si+d,0,Math.max(0,st.sentences.length-1));if(st.playing)speakCur();else syncTts()};
-  const ttsJumpArticle=d=>{const st=tts.current;const ni=st.qi+d;if(ni<0||ni>=st.queue.length)return;ttsLoad(ni,0);if(st.playing)speakCur();else syncTts()};
+  const ttsJumpArticle=d=>{const st=tts.current;const ni=st.qi+d;if(ni<0||ni>=st.queue.length)return;saveTtsPos();ttsLoad(ni,0);if(st.playing)speakCur();else syncTts()};
   const ttsJumpTo=i=>{ttsLoad(i,0);speakCur()};
   const ttsSetRate=r=>{update(d=>({...d,settings:{...d.settings,ttsRate:r}}));if(tts.current.playing)setTimeout(speakCur,60)};
   const ttsSetVoice=v=>{update(d=>({...d,settings:{...d.settings,ttsVoice:v}}));if(tts.current.playing)setTimeout(speakCur,60)};
@@ -2439,6 +2627,18 @@ function App(){
     }
   };
 
+  /* save a quick "note to self" as a searchable offline article */
+  const saveQuickNote=text=>{
+    const first=text.split('\n')[0].replace(/^#+\s*/,'').replace(/\*\*?/g,'').trim();
+    const title=first.length>64?first.slice(0,64)+'…':(first||'Note');
+    const html=mdToHtml(text);
+    const plain=htmlToText(html);
+    if(!plain)return;
+    const words=countWords(plain);
+    update(d=>({...d,articles:[{id:uid(),url:'',title,source:'My note',author:'',image:'',html,text:plain,excerpt:plain.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:Date.now(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:['note'],progress:0,opens:0,highlights:[]},...d.articles]}));
+    setSheet(null);toastFn('Note saved');
+  };
+
   /* ---------- article actions ---------- */
   const deleteArticles=ids=>{
     update(d=>({...d,articles:d.articles.filter(a=>!ids.includes(a.id))}));
@@ -2454,6 +2654,7 @@ function App(){
     switch(key){
       case 'close':setReadingId(null);break;
       case 'like':patchArticle(id,x=>({liked:!x.liked}));break;
+      case 'pin':patchArticle(id,x=>({pinned:!x.pinned}));toastFn(a.pinned?'Unpinned':'Pinned to top');setSheet(null);break;
       case 'archive':{const now=!a.archived;patchArticle(id,{archived:now});toastFn(now?'Archived':'Moved to Home');setSheet(null);break}
       case 'move':setSheet({type:'move',ids:[id]});break;
       case 'tags':setSheet({type:'tags',id});break;
@@ -2581,7 +2782,9 @@ function App(){
       else if(f==='videos')arr=arr.filter(a=>a.isVideo);
       else if(f==='completed')arr=arr.filter(a=>(a.progress||0)>=0.97);
     }
-    return sortArticles(arr,S.sort);
+    arr=sortArticles(arr,S.sort);
+    if(!q)arr=[...arr.filter(a=>a.pinned),...arr.filter(a=>!a.pinned)]; // pinned float to the top
+    return arr;
   },[data,scope,q,S.sort,S.filter]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
@@ -2590,6 +2793,8 @@ function App(){
     const s=Math.max(0,i-60),e=Math.min(a.text.length,i+q.length+90);
     return [(s>0?'…':'')+a.text.slice(s,i),h('span',{key:'m',style:{fontWeight:700,color:T.fg}},a.text.slice(i,i+q.length)),a.text.slice(i+q.length,e)+(e<a.text.length?'…':'')];
   };
+
+  const unreadCount=useMemo(()=>data.articles.filter(a=>inScope(a,scope)&&(a.progress||0)<0.97).length,[data.articles,scope]);
 
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
@@ -2662,8 +2867,12 @@ function App(){
           h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)):null,
+      isArticleScope&&!selecting&&!q?h(FilterChips,{T,filter:S.filter,unread:unreadCount,
+        onPick:v=>update(d=>({...d,settings:{...d.settings,filter:v}}))}):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
-      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
+      h('div',{className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},
+        scope.type==='home'&&!selecting&&!q?h(BriefStories,{T,S,onRead:addBriefItem}):null,
+        body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
@@ -2696,7 +2905,10 @@ function App(){
 
     sheet&&sheet.type==='plus'?h(Sheet,{T,onClose:()=>setSheet(null)},
       h(ARow,{T,icon:Icons.link(21),label:'Save a link',sub:'Article, video, or any web page',onClick:()=>{setSheet(null);setAddS({prefill:''})}}),
+      h(ARow,{T,icon:Icons.note(21),label:'Note to self',sub:'Jot a thought — saved like an article',onClick:()=>setSheet({type:'quickNote'})}),
       h(ARow,{T,icon:Icons.folder(21),label:'New folder',sub:'Organize your reading',onClick:()=>setSheet({type:'folder'})})):null,
+
+    sheet&&sheet.type==='quickNote'?h(QuickNoteSheet,{T,onClose:()=>setSheet(null),onSave:saveQuickNote}):null,
 
     sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
 
