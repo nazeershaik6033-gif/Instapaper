@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'openrouter',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -210,8 +210,9 @@ function aiChat(S,messages,maxTokens,onWait){
   if(S.aiProvider==='gemini')return geminiChat(S.geminiKey,S.geminiModel||'gemini-2.5-flash',messages,maxTokens,onWait);
   return openRouterChat(S.aiKey,S.aiModel,messages,maxTokens,onWait);
 }
-const aiReady=S=>S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
+const aiReady=S=>S.aiProvider==='claude'?true:S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
 function aiModelLabel(S){
+  if(S.aiProvider==='claude')return'Claude app';
   if(S.aiProvider==='gemini'){const m=GEMINI_MODELS.find(x=>x[0]===S.geminiModel);return m?m[1]:(S.geminiModel||'Gemini')}
   const m=AI_MODELS.find(x=>x[0]===S.aiModel);return m?m[1]:S.aiModel;
 }
@@ -779,24 +780,31 @@ async function fetchViaJina(url){
 }
 
 const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u),u=>'https://corsproxy.io/?url='+encodeURIComponent(u)];
-/* Fetch a URL through the proxy pool, trying each in turn. A proxy can return
-   a usable body, an error/consent page, or nothing — so when an `ok` validator
-   is given we keep going until one response actually passes it, remembering the
-   longest body as a last-resort fallback. */
-async function fetchRawAcross(url,ok){
-  let best='',lastErr=null;
-  for(const p of PROXIES){
-    try{
-      const res=await fetchWithTimeout(p(url),{},25000);
-      if(!res.ok){lastErr=new Error('proxy '+res.status);continue}
-      const text=await res.text();
-      if(!text){lastErr=new Error('empty proxy response');continue}
-      if(!ok||ok(text))return text;
-      if(text.length>best.length)best=text;
-    }catch(e){lastErr=e}
-  }
-  if(best)return best;
-  throw lastErr||new Error('all proxies failed');
+/* Fetch a URL through the proxy pool — every proxy races in parallel and the
+   first response that passes the `ok` validator wins, so one slow or dead
+   proxy no longer stalls the load. The longest failing body is kept as a
+   last-resort fallback. */
+function fetchRawAcross(url,ok){
+  return new Promise((resolve,reject)=>{
+    let pending=PROXIES.length,best='',lastErr=null,done=false;
+    PROXIES.forEach(async p=>{
+      try{
+        const res=await fetchWithTimeout(p(url),{},18000);
+        if(!res.ok)throw new Error('proxy '+res.status);
+        const text=await res.text();
+        if(!text)throw new Error('empty proxy response');
+        if(!ok||ok(text)){if(!done){done=true;resolve(text)}return}
+        if(text.length>best.length)best=text;
+        throw new Error('proxy body failed validation');
+      }catch(e){if(!lastErr)lastErr=e}
+      finally{
+        if(--pending===0&&!done){
+          if(best)resolve(best);
+          else reject(lastErr||new Error('all proxies failed'));
+        }
+      }
+    });
+  });
 }
 function fetchRawHtml(url){return fetchRawAcross(url,t=>t.length>200)}
 
@@ -884,8 +892,51 @@ function socialOf(url){
   }
   return null;
 }
+/* X / Twitter serves no metadata to browsers or proxies, so status links are
+   read through the public fxtwitter / vxtwitter mirror APIs instead — that's
+   what gives the WhatsApp-style card its real author, text, and photo. */
+function xStatusOf(url){
+  const m=String(url||'').match(/(?:\/\/|\.)(?:twitter\.com|x\.com)\/(?:i\/web\/status\/|(?:#!\/)?(\w{1,20})\/status(?:es)?\/)(\d+)/i);
+  return m?{user:m[1]||'i',id:m[2]}:null;
+}
+async function fetchJsonAnyhow(url){
+  try{
+    const res=await fetchWithTimeout(url,{},15000);
+    if(res.ok)return await res.json();
+  }catch(e){}
+  return JSON.parse(await fetchRawAcross(url,t=>/^\s*[{[]/.test(t)));
+}
+async function fetchXPost(st){
+  let t=null;
+  try{const j=await fetchJsonAnyhow('https://api.fxtwitter.com/'+st.user+'/status/'+st.id);t=j&&j.tweet}catch(e){}
+  if(!t){
+    try{
+      const v=await fetchJsonAnyhow('https://api.vxtwitter.com/'+st.user+'/status/'+st.id);
+      if(v&&(v.text||v.user_screen_name))t={
+        text:v.text,
+        author:{name:v.user_name,screen_name:v.user_screen_name,avatar_url:v.user_profile_image_url},
+        media:{photos:(v.media_extended||[]).filter(m=>m.type==='image').map(m=>({url:m.url})),
+               videos:(v.media_extended||[]).filter(m=>m.type!=='image').map(m=>({thumbnail_url:m.thumbnail_url}))},
+        created_timestamp:v.date_epoch
+      };
+    }catch(e){}
+  }
+  if(!t)return null;
+  const au=t.author||{},media=t.media||{};
+  const photo=(media.photos||[])[0],video=(media.videos||[])[0];
+  const handle=au.screen_name?'@'+au.screen_name:'';
+  return{
+    title:au.name&&handle?au.name+' ('+handle+') on X':(au.name||handle||'Post')+' on X',
+    image:safeUrl((photo&&photo.url)||(video&&video.thumbnail_url)||au.avatar_url||''),
+    desc:String(t.text||'').trim(),
+    author:handle||au.name||'',
+    publishedAt:t.created_timestamp?t.created_timestamp*1000:0
+  };
+}
 // Best-effort Open Graph metadata for a social link; degrades to an empty card.
 async function fetchSocialMeta(url){
+  const st=xStatusOf(url);
+  if(st){try{const p=await fetchXPost(st);if(p&&(p.title||p.image||p.desc))return p}catch(e){}}
   try{
     const raw=await fetchRawHtml(url);
     const doc=new DOMParser().parseFromString(raw,'text/html');
@@ -912,11 +963,11 @@ async function fetchArticleData(url){
     const m=await fetchSocialMeta(url);
     return{url,
       title:(m.title||(handle?handle+' on '+label:label+' post')).trim(),
-      source:label,author:handle,
+      source:label,author:m.author||handle,
       image:m.image||'',html:'',text:'',
-      excerpt:(m.desc||'').slice(0,220).trim(),
+      excerpt:(m.desc||'').slice(0,300).trim(),
       words:0,readMin:0,isVideo:false,videoId:null,
-      isPost:true,platform:soc.platform,publishedAt:0};
+      isPost:true,platform:soc.platform,publishedAt:m.publishedAt||0};
   }
   let res=null,err1=null;
   try{res=await fetchViaJina(url)}catch(e){err1=e}
@@ -1127,6 +1178,35 @@ async function fetchBrief(regionId,topic,sources,customQuery){
     return all.slice(0,40);
   }
   throw new Error('Could not load headlines — check your connection and try again');
+}
+/* headlines cache — the brief shows instantly from the last fetch and refreshes in the background */
+const BRIEF_TTL=20*60*1000;
+function briefCacheKey(regionId,sources){
+  const en=(sources||[]).filter(s=>s.enabled).map(s=>s.domain).sort().join(',');
+  return'brief_v2:'+(regionId||'IN')+':'+(en||'default');
+}
+function readBriefCache(regionId,sources){
+  try{
+    const c=JSON.parse(localStorage.getItem(briefCacheKey(regionId,sources))||'null');
+    if(c&&Array.isArray(c.items)&&c.items.length)return c;
+  }catch(e){}
+  return null;
+}
+function writeBriefCache(regionId,sources,items){
+  try{localStorage.setItem(briefCacheKey(regionId,sources),JSON.stringify({at:Date.now(),items}))}catch(e){}
+}
+/* cached-first load used by the story circles on Home */
+async function loadBriefCached(regionId,sources){
+  const c=readBriefCache(regionId,sources);
+  if(c&&Date.now()-c.at<BRIEF_TTL)return c.items;
+  try{
+    const items=await fetchBrief(regionId,'',sources,null);
+    writeBriefCache(regionId,sources,items);
+    return items;
+  }catch(e){
+    if(c)return c.items; // stale headlines beat a spinner
+    throw e;
+  }
 }
 
 /* ============================== seed content ============================== */
@@ -1415,18 +1495,34 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   else if(prog>0.01)footer=Math.round(prog*100)+'% · '+a.readMin+' min read';
   else footer=a.words?a.readMin+' min read':'Saved link';
   const metaLine=[a.source,a.author?('by '+a.author):''].filter(Boolean).join(' · ');
+  const isCard=!!(a.isPost&&a.image); // social posts with media render as a WhatsApp-style rich card
 
   return h('div',{style:{position:'relative',overflow:'hidden',background:T.bg}},
     dx!==0?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:dx<0?'flex-end':'flex-start',padding:'0 22px',background:dx<0?leftAction.bg:'#d4564a',color:'#fff',fontSize:14,fontWeight:600}},dx<0?leftAction.label:(a.liked?'Unlike':'Like')):null,
     h('div',{onTouchStart:start,onTouchMove:move,onTouchEnd:end,onMouseDown:start,onMouseMove:e=>{if(e.buttons)move(e)},onMouseUp:end,onMouseLeave:clearLp,onClick:click,onContextMenu:e=>{e.preventDefault();if(!selecting)onLongPress()},
-      style:{display:'flex',gap:14,padding:'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
+      style:{display:'flex',gap:14,padding:isCard?'12px 16px':'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
       selecting?h('div',{style:{display:'flex',alignItems:'center',color:selected?T.accent:T.sub,flexShrink:0}},Icons.checkCircle(24,selected)):null,
-      h('div',{style:{flex:1,minWidth:0}},
+      isCard?h('div',{style:{flex:1,minWidth:0,borderRadius:13,overflow:'hidden',background:T.card,border:'1px solid '+T.hair}},
+        h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',aspectRatio:'1.91 / 1',objectFit:'cover',display:'block',background:T.thumbBg},onError:e=>{e.target.style.display='none'}}),
+        h('div',{style:{padding:'11px 14px 12px'}},
+          h('div',{style:{fontSize:15.5,fontWeight:650,lineHeight:1.35,color:T.fg,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
+          (snippet||a.excerpt)?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:4,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},snippet||a.excerpt):null,
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:9,fontSize:12,color:T.sub}},
+            h('span',{style:{display:'flex'}},Icons.link(13)),
+            h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(a.url)||a.source),
+            h('span',{style:{flexShrink:0}},timeAgo(a.addedAt)),
+            a.pinned?h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.pin(12,true)):null,
+            a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
+            a.tags.slice(0,2).map(t=>h('span',{key:t,style:{color:T.accent,flexShrink:0}},'#'+t))
+          )
+        )
+      ):h('div',{style:{flex:1,minWidth:0}},
         h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17.5,fontWeight:600,lineHeight:1.3,color:T.fg,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
         metaLine?h('div',{style:{fontSize:12.5,color:T.sub,marginTop:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},metaLine):null,
         snippet?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5}},snippet)
           :(a.excerpt?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.excerpt):null),
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:7,fontSize:11.5,color:T.sub}},
+          a.pinned?h('span',{style:{color:T.accent,display:'flex'}},Icons.pin(12,true)):null,
           a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
           a.addedAt?h('span',{style:{whiteSpace:'nowrap'}},fmtDateShort(a.addedAt)):null,
           h('span',null,footer),
@@ -1435,7 +1531,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
         ),
         !done&&prog>0.01?h('div',{style:{height:2.5,background:T.hair,borderRadius:2,marginTop:7,overflow:'hidden',maxWidth:120}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:T.sub,borderRadius:2}})):null
       ),
-      (a.image||a.isVideo)?h('div',{style:{width:64,height:64,borderRadius:5,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden'}},
+      !isCard&&(a.image||a.isVideo)?h('div',{style:{width:64,height:64,borderRadius:5,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden'}},
         a.image?h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover',display:'block'},onError:e=>{e.target.style.display='none'}}):null,
         a.isVideo?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
           h('div',{style:{width:30,height:30,borderRadius:'50%',background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:2}},Icons.play(15,true))):null,
@@ -1612,6 +1708,18 @@ function AddSheet({T,folders,prefill,defaultFolder,onSave,onSaveStub,onClose}){
     err&&!busy?h('button',{onClick:()=>onSaveStub(normalizeUrl(url),folderId),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:4,color:T.accent,fontSize:15,fontWeight:500,textAlign:'center'}},'Save link without content'):null);
 }
 
+/* ============================== note to self (WhatsApp "message yourself") ============================== */
+function QuickNoteSheet({T,onSave,onClose}){
+  const [text,setText]=useState('');
+  return h(Sheet,{T,onClose,title:'Note to self'},
+    h('div',{style:{padding:'4px 20px 0'}},
+      h('textarea',{value:text,onChange:e=>setText(e.target.value),rows:6,autoFocus:true,
+        placeholder:'Jot down a thought, an idea, a quote — it’s saved like an article, searchable and readable offline.',
+        style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15.5,lineHeight:1.55,resize:'vertical',fontFamily:"'Lora',Georgia,serif",minHeight:150}}),
+      h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.5}},'Formatting: **bold** · *italic* · # heading · - list · blank line = new paragraph')),
+    h(PrimaryBtn,{T,label:'Save note',disabled:!text.trim(),onClick:()=>onSave(text.trim())}));
+}
+
 /* ============================== folder / move / tags / confirm sheets ============================== */
 function FolderEditSheet({T,folder,onSave,onDelete,onClose}){
   const [name,setName]=useState(folder?folder.name:'');
@@ -1665,6 +1773,7 @@ function ArticleSheet({T,a,onAction,onClose}){
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
     h(ARow,{T,icon:Icons.checkCircle(21,(a.progress||0)>=0.97),label:(a.progress||0)>=0.97?(a.isVideo?'Mark as unwatched':'Mark as unread'):(a.isVideo?'Mark as watched':'Mark as read'),onClick:act('read')}),
+    h(ARow,{T,icon:Icons.pin(21,a.pinned),label:a.pinned?'Unpin':'Pin to top',onClick:act('pin')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
     h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:act('move')}),
@@ -2088,14 +2197,18 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
   const allSrcs=headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}));
   const enabledSrcs=allSrcs.filter(s=>s.enabled);
-  const load=useCallback(()=>{
+  const load=useCallback(force=>{
     const id=++reqRef.current;
-    setItems(null);setErr('');
+    setErr('');
+    // cached headlines show instantly; the network refresh happens behind them
+    const c=readBriefCache(regionId,headlinesSources);
+    setItems(c?c.items:null);
+    if(c&&Date.now()-c.at<BRIEF_TTL&&!force)return;
     fetchBrief(regionId,'',headlinesSources,null)
-      .then(r=>{if(id===reqRef.current)setItems(r)})
-      .catch(e=>{if(id===reqRef.current){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
+      .then(r=>{writeBriefCache(regionId,headlinesSources,r);if(id===reqRef.current)setItems(r)})
+      .catch(e=>{if(id===reqRef.current&&!c){setErr((e&&e.message)||'Could not load the brief');setItems([])}});
   },[regionId,headlinesSources]);
-  useEffect(load,[load]);
+  useEffect(()=>{load(false)},[load]);
   const region=briefRegion(regionId);
   const open=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
   const openUrl=url=>{if(onOpenUrl)onOpenUrl(url)};
@@ -2157,11 +2270,88 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px',flexShrink:0}},
       showRegion?h('div',{style:{flex:1,fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Region'):h('div',{style:{flex:1}}),
       h('button',{onClick:()=>setConfigOpen(true),className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg}),title:'Customise'},Icons.gear(18)),
-      h('button',{onClick:load,disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
+      h('button',{onClick:()=>load(true),disabled:items===null,className:'act90 trt',style:Object.assign({},iconBtnS,{width:34,height:34,color:T.fg,opacity:items===null?0.4:1}),title:'Refresh'},Icons.refresh(18))),
     showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
     tabBar,
     h('div',null,briefTab==='stories'?newsBody:sourcesBody),
     configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null);
+}
+
+/* ============================== story circles (WhatsApp Status-style headlines) ============================== */
+function StoryViewer({T,items,index,onIndex,onClose,onRead}){
+  const [busy,setBusy]=useState(false);
+  const it=items[index];
+  const next=()=>{index<items.length-1?onIndex(index+1):onClose()};
+  const prev=()=>{if(index>0)onIndex(index-1)};
+  useEffect(()=>{ // auto-advance like a status story
+    if(busy)return;
+    const t=setTimeout(next,8000);
+    return()=>clearTimeout(t);
+  },[index,busy]);
+  const read=async()=>{
+    if(busy)return;
+    setBusy(true);
+    try{await onRead(it)}finally{setBusy(false);onClose()}
+  };
+  if(!it)return null;
+  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:80,background:'linear-gradient(165deg,#232a38 0%,#12141c 70%,#0c0d12 100%)',color:'#f4f4f6',display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:{display:'flex',gap:4,padding:'calc(10px + '+SAFE_T+') 12px 0',flexShrink:0}},
+      items.map((_,i)=>h('div',{key:i,style:{flex:1,height:2.5,borderRadius:2,background:i<index?'#f4f4f6':i===index?'rgba(244,244,246,.85)':'rgba(244,244,246,.28)'}}))),
+    h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'12px 14px 0',flexShrink:0}},
+      h('div',{style:{width:34,height:34,borderRadius:'50%',background:'rgba(255,255,255,.14)',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:16,flexShrink:0}},(it.source||'N')[0].toUpperCase()),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.source||'Headlines'),
+        it.publishedAt?h('div',{style:{fontSize:11.5,color:'rgba(244,244,246,.6)'}},timeAgo(it.publishedAt)):null),
+      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:'#f4f4f6'})},Icons.x(22))),
+    h('div',{style:{flex:1,position:'relative',display:'flex',alignItems:'center',padding:'0 28px'}},
+      h('div',{onClick:prev,style:{position:'absolute',left:0,top:0,bottom:0,width:'33%'}}),
+      h('div',{onClick:next,style:{position:'absolute',right:0,top:0,bottom:0,width:'33%'}}),
+      h('div',{style:{width:'100%',pointerEvents:'none'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:'rgba(244,244,246,.55)',marginBottom:14}},'Story '+(index+1)+' of '+items.length),
+        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:26,fontWeight:600,lineHeight:1.32}},it.title))),
+    h('div',{style:{padding:'0 22px calc(26px + '+SAFE_B+')',flexShrink:0}},
+      h('button',{onClick:read,disabled:busy,className:'act95',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'100%',padding:'15px',borderRadius:13,background:'#f4f4f6',color:'#16181f',fontSize:15.5,fontWeight:650}},
+        busy?h(Spinner,{T:THEMES.light,size:17}):Icons.download(18),busy?'Saving story…':'Save & read offline'),
+      h('div',{style:{textAlign:'center',fontSize:11.5,color:'rgba(244,244,246,.5)',marginTop:12}},'Tap right for the next story · left to go back')));
+}
+
+function BriefStories({T,S,sources,onRead}){
+  const [items,setItems]=useState(null); // null = loading
+  const [open,setOpen]=useState(-1);
+  const [seen,setSeen]=useState(()=>{try{return JSON.parse(localStorage.getItem('brief_seen_v1')||'[]')}catch(e){return[]}});
+  useEffect(()=>{
+    let alive=true;
+    setItems(null);
+    loadBriefCached(S.briefRegion||'IN',sources)
+      .then(r=>{if(alive)setItems(r.slice(0,14))})
+      .catch(()=>{if(alive)setItems([])});
+    return()=>{alive=false};
+  },[S.briefRegion,sources]);
+  const markSeen=it=>{
+    if(!it||seen.includes(it.url))return;
+    const ns=[...seen,it.url].slice(-300);
+    setSeen(ns);
+    try{localStorage.setItem('brief_seen_v1',JSON.stringify(ns))}catch(e){}
+  };
+  useEffect(()=>{if(open>=0&&items)markSeen(items[open])},[open,items]);
+  if(items&&!items.length)return null; // offline with no cache — hide the row quietly
+  const circle=(it,i)=>{
+    const unseen=!seen.includes(it.url);
+    return h('button',{key:it.url+i,onClick:()=>setOpen(i),className:'act95',style:{width:66,flexShrink:0,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+      h('div',{style:{width:62,height:62,borderRadius:'50%',padding:2.5,background:unseen?'conic-gradient(from 210deg,'+T.accent+',#3f9d63,#e8c547,'+T.accent+')':T.hair}},
+        h('div',{style:{width:'100%',height:'100%',borderRadius:'50%',background:T.card,border:'2.5px solid '+T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:21,color:T.fg,overflow:'hidden'}},(it.source||'N')[0].toUpperCase())),
+      h('div',{style:{fontSize:10.5,color:unseen?T.meta:T.sub,fontWeight:unseen?600:400,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.source||'News'));
+  };
+  return h('div',{style:{borderBottom:'1px solid '+T.hair,paddingBottom:4}},
+    h('div',{style:{display:'flex',alignItems:'center',padding:'8px 16px 8px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},
+      h('span',{style:{flex:1}},'Today’s stories')),
+    h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 8px'}},
+      items===null
+        ?[0,1,2,3,4,5].map(i=>h('div',{key:i,style:{width:66,flexShrink:0,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+            h('div',{style:{width:62,height:62,borderRadius:'50%',background:T.card}}),
+            h('div',{style:{width:44,height:8,borderRadius:4,background:T.card}})))
+        :items.map(circle)),
+    open>=0&&items?h(StoryViewer,{T,items,index:open,onIndex:setOpen,onClose:()=>setOpen(-1),onRead}):null);
 }
 
 /* ============================== blogs view ============================== */
@@ -3290,19 +3480,30 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
     try{await fn()}catch(e){setError((e&&e.message)||'Something went wrong');setView('menu')}
     setBusy('');
   };
-  const doSummarize=()=>run('Summarizing…',async()=>{
+  /* Claude-app provider: compose the request and hand it to the Claude app —
+     no API key, no waiting inside Instapaper */
+  const usingClaude=(S.aiProvider||'openrouter')==='claude';
+  const claudeArticleBlock=()=>ctx?'\n\n----- '+(isVid?'VIDEO':'ARTICLE')+' -----\n'+(ctx.title||'')+(ctx.url?'\nSource: '+ctx.url:'')+(ctx.text?'\n\n'+String(ctx.text).slice(0,6000):''):'';
+  const handOff=p=>{if(openInClaude(p+claudeArticleBlock(),toastFn))onClose()};
+  const doSummarize=()=>{
+    if(usingClaude)return handOff('Summarize this '+(isVid?'video (fetch its transcript yourself)':'article')+' as 5-8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.');
+    run('Summarizing…',async()=>{
     const out=isVid
       ?await aiVideo(S,'Summarize this video as 5–8 concise bullet points covering the key ideas, followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.',ctx.url,1600,setBusy)
       :await aiChat(S,[
         {role:'system',content:'You are a precise reading assistant.'},
         {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
-  });
-  const doTranscript=()=>run('Transcribing…',async()=>{
+  })};
+  const doTranscript=()=>{
+    if(usingClaude)return handOff('Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary'+(outLang!=='English'?' — translated into '+outLang:'')+'.');
+    run('Transcribing…',async()=>{
     const out=await aiVideo(S,'Transcribe everything spoken in this video into clean, readable text. Use natural paragraphs. Do NOT add timestamps, speaker labels, or any commentary — output only the spoken words'+(outLang!=='English'?', translated into '+outLang:'')+'.',ctx.url,8192,setBusy);
     setResult({kind:'Transcript',text:out,lang:outLang,transcript:true});setView('result');
-  });
-  const doTranslate=lang=>run('Translating…',async()=>{
+  })};
+  const doTranslate=lang=>{
+    if(usingClaude)return handOff('Translate this article into '+lang+'. Keep the same paragraphs. Output only the translation.');
+    run('Translating…',async()=>{
     const paras=[ctx.title,...blockTexts(ctx.html||('<p>'+escapeHtml(ctx.text)+'</p>'))].filter(Boolean);
     const chunks=chunkParas(paras,2400);
     const out=[];
@@ -3314,14 +3515,18 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
       if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
     }
     setResult({kind:'Translation',text:out.join('\n\n'),lang,translation:true});setView('result');
-  });
-  const doRewrite=([style,instr])=>run('Rewriting…',async()=>{
+  })};
+  const doRewrite=([style,instr])=>{
+    if(usingClaude)return handOff(instr+'. Respond entirely in '+outLang+', output only the rewritten text.');
+    run('Rewriting…',async()=>{
     const out=await aiChat(S,[
       {role:'system',content:'You are an expert editor.'},
       {role:'user',content:instr+'. Respond entirely in '+outLang+', output only the rewritten text.\n\n'+ctxText}],4000,setBusy);
     setResult({kind:'Rewrite — '+style,text:out,lang:outLang,rewrite:true});setView('result');
-  });
-  const doAsk=()=>{const q=question.trim();if(!q)return;run('Thinking…',async()=>{
+  })};
+  const doAsk=()=>{const q=question.trim();if(!q)return;
+    if(usingClaude)return handOff(q+(ctx?'\n\nAnswer using the '+(isVid?'video (fetch its transcript yourself)':'article')+' below. Respond in '+outLang+'.':''));
+    run('Thinking…',async()=>{
     let out;
     if(isVid){
       out=await aiVideo(S,'Answer this question about the video. Be concise and concrete, using only what the video actually says. Respond in '+outLang+'.\n\nQuestion: '+q,ctx.url,2000,setBusy);
@@ -3489,9 +3694,11 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
     const prov=S.aiProvider||'openrouter';
     const isGem=prov==='gemini';
     body=h('div',{style:{padding:'0 20px'}},
-      h('div',{style:{display:'flex',gap:8,marginBottom:14}},
+      h('div',{style:{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}},
+        chip('Claude app',false,()=>{update(d=>({...d,settings:{...d.settings,aiProvider:'claude'}}));toastFn('AI now opens in the Claude app — no key needed')}),
         chip('OpenRouter',!isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'openrouter'}}))),
         chip('Google Gemini',isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'gemini'}})))),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:12,padding:'10px 12px',borderRadius:10,background:T.card}},'✦ Tip: pick "Claude app" above to use Summarize, Translate, Rewrite, and Ask with no API key at all — each opens ready-made in the Claude app.'),
       h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},
         isGem?'Connect a free Google Gemini API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ':'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',
         isGem?h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey')
@@ -3594,7 +3801,8 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
     body,
-    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},'Model: '+aiModelLabel(S)+' — change in Settings'):null);
+    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},
+      usingClaude?'Opens in the Claude app — free, no API key. Change in Settings → AI.':'Model: '+aiModelLabel(S)+' — change in Settings'):null);
 }
 
 /* ============================== password vault panel ============================== */
@@ -3929,10 +4137,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 0'}},
         h('div',{style:{display:'flex',gap:8,marginBottom:12}},
-          [['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
+          [['claude','Claude app'],['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
             h('button',{key:id,onClick:()=>set({aiProvider:id}),className:'act95 trc',
-              style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:14,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
-        (S.aiProvider||'openrouter')==='gemini'
+              style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:13.5,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
+        (S.aiProvider||'openrouter')==='claude'
+          ?h(Fragment,null,
+            h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.6,marginBottom:10}},'No API key needed. Summarize, Translate, Rewrite, and Ask open ready-made in the ',h('strong',null,'Claude app'),' (or claude.ai in the browser) with the article attached — answers appear in Claude, where you can keep chatting.'),
+            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the Claude app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Instapaper? Switch to OpenRouter or Gemini with a free API key.'))
+          :(S.aiProvider||'openrouter')==='gemini'
           ?h(Fragment,null,
             h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Uses Google\u2019s Gemini API directly \u2014 generous free tier. Get a key at ',h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey'),'.'),
             h('input',{value:S.geminiKey,onChange:e=>set({geminiKey:e.target.value.trim()}),placeholder:'API key \u2014 AIza\u2026',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
@@ -4203,9 +4415,15 @@ function App(){
   /* ---------- text-to-speech engine ---------- */
   const tts=useRef({session:0,queue:[],qi:0,sentences:[],si:0,playing:false});
   const syncTts=useCallback(()=>{const st=tts.current;setTtsUI(st.queue.length?{queue:st.queue.slice(),qi:st.qi,si:st.si,total:st.sentences.length,playing:st.playing}:null)},[]);
-  const ttsLoad=(qi,si)=>{const st=tts.current;st.qi=qi;st.si=si||0;
+  const ttsLoad=(qi,si)=>{const st=tts.current;st.qi=qi;
     const a=dataRef.current.articles.find(x=>x.id===st.queue[qi]);
-    st.sentences=a&&a.text?toSentences((a.title?a.title+'. ':'')+a.text):[];};
+    st.sentences=a&&a.text?toSentences((a.title?a.title+'. ':'')+a.text):[];
+    st.si=clamp(si||0,0,Math.max(0,st.sentences.length-1));};
+  /* remember where listening stopped so playback resumes there next time (like a voice note) */
+  const saveTtsPos=useCallback(()=>{
+    const st=tts.current;const id=st.queue[st.qi];if(!id)return;
+    patchArticle(id,{ttsPos:st.si>=st.sentences.length-1?0:st.si});
+  },[patchArticle]);
   const speakCur=useCallback(function speak(){
     const st=tts.current;const sess=++st.session;
     try{speechSynthesis.cancel()}catch(e){}
@@ -4231,6 +4449,7 @@ function App(){
       if(st2.session!==sess||!st2.playing)return;
       st2.si++;
       if(st2.si>=st2.sentences.length){
+        patchArticle(st2.queue[st2.qi],{ttsPos:0}); // finished — next listen starts fresh
         if(st2.qi+1<st2.queue.length){ttsLoad(st2.qi+1,0);speak()}
         else{st2.playing=false;syncTts()}
       }else speak();
@@ -4238,22 +4457,25 @@ function App(){
     u.onend=fin;u.onerror=fin;
     st.playing=true;syncTts();
     try{speechSynthesis.speak(u)}catch(e){st.playing=false;syncTts()}
-  },[syncTts]);
+  },[syncTts,patchArticle]);
   const startTts=(ids,startId)=>{
     if(!('speechSynthesis'in window)){toastFn('Text-to-speech is not supported on this device');return}
     const st=tts.current;
     st.queue=ids.filter(id=>{const a=byId(id);return a&&!a.isVideo&&a.text});
     if(!st.queue.length){toastFn('Nothing to listen to — these items have no text');return}
     let qi=0;if(startId){const k=st.queue.indexOf(startId);if(k>-1)qi=k}
-    ttsLoad(qi,0);speakCur();setTtsOpen(true);
+    const first=byId(st.queue[qi]);
+    ttsLoad(qi,first&&first.ttsPos>0?first.ttsPos:0);
+    if(st.si>0)toastFn('Resuming where you left off');
+    speakCur();setTtsOpen(true);
   };
   const ttsToggle=()=>{const st=tts.current;
-    if(st.playing){st.session++;st.playing=false;try{speechSynthesis.cancel()}catch(e){}syncTts()}
+    if(st.playing){st.session++;st.playing=false;try{speechSynthesis.cancel()}catch(e){}saveTtsPos();syncTts()}
     else if(st.queue.length)speakCur();
   };
-  const ttsStop=()=>{const st=tts.current;st.session++;st.playing=false;st.queue=[];try{speechSynthesis.cancel()}catch(e){}setTtsUI(null);setTtsOpen(false)};
+  const ttsStop=()=>{const st=tts.current;saveTtsPos();st.session++;st.playing=false;st.queue=[];try{speechSynthesis.cancel()}catch(e){}setTtsUI(null);setTtsOpen(false)};
   const ttsSkipSent=d=>{const st=tts.current;st.si=clamp(st.si+d,0,Math.max(0,st.sentences.length-1));if(st.playing)speakCur();else syncTts()};
-  const ttsJumpArticle=d=>{const st=tts.current;const ni=st.qi+d;if(ni<0||ni>=st.queue.length)return;ttsLoad(ni,0);if(st.playing)speakCur();else syncTts()};
+  const ttsJumpArticle=d=>{const st=tts.current;const ni=st.qi+d;if(ni<0||ni>=st.queue.length)return;saveTtsPos();ttsLoad(ni,0);if(st.playing)speakCur();else syncTts()};
   const ttsJumpTo=i=>{ttsLoad(i,0);speakCur()};
   const ttsSetRate=r=>{update(d=>({...d,settings:{...d.settings,ttsRate:r}}));if(tts.current.playing)setTimeout(speakCur,60)};
   const ttsSetVoice=v=>{update(d=>({...d,settings:{...d.settings,ttsVoice:v}}));if(tts.current.playing)setTimeout(speakCur,60)};
@@ -4270,7 +4492,7 @@ function App(){
       const article={id,url,title:base,source:label,author:handle,image:'',html:'',text:'',excerpt:'',words:0,readMin:0,isVideo:false,videoId:null,isPost:true,platform:soc.platform,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:folderId||null,tags:[],progress:0,opens:0,highlights:[]};
       update(d=>({...d,articles:[article,...d.articles]}));
       setAddS(null);toastFn(label+' post saved');
-      (async()=>{const m=await fetchSocialMeta(url);if(m&&(m.title||m.image||m.desc))patchArticle(id,x=>({title:(x.title===base&&m.title)?m.title:x.title,image:x.image||m.image||'',excerpt:x.excerpt||(m.desc?m.desc.slice(0,220).trim():'')}))})();
+      (async()=>{const m=await fetchSocialMeta(url);if(m&&(m.title||m.image||m.desc))patchArticle(id,x=>({title:(x.title===base&&m.title)?m.title:x.title,image:x.image||m.image||'',excerpt:x.excerpt||(m.desc?m.desc.slice(0,300).trim():''),author:m.author||x.author,publishedAt:x.publishedAt||m.publishedAt||0}))})();
       return;
     }
     const rec=await fetchArticleData(url); // throws on failure -> AddSheet shows error
@@ -4312,6 +4534,18 @@ function App(){
     }
   };
 
+  /* save a quick "note to self" as a searchable offline article */
+  const saveQuickNote=text=>{
+    const first=text.split('\n')[0].replace(/^#+\s*/,'').replace(/\*\*?/g,'').trim();
+    const title=first.length>64?first.slice(0,64)+'…':(first||'Note');
+    const html=mdToHtml(text);
+    const plain=htmlToText(html);
+    if(!plain)return;
+    const words=countWords(plain);
+    update(d=>({...d,articles:[{id:uid(),url:'',title,source:'My note',author:'',image:'',html,text:plain,excerpt:plain.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:Date.now(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:['note'],progress:0,opens:0,highlights:[]},...d.articles]}));
+    setSheet(null);toastFn('Note saved');
+  };
+
   /* ---------- article actions ---------- */
   const deleteArticles=ids=>{
     update(d=>({...d,articles:d.articles.filter(a=>!ids.includes(a.id))}));
@@ -4328,6 +4562,7 @@ function App(){
       case 'close':setReadingId(null);break;
       case 'read':{const now=(a.progress||0)<0.97;patchArticle(id,{progress:now?1:0});toastFn(now?(a.isVideo?'Marked as watched':'Marked as read'):(a.isVideo?'Marked as unwatched':'Marked as unread'));setSheet(null);break}
       case 'like':patchArticle(id,x=>({liked:!x.liked}));break;
+      case 'pin':patchArticle(id,x=>({pinned:!x.pinned}));toastFn(a.pinned?'Unpinned':'Pinned to top');setSheet(null);break;
       case 'archive':{const now=!a.archived;patchArticle(id,{archived:now});toastFn(now?'Archived':'Moved to Home');setSheet(null);break}
       case 'move':setSheet({type:'move',ids:[id]});break;
       case 'tags':setSheet({type:'tags',id});break;
@@ -4456,8 +4691,11 @@ function App(){
       if(S.readFilter==='unread')arr=arr.filter(a=>(a.progress||0)<0.97);
       else if(S.readFilter==='read')arr=arr.filter(a=>(a.progress||0)>=0.97);
     }
-    return sortArticles(arr,S.sort);
+    arr=sortArticles(arr,S.sort);
+    if(!q)arr=[...arr.filter(a=>a.pinned),...arr.filter(a=>!a.pinned)]; // pinned float to the top
+    return arr;
   },[data,scope,q,S.sort,S.typeFilter,S.readFilter]);
+  const unreadCount=useMemo(()=>data.articles.filter(a=>inScope(a,scope)&&(a.progress||0)<0.97).length,[data.articles,scope]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -4591,7 +4829,8 @@ function App(){
                   TYPES.map(([v,l])=>h('button',{key:v,onClick:()=>{setS({typeFilter:v});setFilterMenu(false)},className:'act98',
                     style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.typeFilter?600:400,background:'transparent',textAlign:'left'}},
                     l,v===S.typeFilter?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null),
-            h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:Object.assign({},chip(true),{flexShrink:0}),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread'),
+            h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:Object.assign({},chip(true),{flexShrink:0}),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread',
+              S.readFilter!=='read'&&unreadCount>0?h('span',{style:{minWidth:17,height:17,padding:'0 5px',borderRadius:9,background:T.accent,color:'#fff',fontSize:10.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}},unreadCount>99?'99+':String(unreadCount)):null),
             h('button',{onClick:()=>setSelecting({mode:'select',ids:[]}),className:'act90',style:Object.assign({},chip(false),{flexShrink:0}),title:'Select multiple'},Icons.checkCircle(14),'Select'),
             h('div',{style:{flex:1,minWidth:0}}),
             h('div',{style:{position:'relative',flexShrink:0}},
@@ -4604,7 +4843,9 @@ function App(){
                     l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
         })():null):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
-      h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},body),
+      h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:ttsUI?100:16}},
+        scope.type==='home'&&!selecting&&!q?h(BriefStories,{T,S,sources:S.headlinesSources||null,onRead:addBriefItem}):null,
+        body),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
@@ -4641,11 +4882,14 @@ function App(){
 
     sheet&&sheet.type==='plus'?h(TouchGrid,{onClose:()=>setSheet(null),anchorBottom:'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
       {icon:Icons.link(24),label:'Save a link',onClick:()=>setAddS({prefill:''})},
+      {icon:Icons.note(24),label:'Note to self',onClick:()=>setSheet({type:'quickNote'})},
       {icon:Icons.camera(24),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
       {icon:Icons.image(24),label:'Photo library',onClick:()=>pickFiles('image/*')},
       {icon:Icons.file(24),label:'Upload files',onClick:()=>pickFiles('')},
       {icon:Icons.folder(24),label:'New folder',onClick:()=>setSheet({type:'folder'})}
     ]}):null,
+
+    sheet&&sheet.type==='quickNote'?h(QuickNoteSheet,{T,onClose:()=>setSheet(null),onSave:saveQuickNote}):null,
 
     sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
 
