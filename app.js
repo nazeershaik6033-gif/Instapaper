@@ -2356,7 +2356,12 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
   const [briefTab,setBriefTab]=useState('stories');
   const reqRef=useRef(0);
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
-  const allSrcs=headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}));
+  // saved source lists can predate fields (like epaper) later added to PRESET_SOURCES —
+  // backfill those from the current master list without touching the user's own choices.
+  const allSrcs=(headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}))).map(s=>{
+    const m=PRESET_SOURCES.find(p=>p.domain===s.domain);
+    return m?{...s,rss:s.rss!=null?s.rss:m.rss,epaper:s.epaper!=null?s.epaper:m.epaper}:s;
+  });
   const enabledSrcs=allSrcs.filter(s=>s.enabled);
   const load=useCallback(force=>{
     const id=++reqRef.current;
