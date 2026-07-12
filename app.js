@@ -1497,41 +1497,43 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   const metaLine=[a.source,a.author?('by '+a.author):''].filter(Boolean).join(' · ');
   const isCard=!!(a.isPost&&a.image); // social posts with media render as a WhatsApp-style rich card
 
-  return h('div',{style:{position:'relative',overflow:'hidden',background:T.bg}},
-    dx!==0?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:dx<0?'flex-end':'flex-start',padding:'0 22px',background:dx<0?leftAction.bg:'#d4564a',color:'#fff',fontSize:14,fontWeight:600}},dx<0?leftAction.label:(a.liked?'Unlike':'Like')):null,
+  // eenadu-style card: headline + right thumbnail + meta only — no body/excerpt text.
+  return h('div',{style:{position:'relative',padding:'5px 12px',background:T.bg,overflow:'hidden'}},
+    dx!==0?h('div',{style:{position:'absolute',top:5,bottom:5,left:12,right:12,borderRadius:13,display:'flex',alignItems:'center',justifyContent:dx<0?'flex-end':'flex-start',padding:'0 22px',background:dx<0?leftAction.bg:'#d4564a',color:'#fff',fontSize:14,fontWeight:600}},dx<0?leftAction.label:(a.liked?'Unlike':'Like')):null,
     h('div',{onTouchStart:start,onTouchMove:move,onTouchEnd:end,onMouseDown:start,onMouseMove:e=>{if(e.buttons)move(e)},onMouseUp:end,onMouseLeave:clearLp,onClick:click,onContextMenu:e=>{e.preventDefault();if(!selecting)onLongPress()},
-      style:{display:'flex',gap:14,padding:isCard?'12px 16px':'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
-      selecting?h('div',{style:{display:'flex',alignItems:'center',color:selected?T.accent:T.sub,flexShrink:0}},Icons.checkCircle(24,selected)):null,
-      isCard?h('div',{style:{flex:1,minWidth:0,borderRadius:13,overflow:'hidden',background:T.card,border:'1px solid '+T.hair}},
+      style:{display:'flex',gap:12,padding:isCard?0:'13px 14px',borderRadius:13,border:'1px solid '+T.hair,background:T.card,overflow:'hidden',boxShadow:'0 1px 3px rgba(0,0,0,.05)',transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
+      selecting?h('div',{style:{display:'flex',alignItems:'center',color:selected?T.accent:T.sub,flexShrink:0,paddingLeft:isCard?12:0}},Icons.checkCircle(24,selected)):null,
+      isCard?h('div',{style:{flex:1,minWidth:0}},
         h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',aspectRatio:'1.91 / 1',objectFit:'cover',display:'block',background:T.thumbBg},onError:e=>{e.target.style.display='none'}}),
         h('div',{style:{padding:'11px 14px 12px'}},
           h('div',{style:{fontSize:15.5,fontWeight:650,lineHeight:1.35,color:T.fg,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
-          (snippet||a.excerpt)?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:4,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},snippet||a.excerpt):null,
+          snippet?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:4,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},snippet):null,
           h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:9,fontSize:12,color:T.sub}},
             h('span',{style:{display:'flex'}},Icons.link(13)),
             h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(a.url)||a.source),
-            h('span',{style:{flexShrink:0}},timeAgo(a.addedAt)),
+            h('span',{style:{flexShrink:0,color:T.accent,fontWeight:600}},timeAgo(a.addedAt)),
             a.pinned?h('span',{style:{color:T.accent,display:'flex',flexShrink:0}},Icons.pin(12,true)):null,
             a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
             a.tags.slice(0,2).map(t=>h('span',{key:t,style:{color:T.accent,flexShrink:0}},'#'+t))
           )
         )
-      ):h('div',{style:{flex:1,minWidth:0}},
-        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17.5,fontWeight:600,lineHeight:1.3,color:T.fg,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
-        metaLine?h('div',{style:{fontSize:12.5,color:T.sub,marginTop:4,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},metaLine):null,
-        snippet?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5}},snippet)
-          :(a.excerpt?h('div',{style:{fontSize:13.5,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.excerpt):null),
-        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:7,fontSize:11.5,color:T.sub}},
-          a.pinned?h('span',{style:{color:T.accent,display:'flex'}},Icons.pin(12,true)):null,
-          a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
-          a.addedAt?h('span',{style:{whiteSpace:'nowrap'}},fmtDateShort(a.addedAt)):null,
-          h('span',null,footer),
-          a.highlights.length?h('span',{style:{display:'flex',alignItems:'center',gap:3}},Icons.highlight(12),String(a.highlights.length)):null,
-          a.tags.slice(0,3).map(t=>h('span',{key:t,style:{color:T.accent}},'#'+t))
-        ),
-        !done&&prog>0.01?h('div',{style:{height:2.5,background:T.hair,borderRadius:2,marginTop:7,overflow:'hidden',maxWidth:120}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:T.sub,borderRadius:2}})):null
+      ):h('div',{style:{flex:1,minWidth:0,display:'flex',flexDirection:'column',justifyContent:'space-between'}},
+        h('div',null,
+          h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:16.5,fontWeight:600,lineHeight:1.32,color:T.fg,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
+          snippet?h('div',{style:{fontSize:13,color:T.meta,lineHeight:1.45,marginTop:5,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},snippet):null),
+        h('div',null,
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:7,fontSize:11.5,color:T.sub}},
+            metaLine?h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'55%'}},metaLine):null,
+            a.addedAt?h('span',{style:{whiteSpace:'nowrap',color:T.accent,fontWeight:600}},timeAgo(a.addedAt)):null,
+            a.pinned?h('span',{style:{color:T.accent,display:'flex'}},Icons.pin(12,true)):null,
+            a.liked?h('span',{style:{color:'#d4564a',display:'flex'}},Icons.heart(12,true)):null,
+            h('span',{style:{whiteSpace:'nowrap'}},footer),
+            a.highlights.length?h('span',{style:{display:'flex',alignItems:'center',gap:3}},Icons.highlight(12),String(a.highlights.length)):null,
+            a.tags.slice(0,2).map(t=>h('span',{key:t,style:{color:T.accent}},'#'+t))
+          ),
+          !done&&prog>0.01?h('div',{style:{height:2.5,background:T.hair,borderRadius:2,marginTop:7,overflow:'hidden',maxWidth:120}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:T.sub,borderRadius:2}})):null)
       ),
-      !isCard&&(a.image||a.isVideo)?h('div',{style:{width:64,height:64,borderRadius:5,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden'}},
+      !isCard&&(a.image||a.isVideo)?h('div',{style:{width:92,height:72,borderRadius:8,background:T.thumbBg,flexShrink:0,position:'relative',overflow:'hidden',alignSelf:'center'}},
         a.image?h('img',{src:a.image,alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover',display:'block'},onError:e=>{e.target.style.display='none'}}):null,
         a.isVideo?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
           h('div',{style:{width:30,height:30,borderRadius:'50%',background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:2}},Icons.play(15,true))):null,
@@ -1768,14 +1770,14 @@ function ConfirmSheet({T,title,message,confirmLabel,onConfirm,onClose}){
 }
 
 /* ============================== article action sheet ============================== */
-function ArticleSheet({T,a,onAction,onClose}){
+function ArticleSheet({T,a,reading,onAction,onClose}){
   const act=k=>()=>onAction(k);
   return h(Sheet,{T,onClose},
     h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair}},
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
     h(ARow,{T,icon:Icons.checkCircle(21,(a.progress||0)>=0.97),label:(a.progress||0)>=0.97?(a.isVideo?'Mark as unwatched':'Mark as unread'):(a.isVideo?'Mark as watched':'Mark as read'),onClick:act('read')}),
-    h(ARow,{T,icon:Icons.search(21),label:'Search',sub:'Search all your articles, posts and videos',onClick:act('search')}),
+    h(ARow,{T,icon:Icons.search(21),label:reading?'Search in article':'Search',sub:reading?'Find words in this article':'Search all your articles, posts and videos',onClick:act('search')}),
     h(ARow,{T,icon:Icons.pin(21,a.pinned),label:a.pinned?'Unpin':'Pin to top',onClick:act('pin')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
@@ -1915,11 +1917,14 @@ function AaPopover({T,S,update,onClose}){
 }
 
 /* ============================== reader ============================== */
-function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetry}){
+function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetry,findReq}){
   const scrollRef=useRef(null),contentRef=useRef(null);
   const [aaOpen,setAaOpen]=useState(false);
   const [selbar,setSelbar]=useState(null);
   const [retrying,setRetrying]=useState(false);
+  const [find,setFind]=useState(null); // {q} — find-in-article bar
+  const [findPos,setFindPos]=useState({count:0,idx:0});
+  const findMarks=useRef([]);
   const restored=useRef(null),lastSaved=useRef(a.progress||0);
   const pendingProgress=useRef(null),progressTimer=useRef(null);
 
@@ -1978,6 +1983,66 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     }
   };
 
+  /* ---------- find in article ---------- */
+  const clearFinds=()=>{
+    const root=contentRef.current;
+    findMarks.current=[];
+    if(!root)return;
+    root.querySelectorAll('mark.fnd').forEach(m=>{const p=m.parentNode;if(!p)return;while(m.firstChild)p.insertBefore(m.firstChild,m);p.removeChild(m)});
+    root.normalize();
+  };
+  const gotoMatch=(i,marks)=>{
+    const ms=marks||findMarks.current;
+    ms.forEach((m,j)=>m.classList.toggle('cur',j===i));
+    const m=ms[i],el=scrollRef.current;
+    if(m&&el){
+      const r=m.getBoundingClientRect(),er=el.getBoundingClientRect();
+      el.scrollTo({top:el.scrollTop+r.top-er.top-er.height*0.35,behavior:'smooth'});
+    }
+  };
+  const runFind=q=>{
+    clearFinds();
+    const root=contentRef.current;
+    if(!root||!q||q.trim().length<2){setFindPos({count:0,idx:0});return}
+    const needle=q.trim().toLowerCase();
+    const walker=document.createTreeWalker(root,NodeFilter.SHOW_TEXT,null);
+    const texts=[];let n;
+    while((n=walker.nextNode()))texts.push(n);
+    const marks=[];
+    for(const node of texts){
+      if(marks.length>=200)break;
+      let t=node;
+      while(t&&marks.length<200){
+        const i=t.nodeValue.toLowerCase().indexOf(needle);
+        if(i<0)break;
+        const hit=t.splitText(i);
+        t=hit.splitText(needle.length);
+        const m=document.createElement('mark');
+        m.className='fnd';
+        hit.parentNode.insertBefore(m,hit);
+        m.appendChild(hit);
+        marks.push(m);
+      }
+    }
+    findMarks.current=marks;
+    setFindPos({count:marks.length,idx:0});
+    if(marks.length)gotoMatch(0,marks);
+  };
+  const navFind=dir=>{
+    const c=findPos.count;if(!c)return;
+    const i=(findPos.idx+dir+c)%c;
+    setFindPos(s=>({...s,idx:i}));
+    gotoMatch(i);
+  };
+  const closeFind=()=>{clearFinds();setFind(null);setFindPos({count:0,idx:0})};
+  useEffect(()=>{if(findReq)setFind(f=>f||{q:''})},[findReq]);
+  useEffect(()=>{ // debounce the actual DOM walk while typing
+    if(!find)return;
+    const t=setTimeout(()=>runFind(find.q),250);
+    return()=>clearTimeout(t);
+  },[find&&find.q]);
+  useEffect(()=>{setFind(null);setFindPos({count:0,idx:0});findMarks.current=[]},[a.id]); // reset when switching articles
+
   const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null)};
   const selAct=kind=>{
     const text=selbar.text;
@@ -1997,6 +2062,15 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   return h('div',{style:{position:'fixed',inset:0,zIndex:40,background:T.bg,color:T.fg,display:'flex',flexDirection:'column'},className:'fdin'},
     h('div',{style:{position:'absolute',top:0,left:0,right:0,height:'calc(2px + '+SAFE_T+')',zIndex:5,background:T.bg}},
       h('div',{style:{position:'absolute',bottom:0,left:0,height:2,width:((a.progress||0)*100)+'%',background:T.sub,transition:'width 300ms'}})),
+    find?h('div',{className:'fdin',style:{position:'absolute',top:'calc(8px + '+SAFE_T+')',left:10,right:10,zIndex:45,display:'flex',alignItems:'center',gap:6,background:T.menuBg,border:'1px solid '+T.hair,borderRadius:12,padding:'6px 10px',boxShadow:'0 8px 30px rgba(0,0,0,.28)'}},
+      h('span',{style:{display:'flex',color:T.sub,flexShrink:0}},Icons.search(16)),
+      h('input',{autoFocus:true,value:find.q,onChange:e=>setFind({q:e.target.value}),placeholder:'Find in article',enterKeyHint:'search',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        onKeyDown:e=>{if(e.key==='Enter'){e.preventDefault();navFind(1)}else if(e.key==='Escape')closeFind()},
+        style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.menuFg||T.fg,fontSize:16,padding:'4px 0'}}),
+      h('span',{style:{fontSize:12.5,color:T.sub,flexShrink:0,minWidth:34,textAlign:'center'}},findPos.count?((findPos.idx+1)+'/'+findPos.count):(find.q.trim().length>1?'0/0':'')),
+      h('button',{onClick:()=>navFind(-1),'aria-label':'Previous match',className:'act90',style:{display:'flex',color:findPos.count?(T.menuFg||T.fg):T.sub,padding:5,transform:'rotate(-90deg)'}},Icons.chevR(18)),
+      h('button',{onClick:()=>navFind(1),'aria-label':'Next match',className:'act90',style:{display:'flex',color:findPos.count?(T.menuFg||T.fg):T.sub,padding:5,transform:'rotate(90deg)'}},Icons.chevR(18)),
+      h('button',{onClick:closeFind,'aria-label':'Close find bar',className:'act90',style:{display:'flex',color:T.sub,padding:5}},Icons.x(18))):null,
     h('div',{ref:scrollRef,onScroll,className:'sy',
       onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
       style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingTop:'calc(26px + '+SAFE_T+')',paddingBottom:'calc(76px + '+SAFE_B+')'}},
@@ -2256,19 +2330,20 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
-    newsBody=h('div',null,
+    newsBody=h('div',{style:{padding:'5px 0'}},
       items.map((it,i)=>{
         const busy=busyUrl===it.url;
-        return h('button',{key:it.url+i,onClick:()=>open(it),className:'act98',
-          style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'15px 16px 14px',borderBottom:'1px solid '+T.hair,color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
-          h('div',{style:{flex:1,minWidth:0}},
-            h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
-            h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
-              it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
-              it.source&&it.publishedAt?h('span',null,'·'):null,
-              it.publishedAt?h('span',{style:{flexShrink:0}},timeAgo(it.publishedAt)):null)),
-          h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
-            busy?h(Spinner,{T,size:17}):Icons.download(18)));
+        return h('div',{key:it.url+i,style:{padding:'5px 12px'}},
+          h('button',{onClick:()=>open(it),className:'act98',
+            style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'14px 14px 13px',borderRadius:13,border:'1px solid '+T.hair,background:T.card,boxShadow:'0 1px 3px rgba(0,0,0,.05)',color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
+            h('div',{style:{flex:1,minWidth:0}},
+              h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:16.5,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
+              h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
+                it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
+                it.source&&it.publishedAt?h('span',null,'·'):null,
+                it.publishedAt?h('span',{style:{flexShrink:0,color:T.accent,fontWeight:600}},timeAgo(it.publishedAt)):null)),
+            h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
+              busy?h(Spinner,{T,size:17}):Icons.download(18))));
       }),
       h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
         'Tap a story to save it for offline reading. Headlines via Google News.'));
@@ -4357,6 +4432,7 @@ function App(){
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
   const listScrollRef=useRef(null); // main list scroller — used to jump to top from the wordmark
   const searchRef=useRef(null); // global search field — focused when entering the Search scope
+  const [findReq,setFindReq]=useState(0); // bumping this opens the Reader's find-in-article bar
   useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
@@ -4612,7 +4688,12 @@ function App(){
       case 'open':setSheet(null);openExternalUrl(a.url);break;
       case 'delete':setSheet({type:'confirm',kind:'delete',ids:[id]});break;
       case 'sheet':setSheet({type:'article',id});break;
-      case 'search':setSheet(null);setReadingId(null);setQuery('');setScope({type:'search'});break;
+      case 'search':
+        setSheet(null);
+        // while reading, Search finds text inside the open article; from a list it's still global
+        if(readingId&&readingId===id)setFindReq(x=>x+1);
+        else{setReadingId(null);setQuery('');setScope({type:'search'})}
+        break;
       case 'edit':setSheet({type:'editChoice',id});break;
       case 'ai':setSheet(null);setAiOpen({articleId:id});break;
     }
@@ -4898,7 +4979,7 @@ function App(){
 
     reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
-      onRetry:()=>retryFetch(reading.id)}):null,
+      onRetry:()=>retryFetch(reading.id),findReq}):null,
 
     !selecting&&!reading?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
       style:{position:'fixed',right:18,bottom:'calc('+(ttsUI?94:24)+'px + '+SAFE_B+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
@@ -4931,7 +5012,7 @@ function App(){
 
     sheet&&sheet.type==='quickNote'?h(QuickNoteSheet,{T,onClose:()=>setSheet(null),onSave:saveQuickNote}):null,
 
-    sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
+    sheet&&sheet.type==='article'?(()=>{const a=byId(sheet.id);return a?h(ArticleSheet,{T,a,reading:readingId===sheet.id,onClose:()=>setSheet(null),onAction:k=>doAction(sheet.id,k)}):null})():null,
 
     sheet&&sheet.type==='move'?h(MoveSheet,{T,folders:data.folders,count:sheet.ids.length,onClose:()=>setSheet(null),
       onMove:fid=>moveArticles(sheet.ids,fid),
