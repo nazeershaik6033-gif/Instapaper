@@ -1949,6 +1949,23 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     patch({html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words)});
     toastFn('Block removed');
   };
+  // mode: 'above' keeps blockEl and everything after it; 'below' keeps blockEl and everything before it —
+  // same range-clear EditBlocksSheet's long-press menu offers, for junk lists (e.g. a wall of "Gold Rate…"
+  // links) that need clearing in bulk rather than one block at a time.
+  const removeBlockRange=(blockEl,mode)=>{
+    const root=contentRef.current;
+    if(!root||!blockEl)return;
+    const children=Array.from(root.children);
+    const idx=children.indexOf(blockEl);
+    if(idx<0)return;
+    const kept=mode==='above'?children.slice(idx):children.slice(0,idx+1);
+    const html=kept.map(c=>c.outerHTML).join('\n');
+    const text=htmlToText(html);
+    if(!text){toastFn("That would remove everything — not saved");return}
+    const words=countWords(text);
+    patch({html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words)});
+    toastFn(mode==='above'?'Removed everything above':'Removed everything below');
+  };
 
   useEffect(()=>()=>{ // flush any pending progress write when switching articles or closing
     clearTimeout(progressTimer.current);
@@ -2092,7 +2109,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       const el=blockPress.current.el;
       vibrate(10);
       const r=el.getBoundingClientRect();
-      setBlockPopup({el,top:Math.max(r.top-46,56),left:clamp(r.left+r.width/2,90,window.innerWidth-90)});
+      setBlockPopup({el,top:Math.max(r.top-134,56),left:clamp(r.left+r.width/2,110,window.innerWidth-110)});
     },480);
   };
   const moveBlockPress=e=>{
@@ -2152,9 +2169,13 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       [['Highlight','hl'],['Note','note'],['Copy','copy'],['Share','share']].concat(selbar.blockEl?[['Remove','remove']]:[]).map(([l,k],i)=>h('button',{key:k,onClick:()=>selAct(k),style:{padding:'11px 14px',color:k==='remove'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
     blockPopup?h(Fragment,null,
       h('div',{onClick:()=>setBlockPopup(null),style:{position:'fixed',inset:0,zIndex:65}}),
-      h('div',{className:'fdin',style:{position:'fixed',top:blockPopup.top,left:blockPopup.left,transform:'translateX(-50%)',zIndex:66,display:'flex',alignItems:'center',gap:6,background:'#26262a',borderRadius:11,padding:'9px 14px',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
-        h('span',{style:{display:'flex',color:'#ff6b5c'}},Icons.trash(15)),
-        h('button',{onClick:()=>{removeBlockEl(blockPopup.el);setBlockPopup(null)},style:{color:'#ff6b5c',fontSize:13.5,fontWeight:600}},'Remove this block'))):null,
+      h('div',{className:'fdin',style:{position:'fixed',top:blockPopup.top,left:blockPopup.left,transform:'translateX(-50%)',zIndex:66,minWidth:200,background:'#26262a',borderRadius:12,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
+        [['Remove above',()=>removeBlockRange(blockPopup.el,'above'),h('span',{style:{display:'flex',transform:'rotate(-90deg)'}},Icons.chevR(15))],
+         ['Remove this block',()=>removeBlockEl(blockPopup.el),Icons.trash(15)],
+         ['Remove below',()=>removeBlockRange(blockPopup.el,'below'),h('span',{style:{display:'flex',transform:'rotate(90deg)'}},Icons.chevR(15))]
+        ].map(([l,fn,icon],i)=>h('button',{key:l,onClick:()=>{fn();setBlockPopup(null)},
+          style:{display:'flex',alignItems:'center',gap:10,width:'100%',padding:'11px 14px',color:'#ff6b5c',fontSize:13.5,fontWeight:500,borderTop:i?'1px solid #3a3a3f':'none',textAlign:'left'}},
+          icon,l)))):null,
     h('div',{style:{position:'absolute',bottom:0,left:0,right:0,display:'flex',alignItems:'center',justifyContent:'space-around',background:T.bg,borderTop:'1px solid '+T.hair,padding:'5px 6px calc(5px + '+SAFE_B+')'}},
       tb(Icons.back(23),()=>onAction('close')),
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
@@ -2356,7 +2377,12 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
   const [briefTab,setBriefTab]=useState('stories');
   const reqRef=useRef(0);
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
-  const allSrcs=headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}));
+  // saved source lists can predate fields (like epaper) later added to PRESET_SOURCES —
+  // backfill those from the current master list without touching the user's own choices.
+  const allSrcs=(headlinesSources||PRESET_SOURCES.map(s=>({...s,enabled:false,custom:false}))).map(s=>{
+    const m=PRESET_SOURCES.find(p=>p.domain===s.domain);
+    return m?{...s,rss:s.rss!=null?s.rss:m.rss,epaper:s.epaper!=null?s.epaper:m.epaper}:s;
+  });
   const enabledSrcs=allSrcs.filter(s=>s.enabled);
   const load=useCallback(force=>{
     const id=++reqRef.current;
