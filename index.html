@@ -45,8 +45,14 @@ try{
 <link rel="preconnect" href="https://fonts.googleapis.com"/>
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin/>
 <link href="https://fonts.googleapis.com/css2?family=Playfair+Display:wght@600;700&family=Lora:ital,wght@0,400;0,500;0,600;0,700;1,400;1,500&family=Merriweather:ital,wght@0,400;0,700;1,400&family=PT+Serif:ital,wght@0,400;0,700;1,400&family=Literata:ital,opsz,wght@0,7..72,400;0,7..72,600;1,7..72,400&family=Inter:wght@400;500;600&family=Noto+Serif+Telugu:wght@400;600&family=Noto+Serif+Devanagari:wght@400;600&display=swap" rel="stylesheet"/>
+<!-- Bootstrap: used only for its img-fluid / table-responsive utilities that keep
+     scraped article content (oversized images, tables, embeds) from forcing
+     horizontal scroll in the reader. Loaded before our own <style> block so our
+     rules win the cascade on any overlapping selector. -->
+<link href="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/css/bootstrap.min.css" rel="stylesheet" crossorigin/>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js" crossorigin></script>
 <script src="https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.jsdelivr.net/npm/bootstrap@5.3.3/dist/js/bootstrap.bundle.min.js" crossorigin defer></script>
 <style>
 *{-webkit-tap-highlight-color:transparent;box-sizing:border-box}
 html{height:-webkit-fill-available;height:100dvh}
@@ -59,6 +65,11 @@ input:focus,textarea:focus,select:focus{outline:none}
 a{-webkit-touch-callout:default}
 .sx::-webkit-scrollbar,.sy::-webkit-scrollbar{display:none}
 .sx,.sy{scrollbar-width:none}
+/* Vertical lists/panels: momentum-scroll, but don't let an overscroll at the
+   top/bottom chain into the body and rubber-band the whole app; don't let
+   accidentally-wide content force a sideways scrollbar either. */
+.sy{overscroll-behavior-y:contain;-webkit-overflow-scrolling:touch;overflow-x:hidden}
+.sx{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
 /* centered phone frame so the mobile layout doesn't stretch on wide screens */
 .appframe{position:relative;width:100%;height:100dvh}
 @media(min-width:520px){
@@ -85,12 +96,15 @@ a{-webkit-touch-callout:default}
 .trc{transition:background-color 180ms,border-color 180ms,color 180ms,opacity 180ms}
 /* ---------- reader content ---------- */
 .rc,.rc *{-webkit-user-select:text!important;user-select:text!important}
+.rc{overflow-wrap:anywhere;word-break:break-word}
 .rc p{margin:0 0 1.15em}
 .rc h2,.rc h3,.rc h4,.rc h5,.rc h6{line-height:1.3;margin:1.5em 0 .6em;font-weight:700}
 .rc h2{font-size:1.32em}
 .rc h3{font-size:1.18em}
 .rc h4,.rc h5,.rc h6{font-size:1.05em}
 .rc img{max-width:100%;height:auto;border-radius:7px;margin:1.3em auto;display:block}
+.rc iframe,.rc video,.rc embed,.rc object{max-width:100%}
+.rc table{max-width:100%}
 .rc figure{margin:1.3em 0}
 .rc figcaption{font-size:.78em;color:var(--meta);text-align:center;margin-top:-.6em;line-height:1.45}
 .rc blockquote{margin:1.3em 0;padding:.1em 0 .1em 1.1em;border-left:3px solid var(--hair);font-style:italic;color:inherit}
