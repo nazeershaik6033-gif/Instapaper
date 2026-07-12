@@ -1925,8 +1925,30 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const [find,setFind]=useState(null); // {q} — find-in-article bar
   const [findPos,setFindPos]=useState({count:0,idx:0});
   const findMarks=useRef([]);
+  const [blockPopup,setBlockPopup]=useState(null); // {el,top,left} — long-pressed a non-text block (image/embed/table)
+  const blockPress=useRef({t:null,x:0,y:0,el:null});
   const restored=useRef(null),lastSaved=useRef(a.progress||0);
   const pendingProgress=useRef(null),progressTimer=useRef(null);
+
+  // the top-level child of contentRef (a "block") that contains a given node — same
+  // unit EditBlocksSheet works on, so removing one here stays consistent with that flow.
+  const findBlockEl=node=>{
+    const root=contentRef.current;
+    let el=node;
+    while(el&&el.nodeType!==1)el=el.parentNode;
+    while(el&&el!==root&&el.parentNode!==root)el=el.parentNode;
+    return(el&&el!==root)?el:null;
+  };
+  const removeBlockEl=blockEl=>{
+    const root=contentRef.current;
+    if(!root||!blockEl)return;
+    const html=Array.from(root.children).filter(c=>c!==blockEl).map(c=>c.outerHTML).join('\n');
+    const text=htmlToText(html);
+    if(!text){toastFn("Can't remove the last block");return}
+    const words=countWords(text);
+    patch({html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words)});
+    toastFn('Block removed');
+  };
 
   useEffect(()=>()=>{ // flush any pending progress write when switching articles or closing
     clearTimeout(progressTimer.current);
@@ -1957,7 +1979,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
         const text=sel.toString().replace(/\s+/g,' ').trim();
         if(text.length>1){
           const r=sel.getRangeAt(0).getBoundingClientRect();
-          setSelbar({top:Math.max(r.top-56,56),left:clamp(r.left+r.width/2,110,window.innerWidth-110),text});
+          setSelbar({top:Math.max(r.top-56,56),left:clamp(r.left+r.width/2,110,window.innerWidth-110),text,blockEl:findBlockEl(sel.anchorNode)});
           return;
         }
       }
@@ -1970,6 +1992,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const onScroll=()=>{
     const el=scrollRef.current;if(!el)return;
     if(selbar)setSelbar(null);
+    if(blockPopup)setBlockPopup(null);
     const max=el.scrollHeight-el.clientHeight;
     const p=max>0?clamp(el.scrollTop/max,0,1):1;
     if(Math.abs(p-lastSaved.current)>0.02||(p>=0.97&&lastSaved.current<0.97)){
@@ -2042,6 +2065,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     return()=>clearTimeout(t);
   },[find&&find.q]);
   useEffect(()=>{setFind(null);setFindPos({count:0,idx:0});findMarks.current=[]},[a.id]); // reset when switching articles
+  useEffect(()=>{setBlockPopup(null);setSelbar(null)},[a.id,a.html]); // stale block/selection refs after content changes
 
   const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null)};
   const selAct=kind=>{
@@ -2050,7 +2074,31 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     else if(kind==='note')addHighlight(text,true);
     else if(kind==='copy'){copyText(text);toastFn('Copied')}
     else if(kind==='share')shareText(a.title,'"'+text+'"',a.url);
+    else if(kind==='remove')removeBlockEl(selbar.blockEl);
     clearSel();
+  };
+
+  /* long-press a block with no selectable text (image/embed/table/divider) to remove it directly */
+  const clearBlockPress=()=>{if(blockPress.current.t){clearTimeout(blockPress.current.t);blockPress.current.t=null}};
+  const startBlockPress=e=>{
+    const t=e.touches?e.touches[0]:e;
+    blockPress.current.x=t.clientX;blockPress.current.y=t.clientY;
+    blockPress.current.el=findBlockEl(e.target);
+    clearBlockPress();
+    if(!blockPress.current.el)return;
+    blockPress.current.t=setTimeout(()=>{
+      const sel=window.getSelection();
+      if(sel&&!sel.isCollapsed)return; // text selection already claimed this press — let Highlight/Note/Copy/Remove win instead
+      const el=blockPress.current.el;
+      vibrate(10);
+      const r=el.getBoundingClientRect();
+      setBlockPopup({el,top:Math.max(r.top-46,56),left:clamp(r.left+r.width/2,90,window.innerWidth-90)});
+    },480);
+  };
+  const moveBlockPress=e=>{
+    if(!e.touches)return;
+    const t=e.touches[0];
+    if(Math.abs(t.clientX-blockPress.current.x)>10||Math.abs(t.clientY-blockPress.current.y)>10)clearBlockPress();
   };
 
   const doRetry=async()=>{setRetrying(true);try{await onRetry()}catch(e){toastFn('Still couldn\'t download this page')}setRetrying(false)};
@@ -2085,6 +2133,8 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
         ):null,
         !a.isVideo&&!heroDupe&&a.image?h('img',{src:a.image,alt:'',style:{width:'100%',borderRadius:8,marginBottom:22,display:'block'},onError:e=>{e.target.style.display='none'}}):null,
         !a.isVideo&&a.html?h('div',{ref:contentRef,className:'rc',
+          onTouchStart:startBlockPress,onTouchMove:moveBlockPress,onTouchEnd:clearBlockPress,
+          onMouseDown:startBlockPress,onMouseUp:clearBlockPress,onMouseLeave:clearBlockPress,
           style:{fontFamily:fontCss(S.font),fontSize:S.fontSize,lineHeight:S.lineHeight,color:T.fg,
             '--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta},
           dangerouslySetInnerHTML:{__html:a.html}}):null,
@@ -2099,7 +2149,12 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
           h('a',{href:a.url,target:'_blank',rel:'noopener',style:{color:T.accent,fontSize:14}},'View original · '+(a.source||a.url))):null
       )),
     selbar?h('div',{className:'fdin',style:{position:'fixed',top:selbar.top,left:selbar.left,transform:'translateX(-50%)',zIndex:66,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
-      [['Highlight','hl'],['Note','note'],['Copy','copy'],['Share','share']].map(([l,k],i)=>h('button',{key:k,onClick:()=>selAct(k),style:{padding:'11px 14px',color:'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
+      [['Highlight','hl'],['Note','note'],['Copy','copy'],['Share','share']].concat(selbar.blockEl?[['Remove','remove']]:[]).map(([l,k],i)=>h('button',{key:k,onClick:()=>selAct(k),style:{padding:'11px 14px',color:k==='remove'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
+    blockPopup?h(Fragment,null,
+      h('div',{onClick:()=>setBlockPopup(null),style:{position:'fixed',inset:0,zIndex:65}}),
+      h('div',{className:'fdin',style:{position:'fixed',top:blockPopup.top,left:blockPopup.left,transform:'translateX(-50%)',zIndex:66,display:'flex',alignItems:'center',gap:6,background:'#26262a',borderRadius:11,padding:'9px 14px',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
+        h('span',{style:{display:'flex',color:'#ff6b5c'}},Icons.trash(15)),
+        h('button',{onClick:()=>{removeBlockEl(blockPopup.el);setBlockPopup(null)},style:{color:'#ff6b5c',fontSize:13.5,fontWeight:600}},'Remove this block'))):null,
     h('div',{style:{position:'absolute',bottom:0,left:0,right:0,display:'flex',alignItems:'center',justifyContent:'space-around',background:T.bg,borderTop:'1px solid '+T.hair,padding:'5px 6px calc(5px + '+SAFE_B+')'}},
       tb(Icons.back(23),()=>onAction('close')),
       tb(Icons.heart(23,a.liked),()=>onAction('like'),{color:a.liked?'#d4564a':T.fg}),
