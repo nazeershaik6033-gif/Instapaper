@@ -1843,6 +1843,24 @@ function buildTextIndex(root){
   }
   return{norm,entries};
 }
+function fixReaderMedia(root){
+  // Scraped article HTML often carries fixed pixel widths (old <table> layouts,
+  // embed <iframe>s, <img width="900">) that force horizontal scroll on a phone.
+  // Bootstrap's img-fluid/table-responsive utilities are built exactly for this.
+  if(!root)return;
+  root.querySelectorAll('img,video').forEach(el=>{
+    el.classList.add('img-fluid');
+    el.loading='lazy';el.decoding='async';
+  });
+  root.querySelectorAll('iframe,embed,object').forEach(el=>el.classList.add('w-100'));
+  root.querySelectorAll('table').forEach(t=>{
+    if(t.parentElement&&t.parentElement.classList.contains('table-responsive'))return;
+    const wrap=document.createElement('div');
+    wrap.className='table-responsive';
+    t.parentNode.insertBefore(wrap,t);
+    wrap.appendChild(t);
+  });
+}
 function applyHighlights(root,highlights){
   unwrapMarks(root);
   for(const hl of highlights){
@@ -1921,9 +1939,9 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     });
   },[a.id]);
 
-  useEffect(()=>{ // re-anchor highlights whenever they change
+  useEffect(()=>{ // tame oversized scraped media, then re-anchor highlights
     const el=contentRef.current;
-    if(el&&a.html)applyHighlights(el,a.highlights);
+    if(el&&a.html){fixReaderMedia(el);applyHighlights(el,a.highlights)}
   },[a.id,a.html,a.highlights]);
 
   useEffect(()=>{ // selection toolbar
