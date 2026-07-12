@@ -1775,6 +1775,7 @@ function ArticleSheet({T,a,onAction,onClose}){
       h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:17,fontWeight:600,lineHeight:1.3}},a.title),
       h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},a.source||'')),
     h(ARow,{T,icon:Icons.checkCircle(21,(a.progress||0)>=0.97),label:(a.progress||0)>=0.97?(a.isVideo?'Mark as unwatched':'Mark as unread'):(a.isVideo?'Mark as watched':'Mark as read'),onClick:act('read')}),
+    h(ARow,{T,icon:Icons.search(21),label:'Search',sub:'Search all your articles, posts and videos',onClick:act('search')}),
     h(ARow,{T,icon:Icons.pin(21,a.pinned),label:a.pinned?'Unpin':'Pin to top',onClick:act('pin')}),
     h(ARow,{T,icon:Icons.heart(21,a.liked),label:a.liked?'Unlike':'Like',onClick:act('like')}),
     h(ARow,{T,icon:Icons.archive(21),label:a.archived?'Move to Home':'Archive',onClick:act('archive')}),
@@ -4582,6 +4583,7 @@ function App(){
       case 'open':setSheet(null);openExternalUrl(a.url);break;
       case 'delete':setSheet({type:'confirm',kind:'delete',ids:[id]});break;
       case 'sheet':setSheet({type:'article',id});break;
+      case 'search':setSheet(null);setReadingId(null);setQuery('');setScope({type:'search'});break;
       case 'edit':setSheet({type:'editChoice',id});break;
       case 'ai':setSheet(null);setAiOpen({articleId:id});break;
     }
