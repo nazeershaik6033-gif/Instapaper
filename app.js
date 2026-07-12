@@ -2271,7 +2271,7 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
             h('a',{href:'https://'+s.domain,target:'_blank',rel:'noopener noreferrer',style:{display:'flex',alignItems:'center',gap:2,color:T.sub,fontSize:11.5,textDecoration:'none'},onClick:e=>e.stopPropagation()},
               s.domain,Icons.external(11)),
             s.epaper?h('a',{href:s.epaper,target:'_blank',rel:'noopener noreferrer',style:{display:'flex',alignItems:'center',gap:2,color:T.accent,fontSize:11.5,fontWeight:500,textDecoration:'none'},onClick:e=>e.stopPropagation()},
-              'ePaper',Icons.external(11)):null)),
+              'ePaper',Icons.external(11)):h('span',{style:{display:'flex',alignItems:'center',gap:2,color:T.sub,fontSize:11.5,opacity:.6}},'No ePaper'))),
         s.custom?h('button',{onClick:()=>deleteSrc(s.domain),className:'act90',style:{display:'flex',color:T.danger,padding:4,marginRight:2}},Icons.trash(17)):null,
         toggle(s.enabled,()=>toggleSrc(s.domain)))),
       h('div',{style:{padding:'14px 16px',borderTop:'1px solid '+T.hair}},
@@ -2363,7 +2363,9 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
                 Icons.globe(13),'Website'),
               s.epaper?h('button',{onClick:()=>openUrl(s.epaper),className:'act95',
                 style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.accent,fontSize:12.5,fontWeight:500}},
-                Icons.external(13),'ePaper'):null)))));
+                Icons.external(13),'ePaper'):h('span',{
+                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.sub,fontSize:12.5,fontWeight:500,opacity:.6}},
+                Icons.external(13),'No ePaper'))))));
   const tabBar=h('div',{style:{display:'flex',borderBottom:'1px solid '+T.hair}},
     [['Top Stories','stories'],['Sources','sources']].map(([label,key])=>{
       const active=briefTab===key;
