@@ -1903,6 +1903,12 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const [selbar,setSelbar]=useState(null);
   const [retrying,setRetrying]=useState(false);
   const restored=useRef(null),lastSaved=useRef(a.progress||0);
+  const pendingProgress=useRef(null),progressTimer=useRef(null);
+
+  useEffect(()=>()=>{ // flush any pending progress write when switching articles or closing
+    clearTimeout(progressTimer.current);
+    if(pendingProgress.current!=null){patch({progress:pendingProgress.current});pendingProgress.current=null}
+  },[a.id]);
 
   useEffect(()=>{ // restore reading position once per article
     if(restored.current===a.id)return;
@@ -1945,7 +1951,12 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     const p=max>0?clamp(el.scrollTop/max,0,1):1;
     if(Math.abs(p-lastSaved.current)>0.02||(p>=0.97&&lastSaved.current<0.97)){
       lastSaved.current=p;
-      patch({progress:p});
+      // debounce the actual (app-wide) state write until the scroll gesture settles —
+      // writing on every threshold tick forces a full app re-render mid-scroll, fighting
+      // the browser's native momentum scrolling and making it feel stuttery.
+      pendingProgress.current=p;
+      clearTimeout(progressTimer.current);
+      progressTimer.current=setTimeout(()=>{patch({progress:pendingProgress.current});pendingProgress.current=null},300);
     }
   };
 
