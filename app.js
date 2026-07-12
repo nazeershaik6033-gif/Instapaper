@@ -1497,7 +1497,7 @@ function ArticleRow({a,T,scopeType,onOpen,onLongPress,onSwipeLeft,onSwipeRight,s
   const metaLine=[a.source,a.author?('by '+a.author):''].filter(Boolean).join(' · ');
   const isCard=!!(a.isPost&&a.image); // social posts with media render as a WhatsApp-style rich card
 
-  return h('div',{className:'arow',style:{position:'relative',overflow:'hidden',background:T.bg}},
+  return h('div',{style:{position:'relative',overflow:'hidden',background:T.bg}},
     dx!==0?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:dx<0?'flex-end':'flex-start',padding:'0 22px',background:dx<0?leftAction.bg:'#d4564a',color:'#fff',fontSize:14,fontWeight:600}},dx<0?leftAction.label:(a.liked?'Unlike':'Like')):null,
     h('div',{onTouchStart:start,onTouchMove:move,onTouchEnd:end,onMouseDown:start,onMouseMove:e=>{if(e.buttons)move(e)},onMouseUp:end,onMouseLeave:clearLp,onClick:click,onContextMenu:e=>{e.preventDefault();if(!selecting)onLongPress()},
       style:{display:'flex',gap:14,padding:isCard?'12px 16px':'16px 16px 14px',borderBottom:'1px solid '+T.hair,transform:'translateX('+dx+'px)',transition:drag.current.lock==='h'?'none':'transform 220ms cubic-bezier(.2,.9,.2,1)',background:T.bg,touchAction:'pan-y',cursor:'pointer',opacity:selecting&&disabledSelect?0.35:1}},
@@ -1560,6 +1560,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
   const [q,setQ]=useState('');
   const m=s=>!q.trim()||(s||'').toLowerCase().includes(q.trim().toLowerCase());
   const NAV=[
+    {key:'search',icon:Icons.search(22),label:'Search',active:is('search'),onClick:()=>go('search')},
     {key:'home',icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')},
     {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
@@ -4240,6 +4241,7 @@ function sortArticles(arr,sort){
 function scopeTitle(scope,folders){
   switch(scope.type){
     case 'home':return 'Instapaper';
+    case 'search':return 'Search';
     case 'liked':return 'Liked';
     case 'archive':return 'Archive';
     case 'videos':return 'Videos';
@@ -4256,6 +4258,7 @@ function scopeTitle(scope,folders){
   }
 }
 const EMPTY_STATES={
+  search:['Search everything','Type above to search across all your articles, posts and videos — titles, tags and full text.'],
   home:['No articles yet','Tap + in the sidebar to save your first link.'],
   liked:['No liked articles','Tap the heart inside an article, or swipe right on it.'],
   archive:['Archive is empty','Swipe left on an article to archive it when you\'re done.'],
@@ -4323,6 +4326,8 @@ function App(){
   const pendingAlbumRef=useRef(null); // when set, the next upload lands straight in this album
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
   const listScrollRef=useRef(null); // main list scroller — used to jump to top from the wordmark
+  const searchRef=useRef(null); // global search field — focused when entering the Search scope
+  useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
 
@@ -4816,10 +4821,10 @@ function App(){
       isArticleScope&&!selecting?h('div',{style:{padding:'2px 16px 10px',flexShrink:0}},
         h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,borderRadius:11,padding:'9px 12px'}},
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
-          h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
+          h('input',{ref:searchRef,value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
           query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
-        (!q&&scope.type!=='archive')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:4,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 9px',cursor:'pointer',whiteSpace:'nowrap'});
+        (!q&&scope.type!=='archive'&&scope.type!=='search')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:4,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 9px',cursor:'pointer',whiteSpace:'nowrap'});
           const setS=patch=>update(d=>({...d,settings:{...d.settings,...patch}}));
           const TYPES=[['all','All'],['article','Article'],['video','Video'],['post','Post']];
           const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
