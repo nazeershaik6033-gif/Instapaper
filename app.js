@@ -1258,6 +1258,12 @@ function loadStore(){
   d.blogGroups=Array.isArray(d.blogGroups)?d.blogGroups:[];
   if(!d.blogFeeds||typeof d.blogFeeds!=='object')d.blogFeeds={};
   if(!d.blogSeen||typeof d.blogSeen!=='object')d.blogSeen={};
+  // Threads — topic timelines that mix notes, links, images & saved articles,
+  // optionally auto-fed by an RSS source. entries are stored newest-first.
+  d.threads=Array.isArray(d.threads)?d.threads:[];
+  d.threads.forEach(t=>{t.entries=Array.isArray(t.entries)?t.entries:[]});
+  if(!d.threadFeeds||typeof d.threadFeeds!=='object')d.threadFeeds={};
+  if(!d.threadSeen||typeof d.threadSeen!=='object')d.threadSeen={};
   d.vault=d.vault&&d.vault.ct?d.vault:null;
   if(!d.brief||typeof d.brief!=='object')d.brief={};
   d.brief.groups=Array.isArray(d.brief.groups)?d.brief.groups:[];
@@ -1365,7 +1371,8 @@ const Icons={
   crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
   rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
   drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'})),
-  news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18'))
+  news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
+  thread:s=>Svg({size:s},h('circle',{cx:6,cy:6,r:2.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:6,cy:18,r:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M6 8.2v7.6'),P('M11 6h9M11 18h9M11 12h6'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -1568,6 +1575,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
     {key:'photos',icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
     {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
+    {key:'threads',icon:Icons.thread(22),label:'Threads',active:is('threads'),onClick:()=>go('threads')},
     {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
     {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
   ];
@@ -2374,7 +2382,7 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
   const [configOpen,setConfigOpen]=useState(false);
-  const [briefTab,setBriefTab]=useState('stories');
+  const [briefTab,setBriefTab]=useState('sources');
   const reqRef=useRef(0);
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
   // saved source lists can predate fields (like epaper) later added to PRESET_SOURCES —
@@ -2549,7 +2557,7 @@ function BriefStories({T,S,sources,onRead}){
 /* ============================== blogs view ============================== */
 /* Add / edit / reorder saved blogs; feed autodiscovery runs on save. */
 /* one blog's row — favicon-less rss icon, name, "N new" badge, expand to preview posts */
-function BlogFeedRow({T,f,entries,loading,newCount,collapsed,onToggleCollapse,onOpen,onEntry,onLongPress,busyUrl}){
+function BlogFeedRow({T,f,entries,loading,newCount,collapsed,onToggleCollapse,onOpen,onVisitSite,onEntry,onLongPress,busyUrl}){
   const lp=useLongPress(onLongPress);
   if(!f.feedUrl){
     return h('div',Object.assign({},lp,{style:{display:'flex',gap:10,padding:'11px 4px',alignItems:'center'}}),
@@ -2576,6 +2584,7 @@ function BlogFeedRow({T,f,entries,loading,newCount,collapsed,onToggleCollapse,on
           h('span',{style:{color:'#e8801f',display:'flex',flexShrink:0}},Icons.rss(15)),
           h('div',{style:{fontSize:14,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
           loading?h(Spinner,{T,size:12}):(newCount?h('span',{style:{flexShrink:0,fontSize:9,fontWeight:700,color:'#fff',background:'#e8801f',borderRadius:5,padding:'2px 6px'}},newCount+' new'):null)),
+        onVisitSite?h('button',{onClick:onVisitSite,className:'act90','aria-label':'Visit site',title:'Visit site',style:{display:'flex',flexShrink:0,color:T.sub,padding:3}},Icons.globe(15)):null,
         h('button',{onClick:onToggleCollapse,className:'act90',style:{display:'flex',flexShrink:0,color:T.sub,padding:2,transform:collapsed?'none':'rotate(90deg)',transition:'transform 160ms'}},Icons.chevR(13))),
       collapsed?null:(es.length?h('div',{style:{marginTop:7,display:'flex',flexDirection:'column',gap:6}},es.slice(0,8).map(card))
         :h('div',{style:{marginTop:5,fontSize:12,color:T.sub}},loading?'Loading…':'No posts found yet.'))));
@@ -2633,6 +2642,277 @@ function BlogsClaudeSheet({T,feeds,blogFeeds,seen,onClose,toastFn}){
         g.entries.map(entryRow))):h('div',{style:{padding:'10px 0',fontSize:13.5,color:T.sub,lineHeight:1.5}},'No blog posts with recent updates yet — add blogs first.'),
       h(PrimaryBtn,{T,label:'Ask Claude',disabled:!(anyMode&&selSet.size),style:{margin:'16px 0 0',width:'100%'},onClick:doAsk}),
       h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full list is copied to your clipboard as a backup.')));
+}
+
+/* ============================== Threads ============================== */
+/* A Thread is a topic you follow over time (like an X thread of a developing
+   story). Its timeline mixes four entry kinds — note / link / image / saved
+   article — shown newest-first, and can optionally be auto-fed by an RSS
+   source whose new posts appear inline alongside your own entries. */
+const THREAD_COLORS=['#d4564a','#e8801f','#e0a020','#5cb85c','#2bb5a0','#3aa0e0','#6a7ef0','#9b59b6','#e0517f'];
+
+/* merge a thread's manual entries with its cached feed items, newest-first */
+function threadTimeline(thread,feedCache){
+  const manual=(thread.entries||[]).map(e=>({...e,_ts:e.createdAt||0}));
+  const feed=((feedCache&&feedCache.entries)||[]).map(e=>({
+    id:'feed:'+(e.id||e.url),kind:'feed',url:e.url,title:e.title,image:e.image||'',
+    source:thread.feedTitle||thread.site||domainOf(e.url||''),_ts:e.publishedMs||0,createdAt:e.publishedMs||0}));
+  return manual.concat(feed).sort((a,b)=>b._ts-a._ts);
+}
+
+/* image entry — resolves the blob from the loaded media array by mediaId */
+function ThreadImg({m,style,onClick,alt}){
+  const [url,setUrl]=useState('');
+  useEffect(()=>{if(!m||!m.blob){setUrl('');return}const u=URL.createObjectURL(m.blob);setUrl(u);return()=>URL.revokeObjectURL(u)},[m&&m.blob]);
+  if(!url)return h('div',{onClick,style:Object.assign({background:'#8884'},style||{})});
+  return h('img',{src:url,alt:alt||'',onClick,style:Object.assign({objectFit:'cover',display:'block'},style||{})});
+}
+
+/* one topic row in the list (own component so useLongPress obeys hook rules) */
+function ThreadCard({T,thread,newCount,preview,onOpen,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  const count=(thread.entries||[]).length;
+  return h('button',Object.assign({onClick:onOpen,className:'act98',
+    style:{display:'flex',gap:12,width:'100%',textAlign:'left',alignItems:'center',padding:'13px 14px',marginBottom:10,borderRadius:14,border:'1px solid '+T.hair,background:T.card,color:T.fg}},lp),
+    h('span',{style:{width:10,height:10,borderRadius:5,flexShrink:0,background:thread.color||THREAD_COLORS[0]}}),
+    h('div',{style:{flex:1,minWidth:0}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+        h('div',{style:{fontSize:16,fontWeight:600,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},thread.title),
+        newCount?h('span',{style:{flexShrink:0,fontSize:9.5,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px'}},newCount+' new'):null),
+      h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},preview),
+      h('div',{style:{fontSize:11,color:T.sub,marginTop:4,display:'flex',gap:8,alignItems:'center'}},
+        thread.feedUrl?h('span',{style:{display:'inline-flex',alignItems:'center',gap:3,color:'#e8801f'}},Icons.rss(11),'Live'):null,
+        h('span',null,count+(count===1?' entry':' entries')),
+        thread.updatedAt?h('span',null,'· '+timeAgo(thread.updatedAt)):null)),
+    h('span',{style:{color:T.sub,display:'flex',flexShrink:0}},Icons.chevR(16)));
+}
+
+/* the topic list — cards you tap into, plus "＋ New topic" */
+function ThreadsView({T,S,threads,threadFeeds,seen,media,articles,onThreads,onThreadFeeds,onSeen,addThreadImage,removeThreadMedia,onOpenItem,onOpenArticle,onBrowse,toastFn}){
+  const [openId,setOpenId]=useState(null);
+  const [form,setForm]=useState(null); // {id?,title,color,url}
+  const [busy,setBusy]=useState(false);
+  const [act,setAct]=useState(null); // thread for the action sheet
+
+  useEffect(()=>{ // best-effort refresh of each thread's RSS source
+    let live=true;
+    (async()=>{for(const t of threads){
+      if(!t.feedUrl)continue;
+      const c=threadFeeds[t.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
+      try{const es=await fetchRss(t.feedUrl);if(es&&live)onThreadFeeds(m=>({...m,[t.id]:{fetchedAt:Date.now(),entries:es}}))}catch(e){}
+    }})();
+    return()=>{live=false};
+  },[]);// eslint-disable-line
+
+  const patchThread=(id,fn)=>onThreads(list=>list.map(t=>t.id===id?fn(t):t));
+  const newCountFor=t=>{const c=threadFeeds[t.id];if(!c||!c.entries)return 0;const since=seen[t.id]||0;return c.entries.filter(e=>(e.publishedMs||0)>since).length};
+  const openThread=id=>{setOpenId(id);onSeen(m=>({...m,[id]:Date.now()}))};
+
+  const saveForm=async()=>{
+    const title=(form.title||'').trim();if(!title){toastFn('Give the topic a name');return}
+    const url=normalizeUrl(form.url||'');
+    setBusy(true);
+    let feedUrl='',site='';
+    if(url){site=url;try{feedUrl=await discoverFeed(url)}catch(e){feedUrl=''}}
+    setBusy(false);
+    if(form.id){
+      patchThread(form.id,t=>({...t,title,color:form.color,site:site||t.site||'',feedUrl:url?feedUrl:t.feedUrl}));
+    }else{
+      const id=uid();
+      onThreads(list=>[{id,title,color:form.color,site,feedUrl,createdAt:Date.now(),updatedAt:Date.now(),entries:[]},...list]);
+      onSeen(m=>({...m,[id]:Date.now()}));
+      if(feedUrl){try{const es=await fetchRss(feedUrl);if(es)onThreadFeeds(m=>({...m,[id]:{fetchedAt:Date.now(),entries:es}}))}catch(e){}}
+    }
+    setForm(null);
+  };
+  const deleteThread=t=>{
+    const imgIds=(t.entries||[]).filter(e=>e.kind==='image'&&e.mediaId).map(e=>e.mediaId);
+    if(imgIds.length&&removeThreadMedia)removeThreadMedia(imgIds);
+    onThreads(list=>list.filter(x=>x.id!==t.id));
+    onThreadFeeds(m=>{const n={...m};delete n[t.id];return n});
+    setAct(null);toastFn('Topic deleted');
+  };
+
+  if(openId){
+    const thread=threads.find(t=>t.id===openId);
+    if(!thread){setOpenId(null);return null}
+    return h(ThreadDetail,{T,S,thread,feedCache:threadFeeds[thread.id],media,articles,
+      onBack:()=>setOpenId(null),
+      onPatch:fn=>patchThread(thread.id,fn),
+      onEdit:()=>setForm({id:thread.id,title:thread.title,color:thread.color||THREAD_COLORS[0],url:thread.site||''}),
+      addThreadImage,removeThreadMedia,onOpenItem,onOpenArticle,onBrowse,toastFn,
+      formNode:form?h(ThreadForm,{T,form,setForm,busy,onSave:saveForm}):null});
+  }
+
+  const preview=t=>{
+    const tl=threadTimeline(t,threadFeeds[t.id]);
+    if(!tl.length)return'No entries yet';
+    const e=tl[0];
+    if(e.kind==='note')return e.text||'Note';
+    if(e.kind==='image')return'📷 Photo';
+    if(e.kind==='article'){const a=articles.find(x=>x.id===e.articleId);return a?a.title:'Saved article'}
+    return e.title||e.url||'Link';
+  };
+
+  return h('div',null,
+    h('div',{style:{display:'flex',gap:8,padding:'12px 14px 6px'}},
+      h('button',{onClick:()=>setForm({title:'',color:THREAD_COLORS[0],url:''}),className:'act95',
+        style:{display:'inline-flex',alignItems:'center',gap:7,padding:'9px 15px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},Icons.plus(17),'New topic')),
+    threads.length?h('div',{style:{padding:'4px 14px 0'}},
+      threads.map(t=>h(ThreadCard,{key:t.id,T,thread:t,newCount:newCountFor(t),preview:preview(t),
+        onOpen:()=>openThread(t.id),onLongPress:()=>setAct(t)})),
+      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}}))
+      :h(EmptyState,{T,icon:Icons.thread(40),title:'No topics yet',sub:'Create a topic to follow a series of events over time. Add notes, links, photos and saved articles — or attach a source to pull updates in automatically.'}),
+
+    act?h(Sheet,{T,onClose:()=>setAct(null)},
+      h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},act.title),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit topic',onClick:()=>{const t=act;setAct(null);setForm({id:t.id,title:t.title,color:t.color||THREAD_COLORS[0],url:t.site||''})}}),
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete topic',danger:true,onClick:()=>deleteThread(act)})):null,
+
+    form?h(ThreadForm,{T,form,setForm,busy,onSave:saveForm}):null);
+}
+
+/* create / edit a topic — name, colour, and an optional source URL */
+function ThreadForm({T,form,setForm,busy,onSave}){
+  const inp=(val,key,ph,opts)=>h('input',Object.assign({value:val,onChange:e=>setForm(f=>({...f,[key]:e.target.value})),placeholder:ph,
+    style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 12px',fontSize:15,marginBottom:10,boxSizing:'border-box'}},opts||{}));
+  return h(Sheet,{T,onClose:()=>setForm(null),title:form.id?'Edit topic':'New topic'},
+    h('div',{style:{padding:'6px 20px 20px'}},
+      inp(form.title,'title','Topic name  (e.g. India Elections 2026)',{autoFocus:true}),
+      h('div',{style:{display:'flex',gap:9,flexWrap:'wrap',margin:'2px 0 14px'}},
+        THREAD_COLORS.map(c=>h('button',{key:c,onClick:()=>setForm(f=>({...f,color:c})),'aria-label':'Colour',
+          style:{width:30,height:30,borderRadius:'50%',background:c,border:form.color===c?'3px solid '+T.fg:'3px solid transparent',flexShrink:0}}))),
+      h('div',{style:{fontSize:12,color:T.sub,margin:'2px 0 6px'}},'Source (optional) — attach a website or RSS feed to auto-pull updates'),
+      inp(form.url,'url','https://example.com  (optional)',{inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false}),
+      h(PrimaryBtn,{T,label:busy?'Saving…':(form.id?'Save':'Create topic'),disabled:busy,style:{width:'100%',margin:'8px 0 0'},onClick:onSave})));
+}
+
+/* one entry in a topic's timeline (own component for hook-safe long-press) */
+function ThreadEntryRow({T,entry:e,thread,media,articles,busyUrl,onOpenLink,onOpenArticle,onLongPress}){
+  const lp=useLongPress(onLongPress||(()=>{}));
+  const stamp=h('div',{style:{fontSize:11,color:T.sub,marginTop:6}},e.kind==='feed'?(e.source?e.source+' · ':'')+timeAgo(e._ts):timeAgo(e._ts||e.createdAt));
+  let inner;
+  if(e.kind==='note'){
+    inner=h('div',{style:{fontSize:15,color:T.fg,lineHeight:1.55,whiteSpace:'pre-wrap',wordBreak:'break-word'}},e.text);
+  }else if(e.kind==='image'){
+    const m=media.find(x=>x.id===e.mediaId);
+    inner=m?h(ThreadImg,{m,alt:e.caption||'',style:{width:'100%',maxHeight:340,borderRadius:10}})
+      :h('div',{style:{fontSize:13,color:T.sub,fontStyle:'italic'}},'Photo removed');
+  }else if(e.kind==='article'){
+    const a=articles.find(x=>x.id===e.articleId);
+    inner=a?h('button',{onClick:()=>onOpenArticle(a.id),className:'act98',style:{display:'flex',gap:11,width:'100%',textAlign:'left',background:T.bg,border:'1px solid '+T.hair,borderRadius:11,overflow:'hidden',padding:8,color:T.fg,alignItems:'center'}},
+        a.image?h('img',{src:a.image,alt:'',style:{width:54,height:54,borderRadius:8,objectFit:'cover',flexShrink:0}}):h('span',{style:{width:54,height:54,borderRadius:8,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:T.sub}},Icons.archive(20)),
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{fontSize:14,fontWeight:600,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
+          h('div',{style:{fontSize:11.5,color:T.sub,marginTop:3}},(a.source||'Saved')+(a.readMin?' · '+a.readMin+' min':''))))
+      :h('div',{style:{fontSize:13,color:T.sub,fontStyle:'italic'}},'Article removed from library');
+  }else{ // link or feed
+    const busy=busyUrl===e.url;
+    inner=h('button',{onClick:()=>onOpenLink({title:e.title,url:e.url,source:e.source,publishedAt:e._ts||0}),disabled:busy,className:'act98',
+      style:{display:'flex',gap:11,width:'100%',textAlign:'left',background:T.bg,border:'1px solid '+T.hair,borderRadius:11,overflow:'hidden',padding:8,color:T.fg,alignItems:'center',opacity:busyUrl&&!busy?0.5:1}},
+      e.image?h('img',{src:e.image,alt:'',style:{width:54,height:54,borderRadius:8,objectFit:'cover',flexShrink:0},onError:ev=>{ev.target.style.display='none'}}):h('span',{style:{width:54,height:54,borderRadius:8,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:'#e8801f'}},e.kind==='feed'?Icons.rss(20):Icons.link(19)),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:14,fontWeight:600,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.title||e.url),
+        h('div',{style:{fontSize:11.5,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},e.source||domainOf(e.url||''))),
+      h('span',{style:{flexShrink:0,color:T.sub,display:'flex'}},busy?h(Spinner,{T,size:15}):Icons.download(16)));
+  }
+  return h('div',Object.assign({},onLongPress?lp:{},{style:{position:'relative',paddingLeft:26,paddingBottom:16}}),
+    h('span',{style:{position:'absolute',left:5,top:6,width:9,height:9,borderRadius:5,background:thread.color||THREAD_COLORS[0],zIndex:1}}),
+    h('span',{style:{position:'absolute',left:9,top:14,bottom:-2,width:1.5,background:T.hair}}),
+    h('div',{style:{background:T.card,border:'1px solid '+T.hair,borderRadius:13,padding:'11px 13px'}},inner,stamp));
+}
+
+/* one topic's timeline + composer */
+function ThreadDetail({T,S,thread,feedCache,media,articles,onBack,onPatch,onEdit,addThreadImage,removeThreadMedia,onOpenItem,onOpenArticle,onBrowse,toastFn,formNode}){
+  const [add,setAdd]=useState(null); // 'note' | 'link' | 'article' | null
+  const [noteText,setNoteText]=useState('');
+  const [linkUrl,setLinkUrl]=useState('');
+  const [linkBusy,setLinkBusy]=useState(false);
+  const [q,setQ]=useState('');
+  const [busyUrl,setBusyUrl]=useState('');
+  const [actEntry,setActEntry]=useState(null);
+  const fileRef=useRef(null);
+  const tl=useMemo(()=>threadTimeline(thread,feedCache),[thread,feedCache]);
+
+  const addEntry=entry=>onPatch(t=>({...t,updatedAt:Date.now(),entries:[{id:uid(),createdAt:Date.now(),...entry},...(t.entries||[])]}));
+  const removeEntry=e=>{
+    if(e.kind==='image'&&e.mediaId&&removeThreadMedia)removeThreadMedia([e.mediaId]);
+    onPatch(t=>({...t,entries:(t.entries||[]).filter(x=>x.id!==e.id)}));
+    setActEntry(null);
+  };
+  const doNote=()=>{const tx=noteText.trim();if(!tx)return;addEntry({kind:'note',text:tx});setNoteText('');setAdd(null)};
+  const doLink=async()=>{
+    const u=normalizeUrl(linkUrl);if(!u){toastFn('Enter a valid link');return}
+    setLinkBusy(true);
+    let meta={title:domainOf(u)||u,image:'',source:domainOf(u)};
+    try{const r=await fetchArticleData(u);meta={title:r.title||meta.title,image:r.image||'',source:r.source||meta.source}}catch(e){}
+    setLinkBusy(false);
+    addEntry({kind:'link',url:u,title:meta.title,image:meta.image,source:meta.source});
+    setLinkUrl('');setAdd(null);
+  };
+  const onPickImage=async e=>{
+    const f=e.target.files&&e.target.files[0];e.target.value='';
+    if(!f)return;
+    const id=await addThreadImage(f,thread.id);
+    if(id)addEntry({kind:'image',mediaId:id,caption:''});
+    else toastFn('Couldn\'t add that image');
+  };
+  const pickArticle=a=>{addEntry({kind:'article',articleId:a.id});setAdd(null);setQ('')};
+  const openLink=async it=>{if(busyUrl)return;setBusyUrl(it.url);try{await onOpenItem(it)}finally{setBusyUrl('')}};
+
+  const composer=h('div',{className:'sx',style:{display:'flex',gap:8,padding:'10px 14px',borderBottom:'1px solid '+T.hair,overflowX:'auto'}},
+    [['note','Note',Icons.note(16)],['link','Link',Icons.link(16)],['image','Photo',Icons.image(16)],['article','Article',Icons.archive(16)]].map(([k,label,icon])=>
+      h('button',{key:k,onClick:()=>k==='image'?(fileRef.current&&fileRef.current.click()):setAdd(k),className:'act95',
+        style:{display:'inline-flex',alignItems:'center',gap:6,padding:'8px 13px',borderRadius:999,border:'1px solid '+T.hair,background:T.card,color:T.fg,fontSize:13,fontWeight:500,flexShrink:0}},
+        h('span',{style:{color:T.accent,display:'flex'}},icon),label)));
+
+  return h('div',null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'8px 12px',borderBottom:'1px solid '+T.hair}},
+      h('button',{onClick:onBack,className:'act90',style:{display:'flex',color:T.fg,padding:4}},Icons.back(22)),
+      h('span',{style:{width:10,height:10,borderRadius:5,flexShrink:0,background:thread.color||THREAD_COLORS[0]}}),
+      h('div',{style:{flex:1,minWidth:0,fontSize:17,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},thread.title),
+      thread.site?h('button',{onClick:()=>onBrowse(thread.site),className:'act90',style:{display:'flex',color:T.sub,padding:6},title:'Visit source'},Icons.globe(18)):null,
+      h('button',{onClick:onEdit,className:'act90',style:{display:'flex',color:T.sub,padding:6},title:'Edit topic'},Icons.gear(18))),
+    composer,
+    h('input',{ref:fileRef,type:'file',accept:'image/*',onChange:onPickImage,style:{display:'none'}}),
+    h('div',{style:{padding:'14px 14px 0'}},
+      tl.length?tl.map(e=>h(ThreadEntryRow,{key:e.id,T,entry:e,thread,media,articles,busyUrl,
+        onOpenLink:openLink,onOpenArticle,onLongPress:e.kind==='feed'?null:()=>setActEntry(e)}))
+        :h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'40px 24px',lineHeight:1.5}},'Nothing here yet. Use the buttons above to add a note, link, photo or saved article — the newest appears on top.'),
+      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+
+    add==='note'?h(Sheet,{T,onClose:()=>setAdd(null),title:'Add a note'},
+      h('div',{style:{padding:'6px 20px 20px'}},
+        h('textarea',{value:noteText,onChange:e=>setNoteText(e.target.value),placeholder:'Write anything — your take, a summary, what happened…',autoFocus:true,rows:5,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 12px',fontSize:15,lineHeight:1.5,boxSizing:'border-box',resize:'vertical'}}),
+        h(PrimaryBtn,{T,label:'Add note',disabled:!noteText.trim(),style:{width:'100%',margin:'12px 0 0'},onClick:doNote}))):null,
+
+    add==='link'?h(Sheet,{T,onClose:()=>setAdd(null),title:'Add a link'},
+      h('div',{style:{padding:'6px 20px 20px'}},
+        h('input',{value:linkUrl,onChange:e=>setLinkUrl(e.target.value),placeholder:'https://…',autoFocus:true,inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 12px',fontSize:15,boxSizing:'border-box'}}),
+        h('div',{style:{fontSize:12,color:T.sub,margin:'8px 2px 0'}},'We\'ll grab the title and preview image. Tap the card later to save & read it offline.'),
+        h(PrimaryBtn,{T,label:linkBusy?'Fetching…':'Add link',disabled:linkBusy||!linkUrl.trim(),style:{width:'100%',margin:'12px 0 0'},onClick:doLink}))):null,
+
+    add==='article'?h(Sheet,{T,onClose:()=>{setAdd(null);setQ('')},title:'Add a saved article'},
+      h('div',{style:{padding:'4px 16px 16px'}},
+        h('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Search your library',autoFocus:true,autoCapitalize:'none',
+          style:{width:'100%',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:15,boxSizing:'border-box',marginBottom:8}}),
+        (()=>{const ql=q.trim().toLowerCase();
+          const list=articles.filter(a=>!a.archived&&(a.title||'')&&(!ql||(a.title||'').toLowerCase().includes(ql)||(a.source||'').toLowerCase().includes(ql))).slice(0,40);
+          return list.length?list.map(a=>h('button',{key:a.id,onClick:()=>pickArticle(a),className:'act98',
+            style:{display:'flex',gap:10,width:'100%',textAlign:'left',padding:'9px 6px',alignItems:'center',color:T.fg,borderBottom:'1px solid '+T.hair}},
+            a.image?h('img',{src:a.image,alt:'',style:{width:42,height:42,borderRadius:7,objectFit:'cover',flexShrink:0}}):h('span',{style:{width:42,height:42,borderRadius:7,background:T.card,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.note(18)),
+            h('div',{style:{flex:1,minWidth:0}},
+              h('div',{style:{fontSize:14,fontWeight:500,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},a.title),
+              h('div',{style:{fontSize:11.5,color:T.sub,marginTop:2}},a.source||'Saved'))))
+            :h('div',{style:{textAlign:'center',color:T.sub,fontSize:13.5,padding:'24px 12px'}},q.trim()?'No matching articles':'Your library is empty — save something first.');
+        })())):null,
+
+    actEntry?h(Sheet,{T,onClose:()=>setActEntry(null)},
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete entry',danger:true,onClick:()=>removeEntry(actEntry)})):null,
+
+    formNode);
 }
 
 /* Blogs — grouped like My Routine: collapsible groups of feeds, drag to reorder,
@@ -2725,6 +3005,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
       collapsed:isCollapsed,
       onToggleCollapse:f.feedUrl?()=>{toggleCollapse(f.id);if(isCollapsed)onSeen(m=>({...m,[f.id]:Date.now()}))}:null,
       onOpen:()=>{if(!f.feedUrl)onBrowse(f.site)},
+      onVisitSite:f.site?()=>onBrowse(f.site):null,
       onEntry:e=>open({title:e.title,url:e.url,source:f.name,publishedAt:e.publishedMs}),
       onLongPress:()=>setAct(f),
       busyUrl});
@@ -4438,6 +4719,7 @@ function scopeTitle(scope,folders){
     case 'headlines':return 'India Headlines';
     case 'blogs':return 'Blogs';
     case 'notes':return 'Notes';
+    case 'threads':return 'Threads';
     case 'tags':return 'Tags';
     case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
@@ -4551,6 +4833,19 @@ function App(){
     for(const id of arr)try{await idbDel('media',id)}catch(e){}
     toastFn(arr.length>1?arr.length+' items deleted':'Deleted');
   },[toastFn]);
+  /* Threads store their photos in the media DB tagged with threadId so they
+     stay out of the Photos gallery; return the new id to reference in an entry. */
+  const addThreadImage=useCallback(async(file,threadId)=>{
+    if(!file)return null;
+    const rec={id:uid(),kind:'image',mime:file.type||'image/jpeg',name:file.name||'Thread photo',caption:'',albumId:null,threadId:threadId||true,favorite:false,pinned:false,addedAt:Date.now(),blob:file};
+    try{await idbPut('media',rec);setMedia(prev=>[rec,...prev]);return rec.id}catch(e){return null}
+  },[]);
+  const removeThreadMedia=useCallback(async ids=>{
+    const arr=(Array.isArray(ids)?ids:[ids]).filter(Boolean);
+    if(!arr.length)return;
+    setMedia(prev=>prev.filter(m=>!arr.includes(m.id)));
+    for(const id of arr)try{await idbDel('media',id)}catch(e){}
+  },[]);
   const addAlbum=useCallback(async name=>{
     const al={id:uid(),name:name||'New album',createdAt:Date.now()};
     setAlbums(prev=>[...prev,al]);try{await idbPut('albums',al)}catch(e){}
@@ -4912,7 +5207,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos','brief','headlines','blogs'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
@@ -4961,7 +5256,7 @@ function App(){
   /* ---------- main area ---------- */
   let body;
   if(scope.type==='notes')body=h(NotesList,{T,articles:data.articles,onOpenArticle:openArticle,onOpenHighlight:(aid,hid)=>setSheet({type:'highlight',aid,hid})});
-  else if(scope.type==='photos')body=h(PhotosView,{T,S,media,albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
+  else if(scope.type==='photos')body=h(PhotosView,{T,S,media:media.filter(m=>!m.threadId),albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn,
     onAskClaude:()=>setAiOpen({routine:true})});
@@ -4976,6 +5271,13 @@ function App(){
     onBlogFeeds:fn=>update(d=>({...d,blogFeeds:fn(d.blogFeeds||{})})),
     onSeen:fn=>update(d=>({...d,blogSeen:fn(d.blogSeen||{})})),
     onOpenItem:addBriefItem,onBrowse:u=>setBrowserO({url:u}),toastFn});
+  else if(scope.type==='threads')body=h(ThreadsView,{T,S,threads:data.threads||[],threadFeeds:data.threadFeeds||{},seen:data.threadSeen||{},
+    media,articles:data.articles,
+    onThreads:fn=>update(d=>({...d,threads:fn(d.threads||[])})),
+    onThreadFeeds:fn=>update(d=>({...d,threadFeeds:fn(d.threadFeeds||{})})),
+    onSeen:fn=>update(d=>({...d,threadSeen:fn(d.threadSeen||{})})),
+    addThreadImage,removeThreadMedia,
+    onOpenItem:addBriefItem,onOpenArticle:openArticle,onBrowse:u=>setBrowserO({url:u}),toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(scope.type==='videos'&&!q&&list.length){
     body=h(MyRoutine,{T,videos:list,
