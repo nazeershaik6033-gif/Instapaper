@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -1384,7 +1384,9 @@ const Icons={
   rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
   drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'})),
   news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
-  thread:s=>Svg({size:s},h('circle',{cx:6,cy:6,r:2.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:6,cy:18,r:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M6 8.2v7.6'),P('M11 6h9M11 18h9M11 12h6'))
+  thread:s=>Svg({size:s},h('circle',{cx:6,cy:6,r:2.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:6,cy:18,r:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M6 8.2v7.6'),P('M11 6h9M11 18h9M11 12h6')),
+  star:(s,fill)=>Svg({size:s},h('path',{d:'M12 3.6l2.5 5.1 5.6.8-4.05 3.95.96 5.6L12 16.4l-5.01 2.65.96-5.6L3.9 9.5l5.6-.8L12 3.6Z',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round',fill:fill?'currentColor':'none'})),
+  mute:s=>Svg({size:s},P('M4.5 9.5v5h3l4 3.5v-12l-4 3.5h-3Z'),P('M15.5 9.5l4 5M19.5 9.5l-4 5'))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -2379,6 +2381,31 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
     h('div',{style:{padding:'16px',flexShrink:0}},
       h('button',{onClick:save,className:'act96',style:{width:'100%',padding:'13px',borderRadius:12,background:T.accent,color:'#fff',fontSize:15,fontWeight:600}},'Save changes')));
 }
+/* stable key + colour-coded round avatar for a publisher/source name */
+const srcKey=s=>String(s||'').trim().toLowerCase();
+const SRC_COLORS=['#c0392b','#2980b9','#27ae60','#8e44ad','#d35400','#16a085','#2c3e50','#c2185b','#00838f','#6d4c41'];
+function srcColor(name){const s=srcKey(name);let n=0;for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return SRC_COLORS[n%SRC_COLORS.length]}
+function SrcAvatar({name,size}){
+  const s=size||34;
+  return h('span',{style:{width:s,height:s,borderRadius:'50%',flexShrink:0,background:srcColor(name),color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:s*0.46,fontWeight:600}},(String(name||'N').trim()[0]||'N').toUpperCase());
+}
+/* one headline row — colour avatar, source + time, title; long-press to star/mute the source */
+function BriefStoryRow({T,it,busy,dim,starred,onOpen,onLongPress}){
+  const lp=useLongPress(onLongPress);
+  return h('div',{style:{padding:'5px 12px'}},
+    h('button',Object.assign({onClick:onOpen},lp,{className:'act98',
+      style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'14px 14px 13px',borderRadius:13,border:'1px solid '+T.hair,background:T.card,boxShadow:'0 1px 3px rgba(0,0,0,.05)',color:T.fg,alignItems:'flex-start',opacity:dim?0.5:1}}),
+      h(SrcAvatar,{name:it.source,size:34}),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:4,fontSize:11.5,color:T.sub,overflow:'hidden'}},
+          it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'58%'}},it.source):null,
+          starred?h('span',{style:{color:'#e2a600',display:'flex',flexShrink:0}},Icons.star(11,true)):null,
+          it.source&&it.publishedAt?h('span',null,'·'):null,
+          it.publishedAt?h('span',{style:{flexShrink:0,color:T.accent,fontWeight:600}},timeAgo(it.publishedAt)):null),
+        h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:16.5,fontWeight:600,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title)),
+      h('div',{style:{flexShrink:0,width:22,display:'flex',justifyContent:'center',paddingTop:8,color:T.sub}},
+        busy?h(Spinner,{T,size:17}):Icons.download(18))));
+}
 function BriefChips({T,options,selected,onSelect}){
   return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'2px 16px 10px',flexShrink:0}},
     options.map(o=>{
@@ -2389,12 +2416,17 @@ function BriefChips({T,options,selected,onSelect}){
         (o.flag?o.flag+' ':'')+o.label);
     }));
 }
-function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCategories,headlinesSources,onOpenUrl}){
+function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCategories,headlinesSources,starred,muted,onOpenUrl}){
   const [items,setItems]=useState(null);
   const [err,setErr]=useState('');
   const [busyUrl,setBusyUrl]=useState('');
   const [configOpen,setConfigOpen]=useState(false);
+  const [srcAction,setSrcAction]=useState(null); // source name for the star/mute sheet
   const [briefTab,setBriefTab]=useState('sources');
+  const starList=starred||[],muteList=muted||[];
+  const sset=new Set(starList.map(srcKey)),mset=new Set(muteList.map(srcKey));
+  const toggleStar=name=>{const k=srcKey(name);onConfig({briefStarred:sset.has(k)?starList.filter(x=>srcKey(x)!==k):starList.concat([name])})};
+  const toggleMute=name=>{const k=srcKey(name);onConfig({briefMuted:mset.has(k)?muteList.filter(x=>srcKey(x)!==k):muteList.concat([name])})};
   const reqRef=useRef(0);
   const allCats=headlinesCategories||BRIEF_CATEGORIES.map(c=>({...c,enabled:true,custom:false,query:''}));
   // saved source lists can predate fields (like epaper) later added to PRESET_SOURCES —
@@ -2431,23 +2463,18 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
-    newsBody=h('div',{style:{padding:'5px 0'}},
-      items.map((it,i)=>{
-        const busy=busyUrl===it.url;
-        return h('div',{key:it.url+i,style:{padding:'5px 12px'}},
-          h('button',{onClick:()=>open(it),className:'act98',
-            style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'14px 14px 13px',borderRadius:13,border:'1px solid '+T.hair,background:T.card,boxShadow:'0 1px 3px rgba(0,0,0,.05)',color:T.fg,alignItems:'flex-start',opacity:busyUrl&&!busy?0.5:1}},
-            h('div',{style:{flex:1,minWidth:0}},
-              h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:16.5,fontWeight:600,lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title),
-              h('div',{style:{display:'flex',alignItems:'center',gap:7,marginTop:6,fontSize:11.5,color:T.sub,overflow:'hidden'}},
-                it.source?h('span',{style:{fontWeight:600,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',maxWidth:'62%'}},it.source):null,
-                it.source&&it.publishedAt?h('span',null,'·'):null,
-                it.publishedAt?h('span',{style:{flexShrink:0,color:T.accent,fontWeight:600}},timeAgo(it.publishedAt)):null)),
-            h('div',{style:{flexShrink:0,width:24,display:'flex',justifyContent:'center',paddingTop:2,color:T.sub}},
-              busy?h(Spinner,{T,size:17}):Icons.download(18))));
-      }),
+    // hide muted publishers; float starred publishers to the top (stable within each group)
+    const visible=items.filter(it=>!mset.has(srcKey(it.source)));
+    const ordered=[...visible.filter(it=>sset.has(srcKey(it.source))),...visible.filter(it=>!sset.has(srcKey(it.source)))];
+    newsBody=ordered.length?h('div',{style:{padding:'5px 0'}},
+      ordered.map((it,i)=>h(BriefStoryRow,{key:it.url+i,T,it,busy:busyUrl===it.url,dim:busyUrl&&busyUrl!==it.url,
+        starred:sset.has(srcKey(it.source)),onOpen:()=>open(it),onLongPress:()=>it.source&&setSrcAction(it.source)})),
       h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
-        'Tap a story to save it for offline reading. Headlines via Google News.'));
+        'Tap a story to save it · long-press to star ★ or mute a source. Headlines via Google News.'))
+    :h('div',{style:{padding:'54px 40px',textAlign:'center',color:T.sub}},
+      h('div',{style:{display:'flex',justifyContent:'center',marginBottom:12,opacity:.5}},Icons.newspaper(38)),
+      h('div',{style:{fontSize:15.5,fontWeight:600,color:T.meta,marginBottom:6}},'Everything here is muted'),
+      h('div',{style:{fontSize:13,lineHeight:1.5}},'Long-press a story and un-mute its source to see headlines again.'));
   }
   const sourcesBody=enabledSrcs.length===0
     ?h('div',{style:{padding:'60px 40px',textAlign:'center',color:T.sub}},
@@ -2485,7 +2512,19 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
     showRegion?h(BriefChips,{T,options:BRIEF_REGIONS,selected:regionId,onSelect:id=>onConfig({briefRegion:id})}):null,
     tabBar,
     h('div',null,briefTab==='stories'?newsBody:sourcesBody),
-    configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null);
+    configOpen?h(HeadlinesConfig,{T,initCats:allCats,initSrcs:allSrcs,onSave:onConfig,onClose:()=>setConfigOpen(false)}):null,
+    srcAction?(()=>{const isStar=sset.has(srcKey(srcAction)),isMuted=mset.has(srcKey(srcAction));
+      return h(Sheet,{T,onClose:()=>setSrcAction(null)},
+        h('div',{style:{display:'flex',alignItems:'center',gap:12,padding:'4px 20px 14px',borderBottom:'1px solid '+T.hair}},
+          h(SrcAvatar,{name:srcAction,size:38}),
+          h('div',{style:{fontSize:16.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},srcAction)),
+        h(ARow,{T,icon:Icons.star(21,isStar),label:isStar?'Unstar this source':'Star this source',
+          sub:isStar?'Starred sources float to the top':'Float this source’s stories to the top',
+          onClick:()=>{toggleStar(srcAction);setSrcAction(null)}}),
+        h(ARow,{T,icon:Icons.mute(21),label:isMuted?'Un-mute this source':'Mute this source',danger:!isMuted,
+          sub:isMuted?'Its stories are hidden right now':'Hide this source’s stories from the brief',
+          onClick:()=>{toggleMute(srcAction);setSrcAction(null)}}));
+    })():null);
 }
 
 /* ============================== story circles (WhatsApp Status-style headlines) ============================== */
@@ -5291,6 +5330,7 @@ function App(){
     onAskClaude:()=>setAiOpen({routine:true})});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
+    starred:S.briefStarred||[],muted:S.briefMuted||[],
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem,
     onOpenUrl:url=>setBrowserO({url})});
   else if(scope.type==='blogs')body=h(BlogsView,{T,S,feeds:data.feeds||[],groups:data.blogGroups||[],
