@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -1137,6 +1137,18 @@ async function fetchOneFeed(feedUrl,defaultSource){
   catch(e){return tryRss2json();}
 }
 /* Fetch headlines: tries direct Indian news RSS feeds first, Google News as fallback. */
+/* Drop duplicate stories when several outlets' feeds are merged. Keeps the first
+   (most recent, since callers sort by date) of any headlines that normalize equal. */
+function dedupeHeadlines(items){
+  const seen=new Set(),out=[];
+  for(const it of items){
+    const key=String(it.title||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();
+    if(key&&seen.has(key))continue;
+    if(key)seen.add(key);
+    out.push(it);
+  }
+  return out;
+}
 async function fetchBrief(regionId,topic,sources,customQuery){
   const region=briefRegion(regionId);
   /* Enrich saved source entries that predate the rss: field by merging with PRESET_SOURCES */
@@ -1152,7 +1164,7 @@ async function fetchBrief(regionId,topic,sources,customQuery){
       settled.forEach(r=>{if(r.status==='fulfilled')all.push(...r.value)});
       if(all.length){
         all.sort((a,b)=>b.publishedAt-a.publishedAt);
-        return all.slice(0,40);
+        return dedupeHeadlines(all).slice(0,40);
       }
     }
     /* No RSS-capable sources among selection — fall through to default feeds */
@@ -1175,7 +1187,7 @@ async function fetchBrief(regionId,topic,sources,customQuery){
   settled.forEach(r=>{if(r.status==='fulfilled')all.push(...r.value)});
   if(all.length){
     all.sort((a,b)=>b.publishedAt-a.publishedAt);
-    return all.slice(0,40);
+    return dedupeHeadlines(all).slice(0,40);
   }
   throw new Error('Could not load headlines — check your connection and try again');
 }
@@ -1664,7 +1676,7 @@ function GroupedArchive({T,articles,onOpen,onLongPress,onSwipeLeft,onSwipeRight,
 }
 
 /* ============================== ooo menu ============================== */
-const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular']];
+const SORTS=[['newest','Newest first'],['oldest','Oldest first'],['longest','Longest'],['shortest','Shortest'],['popular','Most popular'],['title','Title A–Z']];
 const FILTERS=[['all','All'],['unread','Unread'],['liked','Liked'],['articles','Articles'],['videos','Videos'],['completed','Completed']];
 
 function MenuPopover({T,settings,onPick,onSelectMode,onPlaylistMode,onSettings,showListOps,onClose}){
@@ -4703,6 +4715,7 @@ function sortArticles(arr,sort){
     case 'longest':a.sort((x,y)=>(y.words||0)-(x.words||0));break;
     case 'shortest':a.sort((x,y)=>(x.words||0)-(y.words||0));break;
     case 'popular':a.sort((x,y)=>((y.liked?2:0)+(y.opens||0))-((x.liked?2:0)+(x.opens||0))||(y.addedAt||0)-(x.addedAt||0));break;
+    case 'title':a.sort((x,y)=>(x.title||'').localeCompare(y.title||'',undefined,{sensitivity:'base'}));break;
     default:a.sort((x,y)=>(y.addedAt||0)-(x.addedAt||0));
   }
   return a;
@@ -4774,6 +4787,7 @@ function App(){
 
   const [scope,setScope]=useState({type:'headlines'});
   const [query,setQuery]=useState('');
+  const [searchScope,setSearchScope]=useState('all'); // all|title|source|tags
   const [readingId,setReadingId]=useState(null);
   const [sidebar,setSidebar]=useState(false);
   const [menuOpen,setMenuOpen]=useState(false);
@@ -5181,7 +5195,14 @@ function App(){
   const q=dq.trim().toLowerCase();
   const list=useMemo(()=>{
     let arr;
-    if(q){arr=data.articles.filter(a=>((a.title||'')+' '+(a.author||'')+' '+(a.source||'')+' '+a.tags.join(' ')+' '+(a.text||'')).toLowerCase().includes(q))}
+    if(q){
+      const sc=searchScope;
+      const hay=a=>sc==='title'?(a.title||'')
+        :sc==='source'?((a.source||'')+' '+(a.author||''))
+        :sc==='tags'?(a.tags||[]).join(' ')
+        :((a.title||'')+' '+(a.author||'')+' '+(a.source||'')+' '+(a.tags||[]).join(' ')+' '+(a.text||''));
+      arr=data.articles.filter(a=>hay(a).toLowerCase().includes(q));
+    }
     else{
       arr=data.articles.filter(a=>inScope(a,scope));
       // Type and read-status are independent filters.
@@ -5190,12 +5211,20 @@ function App(){
       else if(S.typeFilter==='post')arr=arr.filter(a=>a.isPost);
       if(S.readFilter==='unread')arr=arr.filter(a=>(a.progress||0)<0.97);
       else if(S.readFilter==='read')arr=arr.filter(a=>(a.progress||0)>=0.97);
+      // reading-length band by estimated minutes
+      if(S.lenFilter==='short')arr=arr.filter(a=>(a.readMin||0)>0&&(a.readMin||0)<5);
+      else if(S.lenFilter==='medium')arr=arr.filter(a=>(a.readMin||0)>=5&&(a.readMin||0)<=15);
+      else if(S.lenFilter==='long')arr=arr.filter(a=>(a.readMin||0)>15);
+      // single-publisher filter
+      if(S.srcFilter)arr=arr.filter(a=>(a.source||'').trim().toLowerCase()===S.srcFilter);
     }
     arr=sortArticles(arr,S.sort);
     if(!q)arr=[...arr.filter(a=>a.pinned),...arr.filter(a=>!a.pinned)]; // pinned float to the top
     return arr;
-  },[data,scope,q,S.sort,S.typeFilter,S.readFilter]);
+  },[data,scope,q,searchScope,S.sort,S.typeFilter,S.readFilter,S.lenFilter,S.srcFilter]);
   const unreadCount=useMemo(()=>data.articles.filter(a=>inScope(a,scope)&&(a.progress||0)<0.97).length,[data.articles,scope]);
+  // publishers present in the library, for the source filter picker
+  const libSources=useMemo(()=>{const m=new Map();data.articles.forEach(a=>{const name=(a.source||'').trim();if(!name)return;const k=name.toLowerCase();const e=m.get(k);if(e)e.count++;else m.set(k,{key:k,name,count:1})});return[...m.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name))},[data.articles]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -5299,7 +5328,7 @@ function App(){
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
   }else{
     body=h('div',null,
-      q?h('div',{style:{padding:'10px 16px 4px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},list.length+' result'+(list.length>1?'s':'')+' · searching everything'):null,
+      q?h('div',{style:{padding:'10px 16px 4px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},list.length+' result'+(list.length===1?'':'s')+' · '+({all:'searching everything',title:'in titles',source:'in sources',tags:'in tags'}[searchScope]||'searching everything')):null,
       list.map(a=>h(ArticleRow,{key:a.id,a,T,scopeType:scope.type,
         onOpen:()=>openArticle(a.id),
         onLongPress:()=>setSheet({type:'article',id:a.id}),
@@ -5320,22 +5349,38 @@ function App(){
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
           h('input',{ref:searchRef,value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
             style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          query?h('button',{onClick:()=>setQuery(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
+          query?h('button',{onClick:()=>{setQuery('');setSearchScope('all')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
+        q?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginTop:8}},
+          [['all','Everything'],['title','Title'],['source','Source'],['tags','Tags']].map(([v,l])=>{
+            const on=searchScope===v;
+            return h('button',{key:v,onClick:()=>setSearchScope(v),className:'act95 trc',
+              style:{flexShrink:0,padding:'5px 11px',borderRadius:999,fontSize:12.5,fontWeight:on?600:500,whiteSpace:'nowrap',color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair)}},l);
+          })):null,
         (!q&&scope.type!=='archive'&&scope.type!=='search')?(()=>{const chip=on=>({display:'flex',alignItems:'center',gap:4,fontSize:12.5,fontWeight:600,color:on?T.accent:T.sub,background:on?T.card:'transparent',border:'1px solid '+(on?T.accent:T.hair),borderRadius:999,padding:'5px 9px',cursor:'pointer',whiteSpace:'nowrap'});
           const setS=patch=>update(d=>({...d,settings:{...d.settings,...patch}}));
+          const mlabel=t=>h('div',{key:'lbl-'+t,style:{padding:'8px 15px 4px',fontSize:10.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},t);
+          const mrow=(label,active,onClick)=>h('button',{key:label,onClick,className:'act98',
+            style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'10px 15px',color:T.menuFg,fontSize:14,fontWeight:active?600:400,background:'transparent',textAlign:'left'}},
+            h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label),active?h('span',{style:{display:'flex',color:T.accent,flexShrink:0}},Icons.check(16)):null);
+          const LENGTHS=[['','Any length'],['short','Short · under 5m'],['medium','Medium · 5–15m'],['long','Long · 15m+']];
           const TYPES=[['all','All'],['article','Article'],['video','Video'],['post','Post']];
           const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
-          const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular'};
+          const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular',title:'Title A–Z'};
           const curSort=SORT_SHORT[S.sort]||(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
           return h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:8,flexWrap:'nowrap'}},
             h('div',{style:{position:'relative',flexShrink:0}},
-              h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all')},Icons.filter(14),curType),
+              h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all'||!!S.lenFilter||!!S.srcFilter)},Icons.filter(14),curType),
               filterMenu?h(Fragment,null,
                 h('div',{onClick:()=>setFilterMenu(false),style:{position:'fixed',inset:0,zIndex:29}}),
-                h('div',{className:'fdin',style:{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:170,boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
-                  TYPES.map(([v,l])=>h('button',{key:v,onClick:()=>{setS({typeFilter:v});setFilterMenu(false)},className:'act98',
-                    style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:12,width:'100%',padding:'11px 15px',color:T.menuFg,fontSize:14.5,fontWeight:v===S.typeFilter?600:400,background:'transparent',textAlign:'left'}},
-                    l,v===S.typeFilter?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null),
+                h('div',{className:'fdin sy',style:{position:'absolute',top:'calc(100% + 6px)',left:0,zIndex:30,background:T.menuBg,border:'1px solid '+T.menuHair,borderRadius:12,overflow:'hidden',minWidth:210,maxHeight:'62vh',overflowY:'auto',boxShadow:'0 12px 36px rgba(0,0,0,.45)'}},
+                  mlabel('Type'),
+                  TYPES.map(([v,l])=>mrow(l,v===S.typeFilter,()=>setS({typeFilter:v}))),
+                  mlabel('Length'),
+                  LENGTHS.map(([v,l])=>mrow(l,(S.lenFilter||'')===v,()=>setS({lenFilter:v}))),
+                  libSources.length?mlabel('Source'):null,
+                  libSources.length?mrow('All sources',!S.srcFilter,()=>setS({srcFilter:''})):null,
+                  libSources.map(s=>mrow(s.name+'  ('+s.count+')',S.srcFilter===s.key,()=>setS({srcFilter:S.srcFilter===s.key?'':s.key}))),
+                  (S.typeFilter!=='all'||S.lenFilter||S.srcFilter)?h('button',{key:'__reset',onClick:()=>{setS({typeFilter:'all',lenFilter:'',srcFilter:''});setFilterMenu(false)},className:'act98',style:{display:'flex',alignItems:'center',gap:8,width:'100%',padding:'11px 15px',color:T.accent,fontSize:13.5,fontWeight:600,borderTop:'1px solid '+T.menuHair,background:'transparent'}},'Reset filters'):null)):null),
             h('button',{onClick:()=>setS({readFilter:S.readFilter==='read'?'unread':'read'}),className:'act90',style:Object.assign({},chip(true),{flexShrink:0}),title:'Toggle read / unread'},S.readFilter==='read'?'Read':'Unread',
               S.readFilter!=='read'&&unreadCount>0?h('span',{style:{minWidth:17,height:17,padding:'0 5px',borderRadius:9,background:T.accent,color:'#fff',fontSize:10.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}},unreadCount>99?'99+':String(unreadCount)):null),
             h('button',{onClick:()=>setSelecting({mode:'select',ids:[]}),className:'act90',style:Object.assign({},chip(false),{flexShrink:0}),title:'Select multiple'},Icons.checkCircle(14),'Select'),
