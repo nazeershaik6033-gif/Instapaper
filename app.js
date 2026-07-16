@@ -2385,9 +2385,21 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
 const srcKey=s=>String(s||'').trim().toLowerCase();
 const SRC_COLORS=['#c0392b','#2980b9','#27ae60','#8e44ad','#d35400','#16a085','#2c3e50','#c2185b','#00838f','#6d4c41'];
 function srcColor(name){const s=srcKey(name);let n=0;for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return SRC_COLORS[n%SRC_COLORS.length]}
-function SrcAvatar({name,size}){
+// resolve a publisher name (as it appears in a headline) to its domain, so we can pull a favicon
+function srcDomain(name){
+  const k=srcKey(name);if(!k)return'';
+  const hit=PRESET_SOURCES.find(p=>srcKey(p.label)===k||p.domain.split('.')[0]===k.replace(/\s+/g,''));
+  return hit?hit.domain:'';
+}
+// round avatar: real favicon when we can resolve the publisher, colour-initial fallback otherwise
+function SrcAvatar({name,size,domain}){
   const s=size||34;
-  return h('span',{style:{width:s,height:s,borderRadius:'50%',flexShrink:0,background:srcColor(name),color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:s*0.46,fontWeight:600}},(String(name||'N').trim()[0]||'N').toUpperCase());
+  const [failed,setFailed]=useState(false);
+  const d=domain||srcDomain(name);
+  const initial=h('span',{style:{width:s,height:s,borderRadius:'50%',flexShrink:0,background:srcColor(name),color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:s*0.46,fontWeight:600}},(String(name||'N').trim()[0]||'N').toUpperCase());
+  if(!d||failed)return initial;
+  return h('span',{style:{width:s,height:s,borderRadius:'50%',flexShrink:0,background:'#fff',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',boxShadow:'inset 0 0 0 1px rgba(0,0,0,.06)'}},
+    h('img',{src:faviconUrl(d),alt:'',width:Math.round(s*0.62),height:Math.round(s*0.62),loading:'lazy',style:{display:'block'},onError:()=>setFailed(true)}));
 }
 /* one headline row — colour avatar, source + time, title; long-press to star/mute the source */
 function BriefStoryRow({T,it,busy,dim,starred,onOpen,onLongPress}){
@@ -2422,7 +2434,7 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
   const [busyUrl,setBusyUrl]=useState('');
   const [configOpen,setConfigOpen]=useState(false);
   const [srcAction,setSrcAction]=useState(null); // source name for the star/mute sheet
-  const [briefTab,setBriefTab]=useState('sources');
+  const [briefTab,setBriefTab]=useState('stories');
   const starList=starred||[],muteList=muted||[];
   const sset=new Set(starList.map(srcKey)),mset=new Set(muteList.map(srcKey));
   const toggleStar=name=>{const k=srcKey(name);onConfig({briefStarred:sset.has(k)?starList.filter(x=>srcKey(x)!==k):starList.concat([name])})};
@@ -2482,18 +2494,17 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
         h('div',{style:{fontSize:16,fontWeight:600,color:T.meta,marginBottom:6}},'No sources selected'),
         h('div',{style:{fontSize:13.5,lineHeight:1.5}},'Tap the settings icon above to choose your preferred news sources.'))
     :h('div',null,
-        enabledSrcs.map(s=>h('div',{key:s.domain,style:{display:'flex',alignItems:'center',gap:12,padding:'15px 16px',borderBottom:'1px solid '+T.hair}},
-          h('div',{style:{flex:1,minWidth:0}},
-            h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg,marginBottom:5}},s.label),
-            h('div',{style:{display:'flex',alignItems:'center',gap:8,flexWrap:'wrap'}},
-              h('button',{onClick:()=>openUrl('https://'+s.domain),className:'act95',
-                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.meta,fontSize:12.5,fontWeight:500}},
-                Icons.globe(13),'Website'),
-              s.epaper?h('button',{onClick:()=>openUrl(s.epaper),className:'act95',
-                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.accent,fontSize:12.5,fontWeight:500}},
-                Icons.external(13),'ePaper'):h('span',{
-                style:{display:'inline-flex',alignItems:'center',gap:4,padding:'5px 10px',borderRadius:8,background:T.card,color:T.sub,fontSize:12.5,fontWeight:500,opacity:.6}},
-                Icons.external(13),'No ePaper'))))));
+        h('div',{style:{padding:'10px 16px 4px',fontSize:11.5,color:T.sub}},enabledSrcs.length+' source'+(enabledSrcs.length===1?'':'s')+' · tap a name to open its site'),
+        enabledSrcs.map(s=>h('div',{key:s.domain,style:{display:'flex',alignItems:'center',gap:12,padding:'13px 16px',borderBottom:'1px solid '+T.hair}},
+          h(SrcAvatar,{name:s.label,domain:s.domain,size:38}),
+          h('button',{onClick:()=>openUrl('https://'+s.domain),className:'act98',style:{flex:1,minWidth:0,textAlign:'left',background:'none',border:'none',padding:0,color:T.fg}},
+            h('div',{style:{fontSize:15.5,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},s.label),
+            h('div',{style:{fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},s.domain)),
+          h('button',{onClick:()=>openUrl('https://'+s.domain),'aria-label':'Open website',title:'Website',className:'act90',
+            style:{display:'inline-flex',alignItems:'center',justifyContent:'center',width:34,height:34,borderRadius:9,background:T.card,color:T.meta,flexShrink:0}},Icons.globe(16)),
+          s.epaper?h('button',{onClick:()=>openUrl(s.epaper),className:'act95',
+            style:{display:'inline-flex',alignItems:'center',gap:4,padding:'7px 11px',borderRadius:9,background:T.card,color:T.accent,fontSize:12.5,fontWeight:600,flexShrink:0}},
+            Icons.external(13),'ePaper'):null)));
   const tabBar=h('div',{style:{display:'flex',borderBottom:'1px solid '+T.hair}},
     [['Top Stories','stories'],['Sources','sources']].map(([label,key])=>{
       const active=briefTab===key;
@@ -2588,9 +2599,12 @@ function BriefStories({T,S,sources,onRead}){
   if(items&&!items.length)return null; // offline with no cache — hide the row quietly
   const circle=(it,i)=>{
     const unseen=!seen.includes(it.url);
+    const dom=srcDomain(it.source);
     return h('button',{key:it.url+i,onClick:()=>setOpen(i),className:'act95',style:{width:66,flexShrink:0,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
       h('div',{style:{width:62,height:62,borderRadius:'50%',padding:2.5,background:unseen?'conic-gradient(from 210deg,'+T.accent+',#3f9d63,#e8c547,'+T.accent+')':T.hair}},
-        h('div',{style:{width:'100%',height:'100%',borderRadius:'50%',background:T.card,border:'2.5px solid '+T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:21,color:T.fg,overflow:'hidden'}},(it.source||'N')[0].toUpperCase())),
+        h('div',{style:{position:'relative',width:'100%',height:'100%',borderRadius:'50%',background:srcColor(it.source),border:'2.5px solid '+T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:WORDMARK,fontSize:21,color:'#fff',overflow:'hidden'}},
+          (it.source||'N')[0].toUpperCase(),
+          dom?h('img',{src:faviconUrl(dom),alt:'',loading:'lazy',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',background:'#fff'},onError:e=>{e.target.style.display='none'}}):null)),
       h('div',{style:{fontSize:10.5,color:unseen?T.meta:T.sub,fontWeight:unseen?600:400,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.source||'News'));
   };
   return h('div',{style:{borderBottom:'1px solid '+T.hair,paddingBottom:4}},
