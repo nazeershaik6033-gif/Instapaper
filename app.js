@@ -1070,6 +1070,19 @@ function briefFeedUrl(region,topic,sources,customQuery){
     ?'https://news.google.com/rss/headlines/section/topic/'+topic+'?'+qs
     :'https://news.google.com/rss?'+qs;
 }
+/* Pull the best thumbnail out of an RSS <item>: media tags, enclosure, then any <img> in the body. */
+function extractItemImage(it){
+  const looksImg=u=>u&&/\.(jpe?g|png|webp|gif|avif)(\?|$)/i.test(u);
+  const mc=it.getElementsByTagName('media:content');
+  for(let i=0;i<mc.length;i++){const u=mc[i].getAttribute('url'),t=mc[i].getAttribute('type')||'',m=mc[i].getAttribute('medium')||'';if(u&&(/^image/.test(t)||m==='image'||looksImg(u)))return u;}
+  const mt=it.getElementsByTagName('media:thumbnail');
+  if(mt.length&&mt[0].getAttribute('url'))return mt[0].getAttribute('url');
+  const enc=it.getElementsByTagName('enclosure');
+  for(let i=0;i<enc.length;i++){const u=enc[i].getAttribute('url'),t=enc[i].getAttribute('type')||'';if(u&&(/^image/.test(t)||looksImg(u)))return u;}
+  const body=((it.getElementsByTagName('description')[0]||{}).textContent||'')+((it.getElementsByTagName('content:encoded')[0]||{}).textContent||'');
+  const m=body.match(/<img[^>]+src=["']([^"']+)["']/i);
+  return m?m[1]:'';
+}
 /* Parse any standard RSS/Atom XML into clean headline items. */
 function parseGNewsXml(xml,defaultSource){
   const doc=new DOMParser().parseFromString(xml,'text/xml');
@@ -1088,7 +1101,9 @@ function parseGNewsXml(xml,defaultSource){
     else if(!source){const m=title.match(/^(.+) - ([^-]{2,40})$/);if(m){title=m[1].trim();source=m[2].trim()}}
     const pub=childText(it,'pubDate')||childText(it,'updated');
     let publishedAt=0;if(pub){const d=Date.parse(pub);if(!isNaN(d))publishedAt=d}
-    items.push({title,url:link,source,publishedAt});
+    const catEl=it.getElementsByTagName('category')[0];
+    const category=catEl?catEl.textContent.trim():'';
+    items.push({title,url:link,source,publishedAt,image:extractItemImage(it),category});
   }
   return items;
 }
@@ -1129,7 +1144,9 @@ async function fetchOneFeed(feedUrl,defaultSource){
     return json.items.map(it=>{
       let title=it.title||'';const source=it.author||defaultSource||'';
       if(source&&title.endsWith(' - '+source))title=title.slice(0,-(source.length+3)).trim();
-      return{title,url:it.link,source,publishedAt:it.pubDate?new Date(it.pubDate).getTime():0};
+      const image=it.thumbnail||(it.enclosure&&it.enclosure.link)||'';
+      const category=Array.isArray(it.categories)&&it.categories.length?it.categories[0]:'';
+      return{title,url:it.link,source,publishedAt:it.pubDate?new Date(it.pubDate).getTime():0,image,category};
     }).filter(it=>it.title&&it.url);
   };
   /* Try direct + all proxies in parallel; fall back to rss2json only if all fail */
@@ -2385,6 +2402,22 @@ function HeadlinesConfig({T,initCats,initSrcs,onSave,onClose}){
 const srcKey=s=>String(s||'').trim().toLowerCase();
 const SRC_COLORS=['#c0392b','#2980b9','#27ae60','#8e44ad','#d35400','#16a085','#2c3e50','#c2185b','#00838f','#6d4c41'];
 function srcColor(name){const s=srcKey(name);let n=0;for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return SRC_COLORS[n%SRC_COLORS.length]}
+// canonical section order for grouping the brief; "Top Stories" is the catch-all
+const BRIEF_SECTIONS=['Top Stories','World','Business','Technology','Sport','Entertainment','Health'];
+const SECTION_TESTS=[
+  ['Sport',/\b(cricket|ipl|odi|t20|football|fifa|olympics?|tennis|badminton|hockey|kabaddi|sports?|match|wickets?|innings|world cup|premier league)\b/],
+  ['Business',/\b(business|market|sensex|nifty|stocks?|shares?|economy|gdp|rupee|rbi|inflation|startup|ipo|earnings|revenue|tariff|invest)\b/],
+  ['Technology',/\b(tech|technology|artificial intelligence|smartphone|software|gadget|chip|semiconductor|internet|crypto|iphone|android|app launch)\b/],
+  ['Entertainment',/\b(bollywood|hollywood|film|movie|actor|actress|box office|celebrity|ott|web series|trailer|singer|concert)\b/],
+  ['Health',/\b(health|covid|virus|hospital|vaccine|disease|medical|doctor|outbreak|dengue)\b/],
+  ['World',/\b(world|global|us |u\.s\.|china|russia|ukraine|israel|gaza|pakistan|europe|united nations|trump|putin|nato|foreign)\b/],
+];
+// classify a headline into one of BRIEF_SECTIONS using its <category> tag, then title keywords
+function briefSection(it){
+  const hay=((it.category||'')+' '+(it.title||'')).toLowerCase();
+  for(const[name,re]of SECTION_TESTS)if(re.test(hay))return name;
+  return 'Top Stories';
+}
 // resolve a publisher name (as it appears in a headline) to its domain, so we can pull a favicon
 function srcDomain(name){
   const k=srcKey(name);if(!k)return'';
@@ -2401,9 +2434,12 @@ function SrcAvatar({name,size,domain}){
   return h('span',{style:{width:s,height:s,borderRadius:'50%',flexShrink:0,background:'#fff',display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',boxShadow:'inset 0 0 0 1px rgba(0,0,0,.06)'}},
     h('img',{src:faviconUrl(d),alt:'',width:Math.round(s*0.62),height:Math.round(s*0.62),loading:'lazy',style:{display:'block'},onError:()=>setFailed(true)}));
 }
-/* one headline row — colour avatar, source + time, title; long-press to star/mute the source */
+/* one headline row — colour avatar, source + time, title, and a thumbnail when the feed carries one;
+   long-press to star/mute the source */
 function BriefStoryRow({T,it,busy,dim,starred,onOpen,onLongPress}){
   const lp=useLongPress(onLongPress);
+  const [imgOk,setImgOk]=useState(true);
+  const showThumb=!!it.image&&imgOk;
   return h('div',{style:{padding:'5px 12px'}},
     h('button',Object.assign({onClick:onOpen},lp,{className:'act98',
       style:{display:'flex',gap:12,width:'100%',textAlign:'left',padding:'14px 14px 13px',borderRadius:13,border:'1px solid '+T.hair,background:T.card,boxShadow:'0 1px 3px rgba(0,0,0,.05)',color:T.fg,alignItems:'flex-start',opacity:dim?0.5:1}}),
@@ -2415,8 +2451,13 @@ function BriefStoryRow({T,it,busy,dim,starred,onOpen,onLongPress}){
           it.source&&it.publishedAt?h('span',null,'·'):null,
           it.publishedAt?h('span',{style:{flexShrink:0,color:T.accent,fontWeight:600}},timeAgo(it.publishedAt)):null),
         h('div',{style:{fontFamily:"'Lora',Georgia,serif",fontSize:16.5,fontWeight:600,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},it.title)),
-      h('div',{style:{flexShrink:0,width:22,display:'flex',justifyContent:'center',paddingTop:8,color:T.sub}},
-        busy?h(Spinner,{T,size:17}):Icons.download(18))));
+      showThumb
+        ?h('div',{style:{position:'relative',flexShrink:0,width:66,height:66}},
+            h('img',{src:it.image,alt:'',loading:'lazy',onError:()=>setImgOk(false),
+              style:{width:66,height:66,borderRadius:10,objectFit:'cover',background:T.hair,display:'block'}}),
+            busy?h('div',{style:{position:'absolute',inset:0,borderRadius:10,background:'rgba(0,0,0,.45)',display:'flex',alignItems:'center',justifyContent:'center'}},h(Spinner,{T,size:18})):null)
+        :h('div',{style:{flexShrink:0,width:22,display:'flex',justifyContent:'center',paddingTop:8,color:T.sub}},
+            busy?h(Spinner,{T,size:17}):Icons.download(18))));
 }
 function BriefChips({T,options,selected,onSelect}){
   return h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'2px 16px 10px',flexShrink:0}},
@@ -2475,14 +2516,23 @@ function DailyBrief({T,regionId,onConfig,onOpenItem,showRegion=true,headlinesCat
       h('div',{style:{fontSize:13.5,lineHeight:1.5,marginBottom:18}},err+'. Check your connection and try again.'),
       h('button',{onClick:load,className:'act95',style:{display:'inline-flex',alignItems:'center',gap:8,padding:'11px 22px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:600}},Icons.refresh(17),'Try again'));
   }else{
-    // hide muted publishers; float starred publishers to the top (stable within each group)
+    // hide muted publishers, then bucket the rest into sections (starred sources get their own group up top)
     const visible=items.filter(it=>!mset.has(srcKey(it.source)));
-    const ordered=[...visible.filter(it=>sset.has(srcKey(it.source))),...visible.filter(it=>!sset.has(srcKey(it.source)))];
-    newsBody=ordered.length?h('div',{style:{padding:'5px 0'}},
-      ordered.map((it,i)=>h(BriefStoryRow,{key:it.url+i,T,it,busy:busyUrl===it.url,dim:busyUrl&&busyUrl!==it.url,
-        starred:sset.has(srcKey(it.source)),onOpen:()=>open(it),onLongPress:()=>it.source&&setSrcAction(it.source)})),
+    const starredItems=visible.filter(it=>sset.has(srcKey(it.source)));
+    const rest=visible.filter(it=>!sset.has(srcKey(it.source)));
+    const bucket={};rest.forEach(it=>{const s=briefSection(it);(bucket[s]=bucket[s]||[]).push(it)});
+    const groups=[];
+    if(starredItems.length)groups.push({key:'starred',label:'★ Starred',items:starredItems});
+    BRIEF_SECTIONS.forEach(s=>{if(bucket[s]&&bucket[s].length)groups.push({key:s,label:s,items:bucket[s]})});
+    const rowFor=(it,i)=>h(BriefStoryRow,{key:it.url+i,T,it,busy:busyUrl===it.url,dim:busyUrl&&busyUrl!==it.url,
+      starred:sset.has(srcKey(it.source)),onOpen:()=>open(it),onLongPress:()=>it.source&&setSrcAction(it.source)});
+    // one section header + its rows; a single "Top Stories" group renders headerless (nothing to disambiguate)
+    const sectionHeader=label=>h('div',{style:{position:'sticky',top:0,zIndex:1,background:T.bg,padding:'12px 20px 6px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:label[0]==='★'?'#e2a600':T.sub}},label);
+    const onlyTop=groups.length===1&&groups[0].key==='Top Stories';
+    newsBody=visible.length?h('div',{style:{padding:'5px 0'}},
+      groups.map(g=>h('div',{key:g.key},onlyTop?null:sectionHeader(g.label),g.items.map(rowFor))),
       h('div',{style:{padding:'16px 24px 8px',textAlign:'center',fontSize:11.5,color:T.sub,lineHeight:1.5}},
-        'Tap a story to save it · long-press to star ★ or mute a source. Headlines via Google News.'))
+        'Tap a story to save it · long-press to star ★ or mute a source.'))
     :h('div',{style:{padding:'54px 40px',textAlign:'center',color:T.sub}},
       h('div',{style:{display:'flex',justifyContent:'center',marginBottom:12,opacity:.5}},Icons.newspaper(38)),
       h('div',{style:{fontSize:15.5,fontWeight:600,color:T.meta,marginBottom:6}},'Everything here is muted'),
