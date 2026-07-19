@@ -4819,6 +4819,8 @@ const TURN_THEMES={
   black:{id:'black',label:'Matt Black',bg:'#171715',fg:'#E7E1D5',sub:'rgba(231,225,213,.48)',hair:'rgba(231,225,213,.16)',knob:'#21211E',card:'rgba(231,225,213,.07)',accent:'#D5581F',statusbar:'#171715'}
 };
 const TURN_FONT="'Avenir Next Condensed','Arial Narrow','Inter',-apple-system,system-ui,sans-serif";
+/* every deep-link name that should land on the timer — ?section=, #hash, or reader-nav scope */
+const TURN_ALIASES=['turn','pomodoro','focus','timer','focus-timer','focustimer'];
 const TURN_MODES=[['focus','FOCUS'],['break','BREAK'],['long','LONG BREAK']];
 const turnPad2=n=>String(Math.max(0,n)).padStart(2,'0');
 const turnHrMin=sec=>{const m=Math.round(sec/60);return turnPad2(Math.floor(m/60))+' Hr '+turnPad2(m%60)+' Min'};
@@ -5281,14 +5283,17 @@ function App(){
     el.click();
   },[]);
 
-  useEffect(()=>{ // splash + launch params (?url= from share target, ?action=add)
+  useEffect(()=>{ // splash + launch params (?url= from share target, ?action=add, pomodoro deep links)
     const spl=document.getElementById('spl');if(spl)spl.classList.add('hide');
     try{
       const p=new URLSearchParams(location.search);
       const u=p.get('url')||extractFirstUrl(p.get('text')||'')||extractFirstUrl(p.get('title')||'');
+      const sec=(p.get('section')||p.get('scope')||p.get('action')||'').toLowerCase();
+      const hash=(location.hash||'').replace(/^#\/?/,'').toLowerCase();
       if(u)setAddS({prefill:u});
-      else if(p.get('action')==='add')setAddS({prefill:''});
-      if([...p.keys()].length)history.replaceState(null,'',location.pathname);
+      else if(sec==='add')setAddS({prefill:''});
+      else if(TURN_ALIASES.includes(sec)||TURN_ALIASES.includes(hash))setScope({type:'turn'});
+      if([...p.keys()].length||hash)history.replaceState(null,'',location.pathname);
     }catch(e){}
   },[]);
 
@@ -5296,7 +5301,7 @@ function App(){
     const onNav=e=>{const d=e&&e.data;if(!d||d.type!=='reader-nav')return;
       setSidebar(false);setMenuOpen(false);
       if(d.scope==='browse'){setBrowserO({url:''})}
-      else{setBrowserO(null);setScope({type:d.scope||'home'})}
+      else{setBrowserO(null);const s=String(d.scope||'home').toLowerCase();setScope({type:TURN_ALIASES.includes(s)?'turn':(d.scope||'home')})}
     };
     window.addEventListener('message',onNav);
     return()=>window.removeEventListener('message',onNav);
