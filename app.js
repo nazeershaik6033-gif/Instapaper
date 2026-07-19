@@ -1309,6 +1309,15 @@ function loadStore(){
   if(!d.brief.yt||typeof d.brief.yt!=='object')d.brief.yt={};
   if(!d.brief.feeds||typeof d.brief.feeds!=='object')d.brief.feeds={};
   if(!d.seeded){d.articles.unshift(makeSeed());d.seeded=true}
+  // TURN — tilt-based pomodoro timer. presets are the 4 compass minutes (N,E,S,W).
+  if(!d.turn||typeof d.turn!=='object')d.turn={};
+  if(!Array.isArray(d.turn.presets)||d.turn.presets.length!==4)d.turn.presets=[5,20,75,45];
+  if(!(d.turn.breakMin>0))d.turn.breakMin=5;
+  if(!(d.turn.longMin>0))d.turn.longMin=15;
+  if(!Array.isArray(d.turn.tags))d.turn.tags=['READING','DRAWING','WORKOUT','MEDITATION'];
+  if(!Array.isArray(d.turn.records))d.turn.records=[];
+  if(d.turn.theme!=='black')d.turn.theme='white';
+  if(d.turn.session&&!(d.turn.session.startedAt>0))d.turn.session=null;
   return d;
 }
 
@@ -1403,7 +1412,8 @@ const Icons={
   news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
   thread:s=>Svg({size:s},h('circle',{cx:6,cy:6,r:2.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:6,cy:18,r:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M6 8.2v7.6'),P('M11 6h9M11 18h9M11 12h6')),
   star:(s,fill)=>Svg({size:s},h('path',{d:'M12 3.6l2.5 5.1 5.6.8-4.05 3.95.96 5.6L12 16.4l-5.01 2.65.96-5.6L3.9 9.5l5.6-.8L12 3.6Z',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round',fill:fill?'currentColor':'none'})),
-  mute:s=>Svg({size:s},P('M4.5 9.5v5h3l4 3.5v-12l-4 3.5h-3Z'),P('M15.5 9.5l4 5M19.5 9.5l-4 5'))
+  mute:s=>Svg({size:s},P('M4.5 9.5v5h3l4 3.5v-12l-4 3.5h-3Z'),P('M15.5 9.5l4 5M19.5 9.5l-4 5')),
+  compass:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7}),P('M12 3.5v2.6M12 17.9v2.6M3.5 12h2.6M17.9 12h2.6'),h('circle',{cx:12,cy:12,r:2.1,fill:'currentColor'}))
 };
 /* ============================== shared UI ============================== */
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
@@ -1608,6 +1618,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
     {key:'threads',icon:Icons.thread(22),label:'Threads',active:is('threads'),onClick:()=>go('threads')},
     {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
+    {key:'turn',icon:Icons.compass(22),label:'Focus Timer',active:is('turn'),onClick:()=>go('turn')},
     {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
   ];
   const navF=NAV.filter(n=>m(n.label));
@@ -4799,6 +4810,291 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     content);
 }
 
+/* ============================== TURN — tilt-to-set pomodoro timer ==============================
+   Tilt to choose. Tap to begin. Four compass presets, sessions end when YOU say done,
+   automatic logging with optional tags, matt-white / matt-black themes.
+   Inspired by TURN (Pukaki Lab, Seoul). */
+const TURN_THEMES={
+  white:{id:'white',label:'Matt White',bg:'#EAE4D8',fg:'#191913',sub:'rgba(25,25,19,.5)',hair:'rgba(25,25,19,.16)',knob:'#F3EEE3',card:'rgba(25,25,19,.06)',accent:'#C64F1E',statusbar:'#EAE4D8'},
+  black:{id:'black',label:'Matt Black',bg:'#171715',fg:'#E7E1D5',sub:'rgba(231,225,213,.48)',hair:'rgba(231,225,213,.16)',knob:'#21211E',card:'rgba(231,225,213,.07)',accent:'#D5581F',statusbar:'#171715'}
+};
+const TURN_FONT="'Avenir Next Condensed','Arial Narrow','Inter',-apple-system,system-ui,sans-serif";
+const TURN_MODES=[['focus','FOCUS'],['break','BREAK'],['long','LONG BREAK']];
+const turnPad2=n=>String(Math.max(0,n)).padStart(2,'0');
+const turnHrMin=sec=>{const m=Math.round(sec/60);return turnPad2(Math.floor(m/60))+' Hr '+turnPad2(m%60)+' Min'};
+const turnMS=sec=>turnPad2(Math.floor(sec/60))+':'+turnPad2(Math.floor(sec%60));
+const turnDay=ts=>{const d=new Date(ts);return d.toLocaleDateString(undefined,{weekday:'long',month:'short',day:'2-digit'})};
+function turnNotify(title,body){
+  try{
+    if(typeof Notification==='undefined'||Notification.permission!=='granted')return;
+    const viaSW=navigator.serviceWorker&&navigator.serviceWorker.ready;
+    if(viaSW)navigator.serviceWorker.ready.then(reg=>reg.showNotification(title,{body,icon:'icon-192.png',badge:'icon-192.png',tag:'turn-timer',renotify:true})).catch(()=>{try{new Notification(title,{body})}catch(e){}});
+    else new Notification(title,{body});
+  }catch(e){}
+}
+const turnBuzz=p=>{try{if(navigator.vibrate)navigator.vibrate(p)}catch(e){}};
+
+function TurnView({turn,onTurn,onExit}){
+  const K=TURN_THEMES[turn.theme]||TURN_THEMES.white;
+  const [view,setView]=useState('dial'); // dial | records | settings
+  const [mode,setMode]=useState('focus');
+  const [sel,setSel]=useState(0); // selected compass slot 0=N 1=E 2=S 3=W
+  const session=turn.session;
+  const needsPerm=typeof DeviceOrientationEvent!=='undefined'&&typeof DeviceOrientationEvent.requestPermission==='function';
+  const [tiltOn,setTiltOn]=useState(!needsPerm);
+  const angRef=useRef(0);
+  const selRef=useRef(0);selRef.current=sel;
+
+  /* ---------- tilt: pick the preset whose side of the phone points up ---------- */
+  useEffect(()=>{
+    if(!tiltOn||view!=='dial'||session)return;
+    const onOri=e=>{
+      if(e.beta==null||e.gamma==null)return;
+      const b=e.beta*Math.PI/180,g=e.gamma*Math.PI/180;
+      /* gravity projected onto the screen plane (device coords) */
+      const gx=Math.cos(b)*Math.sin(g),gy=-Math.sin(b);
+      if(gx*gx+gy*gy<0.06)return; // phone lying flat — roll is meaningless, keep last pick
+      let phi=Math.atan2(gx,-gy)*180/Math.PI; // clockwise roll, 0 = upright portrait
+      let d=phi-angRef.current;while(d>180)d-=360;while(d<-180)d+=360;
+      const next=angRef.current+d*0.3; // low-pass to kill sensor jitter
+      angRef.current=next;
+      const idx=(((-Math.round(next/90))%4)+4)%4;
+      if(idx!==selRef.current){turnBuzz(8);setSel(idx)}
+    };
+    window.addEventListener('deviceorientation',onOri);
+    return()=>window.removeEventListener('deviceorientation',onOri);
+  },[tiltOn,view,session]);
+  const enableTilt=async()=>{
+    try{
+      const r=await DeviceOrientationEvent.requestPermission();
+      if(r==='granted')setTiltOn(true);
+    }catch(e){}
+  };
+
+  /* ---------- running session clock (recomputed from wall time, survives reload) ---------- */
+  const [now,setNow]=useState(Date.now());
+  useEffect(()=>{
+    if(!session)return;
+    setNow(Date.now());
+    const iv=setInterval(()=>setNow(Date.now()),500);
+    const onVis=()=>{if(document.visibilityState==='visible')setNow(Date.now())};
+    document.addEventListener('visibilitychange',onVis);
+    return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',onVis)};
+  },[session&&session.id]);
+  useEffect(()=>{ // notify when the planned time is up — the session itself keeps running
+    if(!session)return;
+    const ms=session.plannedMin*60000-(Date.now()-session.startedAt);
+    if(ms<=0)return;
+    const t=setTimeout(()=>{
+      turnBuzz([130,90,130]);
+      turnNotify(session.mode==='focus'?'Focus time is up':'Break is over',
+        session.mode==='focus'?session.plannedMin+' minutes done — the clock keeps going until you tap Done.':'Time to get back to it.');
+    },ms);
+    return()=>clearTimeout(t);
+  },[session&&session.id]);
+  useEffect(()=>{ // keep the screen awake while a session runs
+    if(!session||!navigator.wakeLock)return;
+    let lock=null,dead=false;
+    const grab=()=>{navigator.wakeLock.request('screen').then(l=>{if(dead)l.release().catch(()=>{});else lock=l}).catch(()=>{})};
+    grab();
+    const onVis=()=>{if(document.visibilityState==='visible')grab()};
+    document.addEventListener('visibilitychange',onVis);
+    return()=>{dead=true;document.removeEventListener('visibilitychange',onVis);if(lock)lock.release().catch(()=>{})};
+  },[session&&session.id]);
+
+  const start=()=>{
+    try{if(typeof Notification!=='undefined'&&Notification.permission==='default')Notification.requestPermission().catch(()=>{})}catch(e){}
+    const mins=mode==='focus'?clamp(turn.presets[sel]||25,1,999):mode==='break'?turn.breakMin:turn.longMin;
+    turnBuzz(15);
+    onTurn(t=>({...t,session:{id:uid(),mode,plannedMin:mins,startedAt:Date.now(),tag:mode==='focus'?(t.lastTag||''):''}}));
+    setCtl(false);
+  };
+  const finish=()=>{
+    const s=turn.session;if(!s)return;
+    const sec=Math.max(1,Math.round((Date.now()-s.startedAt)/1000));
+    const rec={id:s.id,mode:s.mode,tag:s.tag||'',plannedMin:s.plannedMin,sec,startedAt:s.startedAt,endedAt:Date.now()};
+    turnBuzz(20);
+    onTurn(t=>({...t,session:null,lastTag:s.tag||t.lastTag||'',records:[rec,...(t.records||[])].slice(0,1000)}));
+  };
+  const discard=()=>onTurn(t=>({...t,session:null}));
+  const setTheme=()=>onTurn(t=>({...t,theme:t.theme==='black'?'white':'black'}));
+
+  const [ctl,setCtl]=useState(false); // running-screen controls visible?
+  const wrap={position:'absolute',inset:0,zIndex:55,background:K.bg,color:K.fg,fontFamily:TURN_FONT,display:'flex',flexDirection:'column',paddingTop:SAFE_T,transition:'background-color 220ms,color 220ms',overflow:'hidden'};
+  const topBtn={width:44,height:44,display:'flex',alignItems:'center',justifyContent:'center',color:K.fg,borderRadius:12};
+  const label={fontSize:11,fontWeight:700,letterSpacing:'.22em',color:K.sub};
+
+  /* ================= running screen ================= */
+  if(session){
+    const elapsed=Math.max(0,(now-session.startedAt)/1000);
+    const planned=session.plannedMin*60;
+    const remain=Math.ceil(planned-elapsed);
+    const over=remain<0;
+    const shown=over?elapsed-planned:remain;
+    const fill=Math.min(1,elapsed/planned);
+    const modeLabel=(TURN_MODES.find(m=>m[0]===session.mode)||TURN_MODES[0])[1];
+    return h('div',{style:wrap},
+      h('div',{style:{position:'absolute',left:0,right:0,top:0,height:(fill*100)+'%',background:K.accent,transition:'height 600ms linear',opacity:over?.94:1}}),
+      over?h('div',{style:{position:'absolute',inset:0,background:K.accent,animation:'fdk 1.6s ease-in-out infinite alternate',opacity:.12}}):null,
+      h('div',{onClick:()=>setCtl(v=>!v),style:{position:'relative',flex:1,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',cursor:'pointer'}},
+        h('div',{style:{fontSize:'clamp(88px,30vw,150px)',fontWeight:700,lineHeight:.92,letterSpacing:'-.01em',textAlign:'center',fontVariantNumeric:'tabular-nums',mixBlendMode:turn.theme==='black'?'normal':'multiply'}},
+          over?h('div',{style:{fontSize:'clamp(20px,6vw,28px)',letterSpacing:'.28em',marginBottom:14,color:'inherit',opacity:.85}},'OVERTIME +'):null,
+          h('div',null,turnPad2(Math.floor(shown/60))),
+          h('div',null,turnPad2(Math.floor(shown%60)))),
+        h('div',{style:{marginTop:30,fontSize:13,fontWeight:700,letterSpacing:'.34em'}},modeLabel,session.tag?' · '+session.tag.toUpperCase():''),
+        ctl?null:h('div',{style:{position:'absolute',bottom:'calc(26px + '+SAFE_B+')',fontSize:10.5,fontWeight:600,letterSpacing:'.24em',opacity:.55}},'TAP FOR CONTROLS')),
+      ctl?h('div',{className:'shn',style:{position:'relative',flexShrink:0,padding:'18px 22px calc(22px + '+SAFE_B+')',display:'flex',flexDirection:'column',gap:14,background:K.bg,borderTop:'1px solid '+K.hair}},
+        session.mode==='focus'?h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto'}},
+          [''].concat(turn.tags).map(tg=>{
+            const on=(session.tag||'')===tg;
+            return h('button',{key:tg||'__none',onClick:()=>onTurn(t=>t.session?{...t,session:{...t.session,tag:tg}}:t),
+              style:{flexShrink:0,padding:'8px 14px',borderRadius:999,fontFamily:TURN_FONT,fontSize:12,fontWeight:700,letterSpacing:'.14em',border:'1.5px solid '+(on?K.fg:K.hair),background:on?K.fg:'transparent',color:on?K.bg:K.fg}},tg?tg.toUpperCase():'NO TAG');
+          })):null,
+        h('button',{onClick:finish,className:'act98',style:{width:'100%',padding:'17px',borderRadius:14,background:K.fg,color:K.bg,fontFamily:TURN_FONT,fontSize:16,fontWeight:700,letterSpacing:'.3em'}},'DONE'),
+        h('button',{onClick:discard,className:'act98',style:{width:'100%',padding:'10px',fontFamily:TURN_FONT,fontSize:12,fontWeight:700,letterSpacing:'.22em',color:K.sub}},'DISCARD SESSION')):null);
+  }
+
+  /* ================= shared top bar ================= */
+  const topBar=h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',padding:'8px 10px',gap:2}},
+    h('button',{onClick:()=>view==='dial'?onExit():setView('dial'),'aria-label':'Back',className:'act90',style:topBtn},Icons.back(22)),
+    h('div',{style:{flex:1,textAlign:'center',fontSize:16,fontWeight:700,letterSpacing:'.42em',paddingLeft:6}},view==='records'?'RECORDS':view==='settings'?'PRESETS':'TURN'),
+    h('button',{onClick:()=>setView(v=>v==='records'?'dial':'records'),'aria-label':'Records',className:'act90',style:Object.assign({},topBtn,{color:view==='records'?K.accent:K.fg})},Icons.chart(21)),
+    h('button',{onClick:()=>setView(v=>v==='settings'?'dial':'settings'),'aria-label':'Timer settings',className:'act90',style:Object.assign({},topBtn,{color:view==='settings'?K.accent:K.fg})},Icons.gear(21)),
+    h('button',{onClick:setTheme,'aria-label':'Toggle theme',className:'act90',style:topBtn},Icons.contrast(21)));
+
+  /* ================= records ================= */
+  if(view==='records'){
+    const recs=(turn.records||[]).filter(r=>r.mode==='focus');
+    return h(TurnRecords,{K,recs,tags:turn.tags,topBar,wrap,label,
+      onDelete:id=>onTurn(t=>({...t,records:(t.records||[]).filter(r=>r.id!==id)}))});
+  }
+
+  /* ================= settings ================= */
+  if(view==='settings'){
+    return h(TurnSettings,{K,turn,onTurn,topBar,wrap,label});
+  }
+
+  /* ================= the dial ================= */
+  const mins=mode==='focus'?turn.presets:[mode==='break'?turn.breakMin:turn.longMin];
+  const slots=mode==='focus'?[0,1,2,3]:[0];
+  const activeSel=mode==='focus'?sel:0;
+  const D='min(78vw,330px)';
+  return h('div',{style:wrap},
+    topBar,
+    h('div',{style:{flexShrink:0,display:'flex',justifyContent:'center',gap:8,padding:'10px 16px 0'}},
+      TURN_MODES.map(([id,l])=>{
+        const on=mode===id;
+        return h('button',{key:id,onClick:()=>setMode(id),className:'act95',
+          style:{padding:'9px 15px',borderRadius:999,fontFamily:TURN_FONT,fontSize:11.5,fontWeight:700,letterSpacing:'.18em',border:'1.5px solid '+(on?K.fg:K.hair),background:on?K.fg:'transparent',color:on?K.bg:K.sub,transition:'background-color 160ms,color 160ms'}},l);
+      })),
+    h('div',{style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center'}},
+      h('div',{style:{position:'relative',width:D,height:D}},
+        slots.map(i=>{
+          const on=i===activeSel;
+          const pos=[{top:0,left:'50%',transform:'translateX(-50%)'},
+                     {right:0,top:'50%',transform:'translateY(-50%) rotate(90deg)'},
+                     {bottom:0,left:'50%',transform:'translateX(-50%) rotate(180deg)'},
+                     {left:0,top:'50%',transform:'translateY(-50%) rotate(270deg)'}][i];
+          return h('button',{key:i,onClick:()=>mode==='focus'&&setSel(i),
+            style:Object.assign({position:'absolute',fontFamily:TURN_FONT,fontVariantNumeric:'tabular-nums',lineHeight:1,padding:6,
+              fontSize:on?62:46,fontWeight:700,letterSpacing:'-.02em',color:K.fg,opacity:on?1:.72,
+              transition:'font-size 200ms,opacity 200ms'},pos)},turnPad2(mins[i]||0));
+        }),
+        h('button',{onClick:start,className:'act95',
+          style:{position:'absolute',top:'50%',left:'50%',width:96,height:116,marginLeft:-48,marginTop:-58,borderRadius:'50%',
+            background:K.knob,border:'1px solid '+K.hair,boxShadow:'0 10px 30px rgba(0,0,0,'+(turn.theme==='black'?'0.5':'0.16')+'), inset 0 1px 0 rgba(255,255,255,'+(turn.theme==='black'?'.05':'.7')+')',
+            display:'flex',alignItems:'center',justifyContent:'center',
+            transform:'rotate('+activeSel*90+'deg)',transition:'transform 260ms cubic-bezier(.3,.9,.3,1)'}},
+          h('div',{style:{position:'absolute',top:11,left:'50%',marginLeft:-3.5,width:7,height:7,borderRadius:'50%',background:K.accent}}),
+          h('div',{style:{fontFamily:TURN_FONT,fontSize:8.5,fontWeight:700,letterSpacing:'.3em',color:K.sub,transform:'rotate('+(-activeSel*90)+'deg)',transition:'transform 260ms cubic-bezier(.3,.9,.3,1)'}},'START')))),
+    h('div',{style:{flexShrink:0,textAlign:'center',padding:'0 24px calc(24px + '+SAFE_B+')',display:'flex',flexDirection:'column',gap:10,alignItems:'center'}},
+      needsPerm&&!tiltOn?h('button',{onClick:enableTilt,className:'act95',
+        style:{padding:'10px 18px',borderRadius:999,border:'1.5px solid '+K.fg,fontFamily:TURN_FONT,fontSize:11.5,fontWeight:700,letterSpacing:'.2em',color:K.fg}},'ENABLE TILT'):null,
+      h('div',{style:Object.assign({},label,{lineHeight:1.7})},
+        mode==='focus'?(tiltOn?'TILT TO CHOOSE · TAP TO BEGIN':'TAP A TIME · TAP THE DIAL TO BEGIN'):'TAP THE DIAL TO BEGIN'),
+      h('div',{style:{fontSize:10,fontWeight:600,letterSpacing:'.14em',color:K.sub,opacity:.7}},'ENDS WHEN YOU SAY DONE — NOT WHEN THE CLOCK DOES')));
+}
+
+function TurnRecords({K,recs,tags,topBar,wrap,label,onDelete}){
+  const [tagF,setTagF]=useState('');
+  const allTags=useMemo(()=>{const s=new Set(tags);recs.forEach(r=>{if(r.tag)s.add(r.tag)});return[...s]},[recs,tags]);
+  const list=tagF?recs.filter(r=>r.tag===tagF):recs;
+  const d0=new Date();d0.setHours(0,0,0,0);const today=d0.getTime();
+  const sum=arr=>arr.reduce((a,r)=>a+(r.sec||0),0);
+  const todaySec=sum(list.filter(r=>r.endedAt>=today));
+  const weekSec=sum(list.filter(r=>r.endedAt>=today-6*86400000));
+  const groups=useMemo(()=>{
+    const m=new Map();
+    list.forEach(r=>{const k=turnDay(r.endedAt);if(!m.has(k))m.set(k,[]);m.get(k).push(r)});
+    return[...m.entries()];
+  },[list]);
+  const stat=(t,v)=>h('div',{style:{flex:1,background:K.card,borderRadius:12,padding:'12px 14px'}},
+    h('div',{style:Object.assign({},label,{fontSize:9.5,marginBottom:5})},t),
+    h('div',{style:{fontSize:19,fontWeight:700,fontVariantNumeric:'tabular-nums'}},v));
+  return h('div',{style:wrap},
+    topBar,
+    h('div',{className:'sx',style:{flexShrink:0,display:'flex',gap:8,overflowX:'auto',padding:'10px 18px 4px'}},
+      [''].concat(allTags).map(tg=>{
+        const on=tagF===tg;
+        return h('button',{key:tg||'__all',onClick:()=>setTagF(tg),
+          style:{flexShrink:0,padding:'8px 14px',borderRadius:999,fontFamily:TURN_FONT,fontSize:11.5,fontWeight:700,letterSpacing:'.14em',border:'1.5px solid '+(on?K.fg:K.hair),background:on?K.fg:'transparent',color:on?K.bg:K.fg}},tg?tg.toUpperCase():'ALL');
+      })),
+    h('div',{style:{flexShrink:0,display:'flex',gap:10,padding:'10px 18px'}},
+      stat('TODAY TOTAL',turnHrMin(todaySec)),
+      stat('LAST 7 DAYS',turnHrMin(weekSec))),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'0 18px calc(30px + '+SAFE_B+')'}},
+      list.length?groups.map(([day,rows])=>h('div',{key:day},
+        h('div',{style:Object.assign({},label,{padding:'14px 0 8px',borderBottom:'1px solid '+K.hair})},day.toUpperCase()),
+        rows.map(r=>h('div',{key:r.id,onContextMenu:e=>{e.preventDefault();if(confirm('Delete this record?'))onDelete(r.id)},
+          style:{display:'flex',alignItems:'center',gap:12,padding:'13px 0',borderBottom:'1px solid '+K.hair}},
+          h('div',{style:{fontSize:19,fontWeight:700,fontVariantNumeric:'tabular-nums'}},turnMS(r.sec)),
+          h('div',{style:{flex:1,fontSize:11,fontWeight:700,letterSpacing:'.16em',color:K.accent,textAlign:'right'}},(r.tag||'FOCUS').toUpperCase()),
+          h('button',{onClick:()=>{if(confirm('Delete this record?'))onDelete(r.id)},className:'act90',style:{color:K.sub,padding:6,display:'flex'}},Icons.x(14))))))
+      :h('div',{style:{padding:'50px 20px',textAlign:'center',color:K.sub,fontSize:12.5,fontWeight:600,letterSpacing:'.14em',lineHeight:2}},'NO SESSIONS YET',
+        h('div',{style:{letterSpacing:'.06em',fontWeight:500,marginTop:6}},'Finished focus sessions are logged here automatically.'))));
+}
+
+function TurnSettings({K,turn,onTurn,topBar,wrap,label}){
+  const [newTag,setNewTag]=useState('');
+  const setPreset=(i,v)=>onTurn(t=>{const p=t.presets.slice();p[i]=clamp(parseInt(v)||1,1,999);return{...t,presets:p}});
+  const numIn=(val,set)=>h('input',{type:'number',inputMode:'numeric',min:1,max:999,value:val,
+    onChange:e=>set(e.target.value),
+    style:{width:64,padding:'8px 4px',textAlign:'center',background:'transparent',border:'none',borderBottom:'2px solid '+K.hair,color:K.fg,fontFamily:TURN_FONT,fontSize:22,fontWeight:700,fontVariantNumeric:'tabular-nums'}});
+  const row=(l,input)=>h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'13px 0',borderBottom:'1px solid '+K.hair}},
+    h('div',{style:Object.assign({},label,{color:K.fg,opacity:.85})},l),input);
+  const sect=t=>h('div',{style:Object.assign({},label,{padding:'22px 0 4px',color:K.accent})},t);
+  const addTag=()=>{
+    const v=newTag.trim().toUpperCase();if(!v)return;
+    onTurn(t=>t.tags.includes(v)?t:{...t,tags:[...t.tags,v]});
+    setNewTag('');
+  };
+  return h('div',{style:wrap},
+    topBar,
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'4px 20px calc(30px + '+SAFE_B+')'}},
+      sect('COMPASS PRESETS · MINUTES'),
+      ['TOP','RIGHT','BOTTOM','LEFT'].map((d,i)=>row(d,numIn(turn.presets[i],v=>setPreset(i,v)))),
+      sect('BREAKS · MINUTES'),
+      row('BREAK',numIn(turn.breakMin,v=>onTurn(t=>({...t,breakMin:clamp(parseInt(v)||1,1,999)})))),
+      row('LONG BREAK',numIn(turn.longMin,v=>onTurn(t=>({...t,longMin:clamp(parseInt(v)||1,1,999)})))),
+      sect('TAGS'),
+      turn.tags.map(tg=>h('div',{key:tg,style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'11px 0',borderBottom:'1px solid '+K.hair}},
+        h('div',{style:{fontSize:13,fontWeight:700,letterSpacing:'.16em'}},tg),
+        h('button',{onClick:()=>onTurn(t=>({...t,tags:t.tags.filter(x=>x!==tg)})),className:'act90',style:{color:K.sub,padding:6,display:'flex'}},Icons.x(15)))),
+      h('div',{style:{display:'flex',gap:10,alignItems:'center',padding:'13px 0'}},
+        h('input',{value:newTag,onChange:e=>setNewTag(e.target.value),placeholder:'New tag',onKeyDown:e=>{if(e.key==='Enter')addTag()},
+          style:{flex:1,padding:'9px 2px',background:'transparent',border:'none',borderBottom:'2px solid '+K.hair,color:K.fg,fontFamily:TURN_FONT,fontSize:15,fontWeight:600,letterSpacing:'.08em'}}),
+        h('button',{onClick:addTag,className:'act95',style:{padding:'9px 16px',borderRadius:999,border:'1.5px solid '+K.fg,fontFamily:TURN_FONT,fontSize:11,fontWeight:700,letterSpacing:'.18em',color:K.fg}},'ADD')),
+      sect('THEME'),
+      h('div',{style:{display:'flex',gap:10,padding:'10px 0'}},
+        Object.values(TURN_THEMES).map(t=>{
+          const on=turn.theme===t.id;
+          return h('button',{key:t.id,onClick:()=>onTurn(x=>({...x,theme:t.id})),className:'act95',
+            style:{flex:1,padding:'14px',borderRadius:12,background:t.bg,color:t.fg,border:'2px solid '+(on?K.accent:K.hair),fontFamily:TURN_FONT,fontSize:11,fontWeight:700,letterSpacing:'.18em'}},t.label.toUpperCase());
+        })),
+      h('div',{style:{padding:'30px 0 6px',textAlign:'center',fontSize:10,fontWeight:600,letterSpacing:'.18em',color:K.sub,lineHeight:2}},
+        'NO ACCOUNTS · NO TRACKING · NO ADS',h('br'),'INSPIRED BY TURN — DESIGNED IN SEOUL BY PUKAKI')));
+}
+
 /* ============================== list helpers ============================== */
 function inScope(a,scope){
   switch(scope.type){
@@ -4837,6 +5133,7 @@ function scopeTitle(scope,folders){
     case 'notes':return 'Notes';
     case 'threads':return 'Threads';
     case 'tags':return 'Tags';
+    case 'turn':return 'Focus';
     case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
@@ -5339,7 +5636,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads'].includes(scope.type);
+  const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
@@ -5412,6 +5709,7 @@ function App(){
     addThreadImage,removeThreadMedia,
     onOpenItem:addBriefItem,onOpenArticle:openArticle,onBrowse:u=>setBrowserO({url:u}),toastFn});
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
+  else if(scope.type==='turn')body=null; // TURN renders as a full-screen overlay below
   else if(scope.type==='videos'&&!q&&list.length){
     body=h(MyRoutine,{T,videos:list,
       onOpen:openArticle,
@@ -5511,11 +5809,15 @@ function App(){
             h('button',{onClick:()=>bulk('delete'),className:'act90',style:Object.assign({},iconBtnS,{color:T.danger,opacity:selecting.ids.length?1:.35})},Icons.trash(22)))):null
     ),
 
+    scope.type==='turn'?h(TurnView,{turn:data.turn,
+      onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
+      onExit:()=>setScope({type:'home'})}):null,
+
     reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
       onRetry:()=>retryFetch(reading.id),findReq}):null,
 
-    !selecting&&!reading?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
+    !selecting&&!reading&&scope.type!=='turn'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
       style:{position:'fixed',right:18,bottom:'calc('+(ttsUI?94:24)+'px + '+SAFE_B+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
 
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
