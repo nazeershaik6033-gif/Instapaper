@@ -58,6 +58,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 💾 **Save / Share from the browser** — reading any page in the built-in browser? Tap **Save** to download & clean it straight into your reading list, or **Share** to send the link out via the system share sheet
 - 📥 **Share into Instapaper** — once installed to your home screen, Instapaper appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
+- 🔎 **Search your saved links** — type in the top bar to filter every bookmark by any letter or word (name, address, or folder); press Enter to open an address or search Google instead
+- ↩️ **Picks up where you left off** — open a site and come back within 30 minutes and the Browser reopens exactly as you left it, instead of bouncing you to the home page
+- ✋ **Drag to organise** — hold a bookmark to lift it, then drag to reorder it or drop it straight onto another folder; drag the handle beside a folder name to reorder folders
+- 🕘 **Most visited & History** — your most-opened sites sit at the top, and a searchable History lists everything you've opened, with one-tap re-open, per-entry remove, and Clear all
+- ➕ **Quick add** — add the address you just typed in one tap, or hit **+** on any folder and the link is pulled from your clipboard with the name and icon filled in automatically
+- 🛟 **Safer edit controls** — rename and delete are full-size, well-separated buttons, and nothing is ever deleted without a confirmation (deleting a folder keeps its bookmarks and moves them to Bookmarks)
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
 **Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
