@@ -6,7 +6,7 @@ const h=(t,p,...c)=>ce(t,p,...c);
 
 /* ============================== constants ============================== */
 const STORE_KEY='instapaper_v1';
-const APP_VERSION='1.2.0';
+const APP_VERSION='1.3.0';
 /* True when running inside the Naz Trades journal (embedded in an iframe).
    In that case the header shows a Back arrow that returns to the journal. */
 const EMBEDDED=(()=>{try{return window.self!==window.parent}catch(e){return true}})();
@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -4622,7 +4622,7 @@ function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,
 }
 
 /* ============================== settings ============================== */
-function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
+function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const fileRef=useRef(null);
   const [page,setPage]=useState('root');
@@ -4658,7 +4658,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     h('span',{style:{display:'flex',color:T.meta}},icon),
     h('span',{style:{flex:1,fontSize:16}},label),
     h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
-  const PAGE_TITLES={appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Logged-In Sites',data:'Syncing & Backup'};
+  const PAGE_TITLES={homepage:'Home page',appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Logged-In Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
@@ -4668,6 +4668,9 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         h('div',null,
           h('div',{style:{fontSize:15.5,fontWeight:650}},'Premium unlocked'),
           h('div',{style:{fontSize:12.5,color:T.meta,marginTop:2}},'Every feature, free forever. No subscription.'))),
+      head('Start'),
+      h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
+        navRow('Home page','homepage',Icons.phone(20),true)),
       head('General'),
       h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
         navRow('Appearance','appearance',Icons.contrast(20)),
@@ -4676,8 +4679,37 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         navRow('AI Assistant','ai',Icons.ai(20)),
         navRow('Logged-In Sites','sites',Icons.globe(20)),
         navRow('Syncing & Backup','data',Icons.download(20),true)),
+      head('App'),
+      h(ARow,{T,icon:Icons.refresh(20),label:'Force reload to latest version',
+        sub:'Clears the cached app and reloads. Your saved articles, notes, photos & settings stay.',
+        onClick:()=>onForceReload&&onForceReload()}),
       h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
         'Instapaper · v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
+  }else if(page==='homepage'){
+    const opts=[
+      ['brief','My Routine','The channels & videos you check each day',Icons.phone(20)],
+      ['headlines','Headlines','Today’s India news home',Icons.newspaper(20)],
+      ['home','Home / Library','Everything you’ve saved',Icons.home(20)],
+      ['photos','Photos','Your photos, albums & files',Icons.image(20)],
+      ['blogs','Blogs','Your followed feeds',Icons.rss(20)],
+      ['liked','Liked','Articles you’ve hearted',Icons.heart(20)],
+      ['archive','Archive','Articles you’ve finished',Icons.archive(20)],
+      ['notes','Notes','Your highlights & notes',Icons.notes(20)],
+      ['threads','Threads','Your saved threads',Icons.thread(20)],
+      ['tags','Tags','Browse by tag',Icons.tag(20)]
+    ];
+    const cur=S.homePage||'brief';
+    content=h(Fragment,null,
+      h('div',{style:{padding:'10px 20px 6px',fontSize:13,color:T.sub,lineHeight:1.55}},'Choose which screen opens when you launch the app. This is your own pick — change it any time.'),
+      h('div',{style:{margin:'6px 16px 0',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
+        opts.map(([id,label,sub,icon],i)=>h('button',{key:id,onClick:()=>set({homePage:id}),className:'act98 trc',
+          style:{display:'flex',alignItems:'center',gap:14,width:'100%',padding:'14px 16px',textAlign:'left',color:T.fg,borderBottom:i===opts.length-1?'none':'1px solid '+T.hair,background:cur===id?T.card:'transparent'}},
+          h('span',{style:{display:'flex',color:cur===id?T.accent:T.meta}},icon),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:15.5,fontWeight:cur===id?650:500}},label),
+            h('div',{style:{fontSize:12,color:T.sub,marginTop:1}},sub)),
+          cur===id?h('span',{style:{display:'flex',color:T.accent}},Icons.check(19)):null))),
+      h('div',{style:{padding:'16px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Every screen is still one tap away from the ☰ menu and the header icons.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
       h('div',{style:{padding:'14px 20px 0',fontSize:14.5,fontWeight:600}},'Theme'),
@@ -5185,7 +5217,11 @@ function App(){
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
 
-  const [scope,setScope]=useState({type:'headlines'});
+  const [scope,setScope]=useState(()=>{
+    const valid=['brief','headlines','home','photos','liked','archive','notes','threads','tags','blogs'];
+    const hp=data.settings&&data.settings.homePage;
+    return{type:valid.includes(hp)?hp:'brief'};
+  });
   const [query,setQuery]=useState('');
   const [searchScope,setSearchScope]=useState('all'); // all|title|source|tags
   const [readingId,setReadingId]=useState(null);
@@ -5215,6 +5251,27 @@ function App(){
   useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
+
+  /* Force reload to the latest deployed version: drop the service worker + all
+     PWA caches, then reload with a cache-buster. Saved data in localStorage /
+     IndexedDB (articles, notes, photos, settings) is never touched. */
+  const forceReload=useCallback(async()=>{
+    toastFn('Fetching the latest version…');
+    try{
+      if('serviceWorker'in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+      }
+    }catch(e){}
+    try{
+      if('caches'in window){
+        const keys=await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k).catch(()=>{})));
+      }
+    }catch(e){}
+    const u=location.pathname+'?v='+Date.now();
+    try{location.replace(u)}catch(e){location.reload()}
+  },[toastFn]);
 
   /* ---------- media (photos & files) — declared after toastFn so its useCallback deps resolve ---------- */
   useEffect(()=>{ // load media + albums from IndexedDB once
@@ -5899,6 +5956,7 @@ function App(){
       }}):null,
 
     settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,onClose:()=>setSettingsOpen(false),
+      onForceReload:forceReload,
       onExport:exportBackup,onImport:importBackup,
       onClearArchived:()=>setSheet({type:'confirm',kind:'clearArchive'}),
       onEraseAll:()=>setSheet({type:'confirm',kind:'erase'}),
