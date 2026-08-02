@@ -20,6 +20,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import — with **automatic backup reminders**: pick a schedule (off / 3 days / weekly / 2 weeks / monthly) in **Settings → Syncing & Backup** and the home screen nudges you to export a fresh backup with one tap when one is due
 
+**My Routine** (home screen)
+- 🗓️ A dashboard of your reading, organized like a routine — each **Folder becomes a category** with a live count and a red **"N new"** badge for links added in the last few days
+- 🌅 **Morning / Night** sessions — pin a category to a session from its edit sheet (or leave it in both); the toggle switches which categories show
+- 🔖 Filter chips — **All / To-do / New / Completed** — with live counts; tap a category to open it, or the chevron to peek at its articles inline
+- ⚙️ **Pick your own home screen** in **Settings → Home page** — choose which screen opens on launch from My Routine, Home/Library, Daily Brief, Liked, Videos, Archive, Notes, or Tags (My Routine is the default)
+
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
 - 🌐 **Pick your region** — switch between **Global** and **India** (plus the US, UK, Australia, Canada, Singapore, and UAE) right from the top of the brief

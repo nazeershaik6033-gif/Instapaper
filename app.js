@@ -31,7 +31,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,readingMode:'scroll',sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,readingMode:'scroll',sort:'newest',filter:'all',ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'routine',routineSession:'morning',routineSessions:{}};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -865,6 +865,10 @@ const Icons={
   external:s=>Svg({size:s},P('M9.5 5H6.8C5.8 5 5 5.8 5 6.8v10.4c0 1 .8 1.8 1.8 1.8h10.4c1 0 1.8-.8 1.8-1.8V14.5'),P('M13.5 4.5h6v6'),P('M19 5l-7.5 7.5')),
   key:s=>Svg({size:s},h('circle',{cx:8,cy:15,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M11 12 19.5 3.5M16 7l2.5 2.5M13.5 9.5l1.8 1.8')),
   news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
+  routine:s=>Svg({size:s},h('rect',{x:3.5,y:4,width:17,height:16,rx:3.2,stroke:'currentColor',strokeWidth:1.7}),P('M6.8 9l1.2 1.2 2-2.2'),P('M6.8 15l1.2 1.2 2-2.2'),P('M12.6 8.8h4.6M12.6 15h4.6')),
+  moon:s=>Svg({size:s},P('M19 13.5A7.2 7.2 0 0 1 10.5 5a5.6 5.6 0 0 0-1 .1 7.5 7.5 0 1 0 9.4 9.4c.1-.3.1-.7.1-1Z')),
+  sun:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:4,stroke:'currentColor',strokeWidth:1.7}),P('M12 3v2.2M12 18.8V21M3 12h2.2M18.8 12H21M5.6 5.6l1.6 1.6M16.8 16.8l1.6 1.6M18.4 5.6l-1.6 1.6M7.2 16.8l-1.6 1.6')),
+  cal:s=>Svg({size:s},h('rect',{x:4,y:5.5,width:16,height:15,rx:2.5,stroke:'currentColor',strokeWidth:1.7}),P('M4 9.5h16M8.5 3.5v3.6M15.5 3.5v3.6')),
   scroll:s=>Svg({size:s},P('M5 5h14M5 9.5h14M5 14h8'),P('M17.5 13v6M15.3 16.8l2.2 2.2 2.2-2.2')),
   book:s=>Svg({size:s},P('M12 6.4C10.4 5.1 8.3 4.5 5.5 4.5v13c2.8 0 4.9.6 6.5 1.9 1.6-1.3 3.7-1.9 6.5-1.9v-13c-2.8 0-4.9.6-6.5 1.9Z'),P('M12 6.4v13')),
   pin:(s,fill)=>Svg({size:s},P('M12 15.5V21'),h('path',{d:'M8.7 3.5h6.6l-.9 6.2 2.9 2.6v1.7H6.7v-1.7l2.9-2.6-.9-6.2Z',stroke:'currentColor',strokeWidth:1.7,strokeLinejoin:'round',fill:fill?'currentColor':'none'}))
@@ -1048,6 +1052,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse}){
       h('div',{style:{paddingTop:'calc(8px + '+SAFE_T+')',flexShrink:0,display:'flex',alignItems:'center',padding:'calc(8px + '+SAFE_T+') 10px 6px'}},
         h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.menu(24))),
       h('div',{className:'sy',style:{flex:1,overflowY:'auto'}},
+        h(SidebarItem,{T,icon:Icons.routine(22),label:'My Routine',active:is('routine'),onClick:()=>go('routine')}),
         h(SidebarItem,{T,icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')}),
         h(SidebarItem,{T,icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')}),
         h(SidebarItem,{T,icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')}),
@@ -1146,15 +1151,24 @@ function QuickNoteSheet({T,onSave,onClose}){
 }
 
 /* ============================== folder / move / tags / confirm sheets ============================== */
-function FolderEditSheet({T,folder,onSave,onDelete,onClose}){
+function FolderEditSheet({T,folder,sessions,onSessions,onSave,onDelete,onClose}){
   const [name,setName]=useState(folder?folder.name:'');
-  return h(Sheet,{T,onClose,title:folder?'Edit folder':'New folder'},
+  const [sess,setSess]=useState(Array.isArray(sessions)?sessions.slice():[]);
+  const toggleSess=id=>{const next=sess.includes(id)?sess.filter(x=>x!==id):[...sess,id];setSess(next);if(onSessions)onSessions(next)};
+  const sessChip=(id,label,icon)=>{const on=sess.includes(id);return h('button',{onClick:()=>toggleSess(id),className:'act95 trc',
+    style:{display:'flex',alignItems:'center',gap:7,padding:'9px 15px',borderRadius:20,fontSize:14,fontWeight:600,
+      background:on?T.fg:T.card,color:on?T.bg:T.meta}},icon,label)};
+  return h(Sheet,{T,onClose,title:folder?'Edit category':'New category'},
     h('div',{style:{padding:'4px 20px 0'}},
-      h('input',{value:name,onChange:e=>setName(e.target.value),placeholder:'Folder name',autoFocus:!folder,
+      h('input',{value:name,onChange:e=>setName(e.target.value),placeholder:'Category name',autoFocus:!folder,
         onKeyDown:e=>{if(e.key==='Enter'&&name.trim())onSave(name.trim())},
-        style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16}})),
-    h(PrimaryBtn,{T,label:folder?'Save':'Create folder',onClick:()=>onSave(name.trim()),disabled:!name.trim()}),
-    folder?h('button',{onClick:onDelete,className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:4,color:T.danger,fontSize:15,fontWeight:500,textAlign:'center'}},'Delete folder'):null);
+        style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16}}),
+      folder?h('div',{style:{marginTop:16}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:10}},'Show in routine'),
+        h('div',{style:{display:'flex',gap:10}},sessChip('morning','Morning',Icons.sun(16)),sessChip('night','Night',Icons.moon(15))),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:10,lineHeight:1.5}},sess.length?'':'Not pinned to a session — shows in both Morning and Night.')):null),
+    h(PrimaryBtn,{T,label:folder?'Save':'Create category',onClick:()=>onSave(name.trim()),disabled:!name.trim()}),
+    folder?h('button',{onClick:onDelete,className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:4,color:T.danger,fontSize:15,fontWeight:500,textAlign:'center'}},'Delete category'):null);
 }
 
 function MoveSheet({T,folders,onMove,onNewFolder,onClose,count}){
@@ -2225,7 +2239,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
     h('span',{style:{display:'flex',color:T.meta}},icon),
     h('span',{style:{flex:1,fontSize:16}},label),
     h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
-  const PAGE_TITLES={appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Logged-In Sites',data:'Syncing & Backup'};
+  const PAGE_TITLES={homepage:'Home page',appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Logged-In Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
@@ -2235,6 +2249,9 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         h('div',null,
           h('div',{style:{fontSize:15.5,fontWeight:650}},'Premium unlocked'),
           h('div',{style:{fontSize:12.5,color:T.meta,marginTop:2}},'Every feature, free forever. No subscription.'))),
+      head('Start'),
+      h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
+        navRow('Home page','homepage',Icons.routine(20),true)),
       head('General'),
       h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
         navRow('Appearance','appearance',Icons.contrast(20)),
@@ -2245,6 +2262,29 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         navRow('Syncing & Backup','data',Icons.download(20),true)),
       h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
         'Instapaper \u00b7 v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
+  }else if(page==='homepage'){
+    const opts=[
+      ['routine','My Routine','Your reading routine — categories, Morning & Night',Icons.routine(20)],
+      ['home','Home / Library','Everything you’ve saved',Icons.home(20)],
+      ['brief','Daily Brief','Fresh news headlines',Icons.news(20)],
+      ['liked','Liked','Articles you’ve hearted',Icons.heart(20)],
+      ['videos','Videos','Saved YouTube videos',Icons.video(20)],
+      ['archive','Archive','Articles you’ve finished',Icons.archive(20)],
+      ['notes','Notes','Your highlights & notes',Icons.notes(20)],
+      ['tags','Tags','Browse by tag',Icons.tag(20)]
+    ];
+    const cur=S.homePage||'routine';
+    content=h(Fragment,null,
+      h('div',{style:{padding:'10px 20px 6px',fontSize:13,color:T.sub,lineHeight:1.55}},'Choose which screen opens when you launch the app. This is your own pick — change it any time.'),
+      h('div',{style:{margin:'6px 16px 0',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
+        opts.map(([id,label,sub,icon],i)=>h('button',{key:id,onClick:()=>set({homePage:id}),className:'act98 trc',
+          style:{display:'flex',alignItems:'center',gap:14,width:'100%',padding:'14px 16px',textAlign:'left',color:T.fg,borderBottom:i===opts.length-1?'none':'1px solid '+T.hair,background:cur===id?T.card:'transparent'}},
+          h('span',{style:{display:'flex',color:cur===id?T.accent:T.meta}},icon),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:15.5,fontWeight:cur===id?650:500}},label),
+            h('div',{style:{fontSize:12,color:T.sub,marginTop:1}},sub)),
+          cur===id?h('span',{style:{display:'flex',color:T.accent}},Icons.check(19)):null))),
+      h('div',{style:{padding:'16px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Every screen is still one tap away from the ☰ menu at the top left.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
       h('div',{style:{display:'flex',justifyContent:'space-around',padding:'10px 20px 4px'}},
@@ -2408,6 +2448,7 @@ function scopeTitle(scope,folders){
     case 'notes':return 'Notes';
     case 'tags':return 'Tags';
     case 'brief':return 'Daily Brief';
+    case 'routine':return 'My Routine';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
     default:return 'Instapaper';
@@ -2421,6 +2462,88 @@ const EMPTY_STATES={
   folder:['This folder is empty','Long-press an article and choose “Move to folder”.'],
   tag:['Nothing with this tag','Long-press an article and choose “Edit tags”.']
 };
+
+/* ============================== My Routine ============================== */
+const ROUTINE_DOTS=['#7c8cf8','#4aa3ff','#5ac8fa','#34c759','#30d158','#c77dff','#bf5af2','#ff9f0a','#ff6482','#ffd60a','#ff375f','#64d2ff'];
+function routineDot(id){let n=0;const s=String(id||'');for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return ROUTINE_DOTS[n%ROUTINE_DOTS.length]}
+function routineStat(fid,articles){
+  const now=Date.now();let total=0,unread=0,completed=0,fresh=0;
+  for(const a of articles){
+    if(a.folderId!==fid||a.archived)continue;
+    total++;const done=(a.progress||0)>=0.97;
+    if(done)completed++;else unread++;
+    if(!done&&(now-(a.addedAt||0))<2.592e8)fresh++; // added in the last 3 days and not finished
+  }
+  return{total,unread,completed,fresh};
+}
+const ROUTINE_FILTERS=[['all','All'],['todo','To-do'],['new','New'],['completed','Completed']];
+function RoutinePage({T,S,folders,articles,onSession,onOpenFolder,onOpenArticle,onEditFolder,onDeleteFolder,onAddToFolder,onNewCategory,onOpenScope}){
+  const session=S.routineSession==='night'?'night':'morning';
+  const [filter,setFilter]=useState('all');
+  const [openId,setOpenId]=useState(null);
+  const sessMap=S.routineSessions||{};
+  const inSession=f=>{const a=sessMap[f.id];return !a||!a.length||a.includes(session)};
+  const rows=folders.filter(inSession).map(f=>({f,st:routineStat(f.id,articles)}));
+  const counts={all:rows.length,todo:0,new:0,completed:0};
+  rows.forEach(({st})=>{if(st.unread>0)counts.todo++;if(st.fresh>0)counts.new++;if(st.total>0&&st.unread===0)counts.completed++});
+  const pass=st=>filter==='todo'?st.unread>0:filter==='new'?st.fresh>0:filter==='completed'?(st.total>0&&st.unread===0):true;
+  const shown=rows.filter(({st})=>pass(st));
+  const missed=articles.filter(a=>a.archived).length;
+
+  const iconBtn=(icon,onClick,color)=>h('button',{onClick:e=>{e.stopPropagation();onClick()},className:'act90',style:{display:'flex',padding:8,color:color||T.sub}},icon);
+  const sessPill=(id,label,icon)=>h('button',{onClick:()=>onSession(id),className:'act95 trc',
+    style:{display:'flex',alignItems:'center',gap:7,padding:'9px 18px',borderRadius:22,fontSize:15,fontWeight:600,
+      background:session===id?T.fg:'transparent',color:session===id?T.bg:T.sub}},icon,label,
+    session===id?h('span',{style:{width:5,height:5,borderRadius:'50%',background:T.bg,opacity:.85}}):null);
+
+  const rowNode=({f,st})=>{
+    const open=openId===f.id;
+    const arts=open?articles.filter(a=>a.folderId===f.id&&!a.archived)
+      .sort((x,y)=>(y.addedAt||0)-(x.addedAt||0)):[];
+    return h('div',{key:f.id,style:{marginBottom:12}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6}},
+        h('button',{onClick:()=>onOpenFolder(f.id),className:'act98',
+          style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:12,background:T.card,borderRadius:26,padding:'15px 18px'}},
+          h('button',{onClick:e=>{e.stopPropagation();setOpenId(open?null:f.id)},className:'act90',
+            style:{display:'flex',color:T.sub,transform:open?'rotate(90deg)':'none',transition:'transform 160ms',padding:2,margin:'-2px 0'}},Icons.chevR(15)),
+          h('span',{style:{width:9,height:9,borderRadius:'50%',background:routineDot(f.id),flexShrink:0}}),
+          h('span',{style:{flex:1,minWidth:0,fontSize:15.5,fontWeight:600,letterSpacing:'.03em',textTransform:'uppercase',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+          st.fresh>0
+            ?h('span',{style:{flexShrink:0,padding:'4px 11px',borderRadius:13,background:'#c65b4e',color:'#fff',fontSize:12.5,fontWeight:600}},st.fresh+' new')
+            :h('span',{style:{flexShrink:0,color:T.sub,fontSize:15,fontWeight:500,minWidth:16,textAlign:'right'}},st.unread||st.total||0)),
+        iconBtn(Icons.pencil(19),()=>onEditFolder(f)),
+        iconBtn(Icons.trash(19),()=>onDeleteFolder(f),T.danger),
+        iconBtn(Icons.plus(20),()=>onAddToFolder(f.id),T.accent)),
+      open?h('div',{className:'fdin',style:{padding:'8px 6px 2px 30px'}},
+        arts.length?arts.map(a=>{const done=(a.progress||0)>=0.97;return h('button',{key:a.id,onClick:()=>onOpenArticle(a.id),className:'act98',
+          style:{display:'flex',alignItems:'center',gap:10,width:'100%',textAlign:'left',padding:'9px 4px'}},
+          h('span',{style:{width:7,height:7,borderRadius:'50%',flexShrink:0,background:done?'transparent':T.accent,border:done?'1.5px solid '+T.sub:'none'}}),
+          h('span',{style:{flex:1,minWidth:0,fontSize:14,color:done?T.sub:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.title||'Untitled'))})
+          :h('div',{style:{fontSize:13,color:T.sub,padding:'6px 4px'}},'Nothing here yet — tap + to add a link.')):null);
+  };
+
+  return h('div',{style:{padding:'2px 16px calc(90px + '+SAFE_B+')'}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'6px 2px 16px'}},
+      sessPill('morning','Morning',Icons.sun(17)),
+      sessPill('night','Night',Icons.moon(16)),
+      h('span',{style:{display:'flex',color:T.sub,padding:6}},Icons.cal(20))),
+    h('div',{className:'sx',style:{display:'flex',gap:9,overflowX:'auto',paddingBottom:16}},
+      ROUTINE_FILTERS.map(([v,l])=>{const active=filter===v;return h('button',{key:v,onClick:()=>setFilter(v),className:'act95 trc',
+        style:{display:'flex',alignItems:'center',gap:8,flexShrink:0,padding:'8px 15px',borderRadius:20,fontSize:14,fontWeight:active?600:500,
+          background:active?T.fg:'transparent',color:active?T.bg:T.sub,border:'1px solid '+(active?T.fg:T.hair)}},
+        l,h('span',{style:{fontSize:13,opacity:.75}},counts[v]))})),
+    shown.length?shown.map(rowNode)
+      :h('div',{style:{textAlign:'center',padding:'34px 20px',color:T.sub}},
+        folders.length?h('div',{style:{fontSize:14.5,lineHeight:1.6}},filter==='all'?'No categories in your '+session+' routine yet.':'Nothing matches “'+(ROUTINE_FILTERS.find(x=>x[0]===filter)||[])[1]+'” right now.')
+          :h('div',{style:{fontSize:14.5,lineHeight:1.6}},'Your routine is built from your folders.',h('br'),'Create a category to get started.')),
+    h('button',{onClick:onNewCategory,className:'act98',
+      style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',marginTop:6,padding:'13px',borderRadius:14,border:'1px dashed '+T.hair,color:T.sub,fontSize:14.5,fontWeight:500}},
+      Icons.plus(18),'New category'),
+    missed?h('button',{onClick:()=>onOpenScope('archive'),className:'act98',
+      style:{display:'flex',alignItems:'center',gap:10,width:'100%',marginTop:20,paddingTop:16,borderTop:'1px solid '+T.hair,color:T.sub}},
+      h('span',{style:{display:'flex'}},Icons.chevR(15)),
+      h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase'}},'History · '+missed+' archived')):null);
+}
 
 /* ============================== error boundary ============================== */
 class Boundary extends React.Component{
@@ -2456,7 +2579,11 @@ function App(){
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
 
-  const [scope,setScope]=useState({type:'home'});
+  const [scope,setScope]=useState(()=>{
+    const valid=['home','liked','archive','videos','notes','tags','brief','routine'];
+    const hp=data.settings&&data.settings.homePage;
+    return{type:valid.includes(hp)?hp:'home'};
+  });
   const [query,setQuery]=useState('');
   const [readingId,setReadingId]=useState(null);
   const [sidebar,setSidebar]=useState(false);
@@ -2799,7 +2926,7 @@ function App(){
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
-  const isArticleScope=!['notes','tags','brief'].includes(scope.type);
+  const isArticleScope=!['notes','tags','brief','routine'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
@@ -2840,6 +2967,15 @@ function App(){
   else if(scope.type==='tags')body=h(TagsList,{T,articles:data.articles,onPick:t=>setScope({type:'tag',id:t})});
   else if(scope.type==='brief')body=h(DailyBrief,{T,regionId:S.briefRegion||'IN',category:S.briefCategory||'',
     onConfig:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),onOpenItem:addBriefItem});
+  else if(scope.type==='routine')body=h(RoutinePage,{T,S,folders:data.folders,articles:data.articles,
+    onSession:s=>update(d=>({...d,settings:{...d.settings,routineSession:s}})),
+    onOpenFolder:id=>{setScope({type:'folder',id});setQuery('')},
+    onOpenArticle:openArticle,
+    onEditFolder:f=>setSheet({type:'folder',folder:f}),
+    onDeleteFolder:f=>setSheet({type:'confirm',kind:'deleteFolder',folder:f}),
+    onAddToFolder:id=>setAddS({prefill:'',folderId:id}),
+    onNewCategory:()=>setSheet({type:'folder'}),
+    onOpenScope:t=>{setScope({type:t});setQuery('')}});
   else if(!list.length){
     const[et,es]=q?['No results','Nothing matches “'+query.trim()+'” in your articles — full-text search covers everything you’ve saved.']:(EMPTY_STATES[scope.type]||EMPTY_STATES.home);
     body=h(EmptyState,{T,icon:q?Icons.search(40):Icons.archive(40),title:et,sub:es});
@@ -2900,7 +3036,7 @@ function App(){
       onPlaylistMode:()=>{setMenuOpen(false);setSelecting({mode:'playlist',ids:[]});toastFn('Tap articles to build your playlist')},
       onSettings:()=>{setMenuOpen(false);setSettingsOpen(true)}}):null,
 
-    addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
+    addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:addS.folderId!=null?addS.folderId:(scope.type==='folder'?scope.id:null),
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
     sheet&&sheet.type==='plus'?h(Sheet,{T,onClose:()=>setSheet(null)},
@@ -2920,6 +3056,8 @@ function App(){
       onSave:tags=>{patchArticle(sheet.id,{tags});setSheet(null);toastFn('Tags saved')}}):null})():null,
 
     sheet&&sheet.type==='folder'?h(FolderEditSheet,{T,folder:sheet.folder||null,onClose:()=>setSheet(null),
+      sessions:sheet.folder?((S.routineSessions&&S.routineSessions[sheet.folder.id])||[]):null,
+      onSessions:sheet.folder?arr=>update(d=>({...d,settings:{...d.settings,routineSessions:{...(d.settings.routineSessions||{}),[sheet.folder.id]:arr}}})):null,
       onSave:name=>{if(name)saveFolder(name,sheet.folder||null,sheet.afterMoveIds)},
       onDelete:()=>{if(sheet.folder)deleteFolder(sheet.folder)}}):null,
 
@@ -2946,12 +3084,13 @@ function App(){
       update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
     sheet&&sheet.type==='confirm'?h(ConfirmSheet,{T,
-      title:sheet.kind==='delete'?('Delete '+(sheet.ids.length>1?sheet.ids.length+' articles?':'article?')):sheet.kind==='clearArchive'?'Clear archive?':'Erase everything?',
-      message:sheet.kind==='delete'?'This also removes any highlights and notes in '+(sheet.ids.length>1?'these articles':'this article')+'. This can’t be undone.':sheet.kind==='clearArchive'?'All archived articles and their highlights will be permanently removed.':'All articles, highlights, folders, and settings will be permanently removed from this device.',
-      confirmLabel:sheet.kind==='delete'?'Delete':sheet.kind==='clearArchive'?'Clear archive':'Erase everything',
+      title:sheet.kind==='delete'?('Delete '+(sheet.ids.length>1?sheet.ids.length+' articles?':'article?')):sheet.kind==='deleteFolder'?'Delete category?':sheet.kind==='clearArchive'?'Clear archive?':'Erase everything?',
+      message:sheet.kind==='delete'?'This also removes any highlights and notes in '+(sheet.ids.length>1?'these articles':'this article')+'. This can’t be undone.':sheet.kind==='deleteFolder'?'“'+(sheet.folder?sheet.folder.name:'')+'” will be removed. Its articles are kept and moved to Home.':sheet.kind==='clearArchive'?'All archived articles and their highlights will be permanently removed.':'All articles, highlights, folders, and settings will be permanently removed from this device.',
+      confirmLabel:sheet.kind==='delete'?'Delete':sheet.kind==='deleteFolder'?'Delete category':sheet.kind==='clearArchive'?'Clear archive':'Erase everything',
       onClose:()=>setSheet(null),
       onConfirm:()=>{
         if(sheet.kind==='delete')deleteArticles(sheet.ids);
+        else if(sheet.kind==='deleteFolder'){if(sheet.folder)deleteFolder(sheet.folder)}
         else if(sheet.kind==='clearArchive'){const ids=dataRef.current.articles.filter(a=>a.archived).map(a=>a.id);deleteArticles(ids);toastFn('Archive cleared')}
         else eraseAll();
       }}):null,
