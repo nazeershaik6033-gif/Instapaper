@@ -60,7 +60,9 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
-**Settings** are organized like the classic app: General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup.
+**Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
+- 🏠 **Home page** — pick which screen opens on launch: **My Routine** (the default), Headlines, Home/Library, Photos, Blogs, Liked, Archive, Notes, Threads, or Tags.
+- 🔄 **Force reload to latest version** — drops the cached app shell and service worker and reloads so you get the newest deployed build immediately. Your saved articles, notes, photos and settings are untouched.
 
 **AI assistant (✦ icon in the header, on any page)**
 - **Open in Claude — no API key.** Hand any command (with or without an article) straight to the **Claude app** on your phone using your own Claude account — no key, no setup. On an article it packages your instruction plus the article text; tap a quick preset (summarize, key takeaways, translate, explain simply, counterarguments, turn into a thread) or type your own. It opens the Claude app (or claude.ai if the app isn't installed) with the prompt pre-filled, and always copies the full prompt to your clipboard as a one-tap paste backup. This unlocks the full power of Claude — anything Claude can do — with zero configuration.
