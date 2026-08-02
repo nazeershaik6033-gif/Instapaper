@@ -6,7 +6,7 @@ const h=(t,p,...c)=>ce(t,p,...c);
 
 /* ============================== constants ============================== */
 const STORE_KEY='instapaper_v1';
-const APP_VERSION='1.3.0';
+const APP_VERSION='1.4.0';
 /* True when running inside the Naz Trades journal (embedded in an iframe).
    In that case the header shows a Back arrow that returns to the journal. */
 const EMBEDDED=(()=>{try{return window.self!==window.parent}catch(e){return true}})();
@@ -1282,6 +1282,7 @@ function loadStore(){
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
+  d.siteHistory=Array.isArray(d.siteHistory)?d.siteHistory:[]; // browser visit log (most visited / history)
   d.feeds=Array.isArray(d.feeds)?d.feeds:[];
   d.feeds.forEach(f=>{if(typeof f.groupId==='undefined')f.groupId=null});
   d.blogGroups=Array.isArray(d.blogGroups)?d.blogGroups:[];
@@ -1408,6 +1409,7 @@ const Icons={
   pin:(s,fill)=>Svg({size:s},h('path',{d:'M9 3.5h6l-.8 5 2.8 3.2H7l2.8-3.2-.8-5Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.6,strokeLinejoin:'round'}),P('M12 11.7V20')),
   crop:s=>Svg({size:s},P('M6.5 2.5v15h15'),P('M2.5 6.5h15v15')),
   rotate:s=>Svg({size:s},P('M20 11a8 8 0 1 0-2.3 5.6'),P('M20 5v6h-6')),
+  clock:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:8.5,stroke:'currentColor',strokeWidth:1.7}),P('M12 7.2V12l3.2 2')),
   drag:s=>Svg({size:s},h('circle',{cx:8,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:7,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:12,r:1.5,fill:'currentColor'}),h('circle',{cx:8,cy:17,r:1.5,fill:'currentColor'}),h('circle',{cx:16,cy:17,r:1.5,fill:'currentColor'})),
   news:s=>Svg({size:s},P('M4 6.2C4 5.5 4.5 5 5.2 5h11.6c.7 0 1.2.5 1.2 1.2V18a1.8 1.8 0 0 0 1.8 1.8H6.8A2.8 2.8 0 0 1 4 17V6.2Z'),P('M7 8.5h7M7 12h7M7 15.5h4'),P('M18 9.5h1.5c.6 0 1 .4 1 1V18')),
   thread:s=>Svg({size:s},h('circle',{cx:6,cy:6,r:2.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:6,cy:18,r:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M6 8.2v7.6'),P('M11 6h9M11 18h9M11 12h6')),
@@ -4492,6 +4494,7 @@ function VaultPanel({T,vault,onChange,session}){
 /* ============================== saved sites manager ============================== */
 function SitesManager({T,sites,onSites,onOpen}){
   const [form,setForm]=useState(null); // {id?,name,url}
+  const [del,setDel]=useState(null); // site pending delete confirmation
   const move=(i,d)=>onSites(list=>{const a=list.slice();const j=i+d;if(j<0||j>=a.length)return list;const t=a[i];a[i]=a[j];a[j]=t;return a});
   const save=()=>{
     const u=normalizeUrl(form.url);
@@ -4507,10 +4510,15 @@ function SitesManager({T,sites,onSites,onOpen}){
       h('button',{onClick:()=>onOpen(st.url),style:{flex:1,minWidth:0,textAlign:'left',color:T.fg}},
         h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.name),
         h('span',{style:{display:'block',fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},st.url)),
-      h('button',{onClick:()=>move(i,-1),disabled:i===0,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===0?0.3:1}},'▲'),
-      h('button',{onClick:()=>move(i,1),disabled:i===sites.length-1,className:'act90',style:{color:T.sub,padding:'4px 6px',fontSize:15,opacity:i===sites.length-1?0.3:1}},'▼'),
-      h('button',{onClick:()=>setForm({id:st.id,name:st.name,url:st.url}),className:'act90',style:{color:T.sub,padding:'4px 6px'}},Icons.pencil(16)),
-      h('button',{onClick:()=>onSites(list=>list.filter(x=>x.id!==st.id)),className:'act90',style:{color:T.danger,padding:'4px 6px'}},Icons.trash(16)))),
+      h('button',{onClick:()=>move(i,-1),disabled:i===0,'aria-label':'Move up',className:'act90',style:{color:T.sub,width:34,height:40,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,opacity:i===0?0.3:1}},'▲'),
+      h('button',{onClick:()=>move(i,1),disabled:i===sites.length-1,'aria-label':'Move down',className:'act90',style:{color:T.sub,width:34,height:40,display:'flex',alignItems:'center',justifyContent:'center',fontSize:15,opacity:i===sites.length-1?0.3:1}},'▼'),
+      h('button',{onClick:()=>setForm({id:st.id,name:st.name,url:st.url}),'aria-label':'Edit '+st.name,className:'act90',style:{color:T.sub,width:40,height:40,display:'flex',alignItems:'center',justifyContent:'center'}},Icons.pencil(17)),
+      h('span',{style:{width:12,flexShrink:0}}), // keep Delete clear of Edit
+      h('button',{onClick:()=>setDel(st),'aria-label':'Delete '+st.name,className:'act90',style:{color:T.danger,width:40,height:40,display:'flex',alignItems:'center',justifyContent:'center'}},Icons.trash(17)))),
+    del?h(Sheet,{T,onClose:()=>setDel(null),title:'Delete site?',z:96},
+      h('div',{style:{padding:'2px 20px 4px',fontSize:14.5,color:T.meta,lineHeight:1.5}},'“'+del.name+'” will be removed from your saved sites.'),
+      h(PrimaryBtn,{T,danger:true,label:'Delete site',onClick:()=>{onSites(list=>list.filter(x=>x.id!==del.id));setDel(null)}}),
+      h('button',{onClick:()=>setDel(null),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:2,color:T.fg,fontSize:15,fontWeight:500,textAlign:'center'}},'Cancel')):null,
     form?h('div',{style:{border:'1px solid '+T.hair,borderRadius:12,padding:'4px 14px 14px',marginTop:12}},
       h('input',{value:form.name,onChange:e=>setForm({...form,name:e.target.value}),placeholder:'Name (e.g. Eenadu)',
         style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8}}),
@@ -4524,67 +4532,304 @@ function SitesManager({T,sites,onSites,onOpen}){
 }
 
 /* ============================== in-app browser ============================== */
-function BookmarkTile({T,site,onOpen,onLongPress}){
-  const lp=useLongPress(onLongPress);
-  return h('button',Object.assign({onClick:onOpen},lp,{className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,minWidth:0,background:'none'}}),
-    h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
-      h('img',{src:faviconUrl(site.url),alt:'',style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
-    h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},site.name));
+/* Opening a bookmark hands off to the system browser, which on iOS often means
+   the PWA is evicted and cold-starts when you come back. We leave a short-lived
+   breadcrumb so a quick return reopens the Browser instead of the home page. */
+const BROWSER_RETURN_KEY='insta_browser_return';
+const BROWSER_RETURN_MS=1800000; // 30 minutes
+function markBrowserReturn(){try{localStorage.setItem(BROWSER_RETURN_KEY,JSON.stringify({at:Date.now()}))}catch(e){}}
+function clearBrowserReturn(){try{localStorage.removeItem(BROWSER_RETURN_KEY)}catch(e){}}
+function shouldRestoreBrowser(){
+  try{const m=JSON.parse(localStorage.getItem(BROWSER_RETURN_KEY)||'null');
+    return!!(m&&m.at&&Date.now()-m.at<BROWSER_RETURN_MS)}catch(e){return false}
+}
+/* Visit log powering "Most visited" and History. Local only, capped. */
+function recordBrowserVisit(list,url,name){
+  const arr=Array.isArray(list)?list.slice():[];
+  const i=arr.findIndex(x=>x.url===url);
+  if(i>=0)arr[i]={...arr[i],name:name||arr[i].name,at:Date.now(),count:(arr[i].count||1)+1};
+  else arr.push({url,name:name||domainOf(url)||url,at:Date.now(),count:1});
+  arr.sort((a,b)=>(b.at||0)-(a.at||0));
+  return arr.slice(0,300);
 }
 
-function Browser({T,sites,onSites,folders,onFolders,vault,onChangeVault,session,initialUrl,onClose}){
+function BookmarkTile({T,site,onOpen,onPress,lifted,ghost,targeted}){
+  return h('div',{'data-bm':site.id,style:{position:'relative',minWidth:0,opacity:ghost?0.3:1,
+    transform:lifted?'scale(1.14)':'none',transition:'transform 150ms ease',zIndex:lifted?6:undefined,
+    touchAction:lifted?'none':undefined}},
+    targeted?h('span',{style:{position:'absolute',left:-5,top:-5,right:-5,bottom:-5,borderRadius:17,border:'2px solid '+T.accent,pointerEvents:'none'}}):null,
+    h('button',{onClick:onOpen,onTouchStart:onPress,onMouseDown:onPress,className:'act95',
+      style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,width:'100%',minWidth:0,background:'none'}},
+      h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',boxShadow:lifted?'0 8px 22px rgba(0,0,0,.35)':'none'}},
+        h('img',{src:faviconUrl(site.url),alt:'',draggable:false,style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
+      h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},site.name)));
+}
+
+function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose}){
   const [input,setInput]=useState('');
   const [vaultOpen,setVaultOpen]=useState(false);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
-  const go=t=>{const u=browserTarget(t);if(!u)return;setInput(u);openExternalUrl(u)}; // hand off to the system browser — embedding goes blank on any site that blocks framing
-  useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
   const [actSite,setActSite]=useState(null);
   const [moveSite,setMoveSite]=useState(null);
   const [editSite,setEditSite]=useState(null);
   const [mkFolder,setMkFolder]=useState(null);
   const [fName,setFName]=useState('');
+  const [confirm,setConfirm]=useState(null); // {kind:'folder'|'site',...} — nothing is deleted without this
+  const [histOpen,setHistOpen]=useState(false);
+  const [histQ,setHistQ]=useState('');
+  const hist=Array.isArray(history)?history:[];
+  const go=(t,name)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
+    const u=browserTarget(t);if(!u)return;
+    setInput(u);
+    if(onHistory)onHistory(list=>recordBrowserVisit(list,u,name));
+    markBrowserReturn();
+    openExternalUrl(u);
+  };
+  useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
-  const tbtn=(icon,onClick)=>h('button',{onClick,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
+  const tbtn=(icon,onClick,label)=>h('button',{onClick,'aria-label':label,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
   const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
-  const addBtn=(onClick)=>h('button',{onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
+  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
+  const addBtn=(onClick)=>h('button',{key:'add',onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
     h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
     h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
-  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,onOpen:()=>go(st.url),onLongPress:()=>setActSite(st)});
-  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
+
+  /* ---------- quick add: prefill from the clipboard when it holds a link ---------- */
+  const quickAdd=async folderId=>{
+    let url='';
+    try{const t=await navigator.clipboard.readText();const u=extractFirstUrl(t||'')||(t||'').trim();if(normalizeUrl(u))url=normalizeUrl(u)}catch(e){}
+    setAddForm({name:'',url,folderId:folderId||null});
+  };
+  const addCurrent=()=>{const t=input.trim();const u=(/\s/.test(t)||!t.includes('.'))?'':normalizeUrl(t);if(!u)return;setAddForm({name:'',url:u,folderId:null})};
+
+  /* ---------- drag to reorder: hold a tile to lift it, then drag ---------- */
+  const [liftId,setLiftId]=useState(null);
+  const [dropT,setDropT]=useState(null); // {type:'site'|'folder',id}
+  const dg=useRef({});
+  const applyDrop=(srcId,target)=>{
+    if(!target)return;
+    onSites(list=>{
+      const arr=list.slice();
+      const si=arr.findIndex(s=>s.id===srcId);
+      if(si<0)return list;
+      const mv=Object.assign({},arr[si]);
+      arr.splice(si,1);
+      if(target.type==='folder'){
+        mv.folderId=target.id||null;
+        let last=-1;arr.forEach((s,i)=>{if((s.folderId||null)===(target.id||null))last=i});
+        arr.splice(last+1,0,mv);
+      }else{
+        const ti=arr.findIndex(s=>s.id===target.id);
+        if(ti<0){arr.splice(si,0,mv);return arr}
+        mv.folderId=arr[ti].folderId||null;
+        arr.splice(ti,0,mv);
+      }
+      return arr;
+    });
+  };
+  const startPress=(site,e)=>{
+    const pt=e.touches?e.touches[0]:e;
+    const sx=pt.clientX,sy=pt.clientY;
+    const st={armed:false,moved:false,target:null};
+    dg.current.st=st;
+    const onMove=ev=>{
+      const p=ev.touches?ev.touches[0]:ev;
+      const dx=p.clientX-sx,dy=p.clientY-sy;
+      if(!st.armed){ // moved before the hold completed → it's a scroll, not a drag
+        if(Math.abs(dx)>8||Math.abs(dy)>8)finish(true);
+        return;
+      }
+      if(ev.cancelable)ev.preventDefault(); // stop the page scrolling under the lifted tile
+      st.moved=true;
+      const el=document.elementFromPoint(p.clientX,p.clientY);
+      const bm=el&&el.closest?el.closest('[data-bm]'):null;
+      const fd=el&&el.closest?el.closest('[data-folderdrop]'):null;
+      let t=null;
+      if(bm&&bm.getAttribute('data-bm')!==site.id)t={type:'site',id:bm.getAttribute('data-bm')};
+      else if(fd)t={type:'folder',id:fd.getAttribute('data-folderdrop')||null};
+      st.target=t;setDropT(t);
+    };
+    const finish=cancelOnly=>{
+      if(st.timer)clearTimeout(st.timer);
+      window.removeEventListener('touchmove',onMove,{passive:false});
+      window.removeEventListener('touchend',onEnd);
+      window.removeEventListener('touchcancel',onEnd);
+      window.removeEventListener('mousemove',onMove);
+      window.removeEventListener('mouseup',onEnd);
+      if(!cancelOnly&&st.armed){
+        if(st.moved&&st.target)applyDrop(site.id,st.target);
+        else if(!st.moved)setActSite(site); // held without moving → the actions menu
+        dg.current.suppress=true;
+        setTimeout(()=>{dg.current.suppress=false},280);
+      }
+      st.armed=false;setLiftId(null);setDropT(null);
+    };
+    const onEnd=()=>finish(false);
+    st.timer=setTimeout(()=>{st.armed=true;setLiftId(site.id)},420);
+    window.addEventListener('touchmove',onMove,{passive:false});
+    window.addEventListener('touchend',onEnd);
+    window.addEventListener('touchcancel',onEnd);
+    window.addEventListener('mousemove',onMove);
+    window.addEventListener('mouseup',onEnd);
+  };
+  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,
+    onOpen:()=>{if(dg.current.suppress)return;go(st.url,st.name)},
+    onPress:e=>startPress(st,e),
+    lifted:liftId===st.id,ghost:!!liftId&&liftId===st.id&&!!dropT,
+    targeted:!!dropT&&dropT.type==='site'&&dropT.id===st.id});
+
+  /* ---------- folder reordering (drag the handle on a folder header) ---------- */
+  const [fDragOver,setFDragOver]=useState(-1);
+  const fDrag=useRef({active:false,srcIdx:0,startY:0});
+  const foldersRef=useRef(folders);foldersRef.current=folders;
+  const startFolderDrag=(idx,e)=>{
+    const y=e.touches?e.touches[0].clientY:e.clientY;
+    fDrag.current={active:true,srcIdx:idx,startY:y};setFDragOver(idx);
+    const onMove=ev=>{
+      if(!fDrag.current.active)return;
+      if(ev.cancelable)ev.preventDefault();
+      const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
+      const step=Math.round((y2-fDrag.current.startY)/110);
+      setFDragOver(Math.min(Math.max(fDrag.current.srcIdx+step,0),foldersRef.current.length-1));
+    };
+    const onEnd=ev=>{
+      if(!fDrag.current.active)return;
+      fDrag.current.active=false;
+      const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:(ev.clientY||0);
+      const step=Math.round((y2-fDrag.current.startY)/110);
+      const src=fDrag.current.srcIdx;
+      const dst=Math.min(Math.max(src+step,0),foldersRef.current.length-1);
+      if(src!==dst)onFolders(list=>{const a=list.slice();const[m]=a.splice(src,1);a.splice(dst,0,m);return a});
+      setFDragOver(-1);
+      window.removeEventListener('touchmove',onMove,{passive:false});window.removeEventListener('touchend',onEnd);
+      window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
+    };
+    window.addEventListener('touchmove',onMove,{passive:false});window.addEventListener('touchend',onEnd);
+    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
+  };
+
+  /* ---------- live search over saved links + history ---------- */
+  const q=input.trim().toLowerCase();
+  const fName_=id=>{const f=folders.find(x=>x.id===id);return f?f.name:''};
+  const hits=q?sites.filter(s=>((s.name||'')+' '+(s.url||'')+' '+fName_(s.folderId)).toLowerCase().includes(q)):[];
+  const hHits=q?hist.filter(x=>((x.name||'')+' '+(x.url||'')).toLowerCase().includes(q)&&!sites.some(s=>s.url===x.url)).slice(0,6):[];
+  const alreadySaved=u=>sites.some(s=>normalizeUrl(s.url)===normalizeUrl(u));
+  /* Only treat the typed text as a link when it really looks like one, so a bare
+     word ("eena") offers a Google search rather than "Open https://eena". */
+  const typedUrl=(()=>{const t=input.trim();return(!t||/\s/.test(t)||!t.includes('.'))?'':(normalizeUrl(t)||'')})();
+  const resultRow=(key,icon,title,sub,onClick,right)=>h('button',{key,onClick,className:'act98',
+    style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'11px 4px',borderBottom:'1px solid '+T.hair,color:T.fg}},
+    h('span',{style:{width:26,height:26,borderRadius:7,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden',color:T.sub}},icon),
+    h('span',{style:{flex:1,minWidth:0}},
+      h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
+      sub?h('span',{style:{display:'block',fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},sub):null),
+    right||null);
+  const fav=u=>h('img',{src:faviconUrl(u),alt:'',style:{width:18,height:18},onError:e=>{e.target.style.opacity=0}});
+  const searchBody=h('div',null,
+    h('div',{style:lblS},hits.length?'Saved links · '+hits.length:'No saved link matches'),
+    hits.map(s=>resultRow(s.id,fav(s.url),s.name,(s.folderId?fName_(s.folderId)+' · ':'')+s.url,()=>go(s.url,s.name),
+      h('span',{onClick:e=>{e.stopPropagation();setActSite(s)},className:'act90',style:{display:'flex',color:T.sub,padding:8,margin:-8}},Icons.dots(17)))),
+    hHits.length?h(Fragment,null,
+      h('div',{style:Object.assign({},lblS,{marginTop:18})},'Recently visited'),
+      hHits.map(x=>resultRow('h'+x.url,fav(x.url),x.name||domainOf(x.url),x.url,()=>go(x.url,x.name)))):null,
+    h('div',{style:Object.assign({},lblS,{marginTop:18})},'Go'),
+    resultRow('go',Icons.search(16),'Search Google for “'+input.trim()+'”','',()=>go(input)),
+    typedUrl?resultRow('open',Icons.external(16),'Open '+(domainOf(typedUrl)||input.trim()),typedUrl,()=>go(input)):null,
+    typedUrl&&!alreadySaved(typedUrl)
+      ?resultRow('save',Icons.plus(16),'Add to bookmarks',domainOf(typedUrl)||'',addCurrent):null);
+
+  /* ---------- home: most visited + folders + loose bookmarks ---------- */
   const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
+  const topSites=hist.slice().sort((a,b)=>(b.count||0)-(a.count||0)).filter(x=>(x.count||0)>1).slice(0,8);
+  const iconBtn44=(icon,onClick,color,label)=>h('button',{onClick,'aria-label':label,className:'act90',
+    style:{display:'flex',alignItems:'center',justifyContent:'center',width:44,height:44,flexShrink:0,color:color||T.sub}},icon);
   const homeBody=h('div',null,
-    folders.map(f=>{
+    topSites.length?h('div',{style:{marginBottom:22}},
+      h('div',{style:{display:'flex',alignItems:'center',marginBottom:8}},
+        h('div',{style:Object.assign({},lblS,{margin:0,flex:1})},'Most visited'),
+        h('button',{onClick:()=>setHistOpen(true),className:'act95',style:{display:'flex',alignItems:'center',gap:6,color:T.accent,fontSize:12.5,fontWeight:600,padding:'6px 4px'}},Icons.clock(15),'History')),
+      h('div',{className:'sx',style:{display:'flex',gap:16,overflowX:'auto',paddingBottom:4}},
+        topSites.map(x=>h('button',{key:x.url,onClick:()=>go(x.url,x.name),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,width:62,flexShrink:0}},
+          h('span',{style:{width:48,height:48,borderRadius:13,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
+            h('img',{src:faviconUrl(x.url),alt:'',style:{width:26,height:26},onError:e=>{e.target.style.opacity=0}})),
+          h('span',{style:{fontSize:11,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},x.name||domainOf(x.url)))))):null,
+    folders.map((f,fi)=>{
       const fSites=sites.filter(s=>s.folderId===f.id);
-      return h('div',{key:f.id,style:{marginBottom:20}},
-        h('div',{style:{display:'flex',alignItems:'center',marginBottom:8}},
-          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1}},f.name),
-          h('button',{onClick:()=>{setFName(f.name);setMkFolder({rename:f.id})},className:'act90',style:{display:'flex',color:T.sub}},Icons.pencil(15)),
-          h('button',{onClick:()=>{onSites(list=>list.map(s=>s.folderId===f.id?{...s,folderId:null}:s));onFolders(list=>list.filter(x=>x.id!==f.id))},className:'act90',style:{display:'flex',color:T.danger}},Icons.trash(15))),
-        grid([...fSites.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:f.id}))]));
+      const isTarget=!!dropT&&dropT.type==='folder'&&dropT.id===f.id;
+      return h('div',{key:f.id,'data-folderdrop':f.id,
+        style:{marginBottom:20,borderRadius:14,outline:isTarget?'2px solid '+T.accent:'none',outlineOffset:6,
+          opacity:fDragOver>=0&&fDragOver===fi?0.65:1}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:2,marginBottom:6}},
+          h('button',{onMouseDown:e=>startFolderDrag(fi,e),onTouchStart:e=>startFolderDrag(fi,e),'aria-label':'Reorder folder',className:'act90',
+            style:{display:'flex',alignItems:'center',justifyContent:'center',width:34,height:44,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none',marginLeft:-8}},Icons.drag(15)),
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
+          iconBtn44(Icons.plus(19),()=>quickAdd(f.id),T.accent,'Add a site to '+f.name),
+          iconBtn44(Icons.pencil(18),()=>{setFName(f.name);setMkFolder({rename:f.id})},T.sub,'Rename '+f.name),
+          h('span',{style:{width:14,flexShrink:0}}), // keeps Delete away from Rename
+          iconBtn44(Icons.trash(18),()=>setConfirm({kind:'folder',folder:f,count:fSites.length}),T.danger,'Delete '+f.name)),
+        grid([...fSites.map(tile),addBtn(()=>quickAdd(f.id))]));
     }),
-    h('div',{style:lblS},'Bookmarks'),
-    grid([...loose.map(tile),addBtn(()=>setAddForm({name:'',url:'',folderId:null}))]),
-    h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:18,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
-    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Tapping a bookmark or entering an address opens it in your browser. Long-press a bookmark to rename, move to a folder, or delete. Tap the key icon to copy a saved password while logging in.'));
+    h('div',{'data-folderdrop':'',style:{borderRadius:14,outline:!!dropT&&dropT.type==='folder'&&!dropT.id?'2px solid '+T.accent:'none',outlineOffset:6}},
+      h('div',{style:lblS},'Bookmarks'),
+      grid([...loose.map(tile),addBtn(()=>quickAdd(null))])),
+    h('div',{style:{display:'flex',gap:10,marginTop:18}},
+      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
+      h('button',{onClick:()=>setHistOpen(true),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.clock(17),'History')),
+    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Type above to filter your saved links, or enter an address to open it. Hold a bookmark to lift it, then drag to reorder or drop it on another folder. Tap the key icon to copy a saved password while logging in.'));
+
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
+      h('button',{onClick:()=>{clearBrowserReturn();onClose()},className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
-        h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search Google or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search saved links or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           onKeyDown:e=>{if(e.key==='Enter')go(input)},
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
         input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
-      tbtn(Icons.key(19),()=>setVaultOpen(true))),
-    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},homeBody),
+      tbtn(Icons.key(19),()=>setVaultOpen(true),'Passwords')),
+    h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},q?searchBody:homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
-      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);go(s.url)}}),
-      h(ARow,{T,icon:Icons.pencil(21),label:'Rename',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
+      h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);go(s.url,s.name)}}),
+      h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:()=>{try{navigator.clipboard.writeText(actSite.url)}catch(e){}setActSite(null)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Rename or edit link',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:()=>{const s=actSite;setActSite(null);setMoveSite(s)}}),
-      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onSites(list=>list.filter(x=>x.id!==actSite.id));setActSite(null)}})):null,
+      h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{const s=actSite;setActSite(null);setConfirm({kind:'site',site:s})}})):null,
+
+    confirm?h(Sheet,{T,onClose:()=>setConfirm(null),title:confirm.kind==='folder'?'Delete folder?':'Delete bookmark?',z:96},
+      h('div',{style:{padding:'2px 20px 4px',fontSize:14.5,color:T.meta,lineHeight:1.5}},
+        confirm.kind==='folder'
+          ?'“'+confirm.folder.name+'” will be removed.'+(confirm.count?' Its '+confirm.count+' bookmark'+(confirm.count>1?'s move':' moves')+' to Bookmarks — nothing is lost.':'')
+          :'“'+confirm.site.name+'” will be removed from your saved links.'),
+      h(PrimaryBtn,{T,danger:true,label:confirm.kind==='folder'?'Delete folder':'Delete bookmark',
+        onClick:()=>{
+          if(confirm.kind==='folder'){
+            onSites(list=>list.map(s=>s.folderId===confirm.folder.id?{...s,folderId:null}:s));
+            onFolders(list=>list.filter(x=>x.id!==confirm.folder.id));
+          }else onSites(list=>list.filter(x=>x.id!==confirm.site.id));
+          setConfirm(null);
+        }}),
+      h('button',{onClick:()=>setConfirm(null),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:2,color:T.fg,fontSize:15,fontWeight:500,textAlign:'center'}},'Cancel')):null,
+
+    histOpen?h(Sheet,{T,onClose:()=>{setHistOpen(false);setHistQ('')},title:'History',maxH:'86%'},
+      h('div',{style:{padding:'0 20px 8px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'9px 12px'}},
+          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
+          h('input',{value:histQ,onChange:e=>setHistQ(e.target.value),placeholder:'Search history',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
+          histQ?h('button',{onClick:()=>setHistQ(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null)),
+      h('div',{style:{padding:'0 20px'}},
+        (()=>{
+          const hq=histQ.trim().toLowerCase();
+          const rows=hist.filter(x=>!hq||((x.name||'')+' '+(x.url||'')).toLowerCase().includes(hq));
+          if(!rows.length)return h('div',{style:{padding:'26px 0',textAlign:'center',color:T.sub,fontSize:13.5}},hist.length?'Nothing matches that.':'Nothing here yet — sites you open will be listed.');
+          return rows.slice(0,120).map(x=>resultRow('hh'+x.url,fav(x.url),x.name||domainOf(x.url),x.url+(x.count>1?' · '+x.count+' visits':''),()=>{setHistOpen(false);go(x.url,x.name)},
+            h('span',{onClick:e=>{e.stopPropagation();if(onHistory)onHistory(list=>list.filter(y=>y.url!==x.url))},className:'act90',style:{display:'flex',color:T.sub,padding:8,margin:-8}},Icons.x(16))));
+        })()),
+      hist.length?h('button',{onClick:()=>{if(onHistory)onHistory(()=>[]);},className:'act98',
+        style:{display:'block',width:'100%',padding:'14px',marginTop:10,color:T.danger,fontSize:15,fontWeight:500,textAlign:'center'}},'Clear all history'):null):null,
 
     moveSite?h(Sheet,{T,title:'Move to folder',onClose:()=>setMoveSite(null)},
       h(ARow,{T,icon:Icons.plus(21),label:'New folder…',onClick:()=>{const s=moveSite;setMoveSite(null);setFName('');setMkFolder({forSite:s.id})}}),
@@ -5237,7 +5482,9 @@ function App(){
   const [speedId,setSpeedId]=useState(null);
   const [voices,setVoices]=useState([]);
   const [aiOpen,setAiOpen]=useState(null); // {articleId?} — header AI works on any page
-  const [browserO,setBrowserO]=useState(null); // {url} — in-app browser
+  /* Returning from a site we handed to the system browser should land back in
+     the Browser, not on the home page — see shouldRestoreBrowser(). */
+  const [browserO,setBrowserO]=useState(()=>shouldRestoreBrowser()?{url:''}:null); // {url} — in-app browser
   const [filterMenu,setFilterMenu]=useState(false); // reader list type-filter dropdown
   const [sortMenu,setSortMenu]=useState(false); // reader list sort dropdown
   const [media,setMedia]=useState([]); // {id,kind,mime,name,caption,albumId,favorite,pinned,addedAt,blob}
@@ -5967,11 +6214,13 @@ function App(){
       onSites:fn=>update(d=>({...d,sites:fn(d.sites||[])})),
       folders:data.siteFolders||[],
       onFolders:fn=>update(d=>({...d,siteFolders:fn(d.siteFolders||[])})),
+      history:data.siteHistory||[],
+      onHistory:fn=>update(d=>({...d,siteHistory:fn(d.siteHistory||[])})),
       vault:data.vault||null,
       onChangeVault:blob=>update(d=>({...d,vault:blob})),
       session:vaultSess,
       initialUrl:browserO.url,
-      onClose:()=>setBrowserO(null)}):null,
+      onClose:()=>{clearBrowserReturn();setBrowserO(null)}}):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);
       return h(MiniPlayer,{T,ui:ttsUI,title:cur?cur.title:'Listening…',onToggle:ttsToggle,onNextArticle:()=>ttsJumpArticle(1),onStop:ttsStop,onOpen:()=>setTtsOpen(true)})})():null,
