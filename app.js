@@ -6,7 +6,7 @@ const h=(t,p,...c)=>ce(t,p,...c);
 
 /* ============================== constants ============================== */
 const STORE_KEY='instapaper_v1';
-const APP_VERSION='1.0.0';
+const APP_VERSION='1.1.0';
 
 const THEMES={
   light:{id:'light',label:'Light',bg:'#ffffff',fg:'#1c1c1e',sub:'#9a9aa0',meta:'#76767c',hair:'#e8e8ec',card:'#f4f4f6',search:'#efeff1',sheet:'#ffffff',overlay:'rgba(0,0,0,.42)',menuBg:'#ffffff',menuFg:'#1c1c1e',menuHair:'#ececef',accent:'#3478c6',danger:'#d0342c',hl:'rgba(255,222,60,.5)',thumbBg:'#ececee',statusbar:'#ffffff',swatch:'#ffffff'},
@@ -2203,7 +2203,7 @@ function Browser({T,sites,onSites,vault,onChangeVault,session,initialUrl,onClose
 }
 
 /* ============================== settings ============================== */
-function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
+function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const fileRef=useRef(null);
   const [page,setPage]=useState('root');
@@ -2260,6 +2260,10 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onExport,onImport,onClear
         navRow('AI Assistant','ai',Icons.ai(20)),
         navRow('Logged-In Sites','sites',Icons.globe(20)),
         navRow('Syncing & Backup','data',Icons.download(20),true)),
+      head('App'),
+      h(ARow,{T,icon:Icons.refresh(20),label:'Force reload to latest version',
+        sub:'Clears the cached app and reloads. Your saved articles, notes & settings stay.',
+        onClick:()=>onForceReload&&onForceReload()}),
       h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
         'Instapaper \u00b7 v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
   }else if(page==='homepage'){
@@ -2833,6 +2837,27 @@ function App(){
     else toastFn('Highlighted');
   };
 
+  /* ---------- force reload to the latest version ---------- */
+  const forceReload=useCallback(async()=>{
+    toastFn('Fetching the latest version…');
+    // Never touch localStorage here — saved articles, notes and settings must survive.
+    try{
+      if('serviceWorker'in navigator){
+        const regs=await navigator.serviceWorker.getRegistrations();
+        await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+      }
+    }catch(e){}
+    try{
+      if('caches'in window){
+        const keys=await caches.keys();
+        await Promise.all(keys.map(k=>caches.delete(k).catch(()=>{})));
+      }
+    }catch(e){}
+    // cache-busting query forces the browser to bypass any HTTP cache for the shell
+    const u=location.pathname+'?v='+Date.now();
+    try{location.replace(u)}catch(e){location.reload()}
+  },[toastFn]);
+
   /* ---------- folders ---------- */
   const saveFolder=(name,existing,afterMoveIds)=>{
     if(existing){update(d=>({...d,folders:d.folders.map(f=>f.id===existing.id?{...f,name}:f)}));setSheet(null);toastFn('Folder renamed')}
@@ -3096,6 +3121,7 @@ function App(){
       }}):null,
 
     settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,onClose:()=>setSettingsOpen(false),
+      onForceReload:forceReload,
       onExport:exportBackup,onImport:importBackup,
       onClearArchived:()=>setSheet({type:'confirm',kind:'clearArchive'}),
       onEraseAll:()=>setSheet({type:'confirm',kind:'erase'}),
