@@ -3588,6 +3588,12 @@ function computeStreak(days){
 const BRIEF_PALETTE=['#d4564a','#e8801f','#e0a020','#5cb85c','#2bb5a0','#3aa0e0','#6a7ef0','#9b59b6','#e0517f'];
 function groupColor(id){let n=0;const s=String(id||'');for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;return BRIEF_PALETTE[n%BRIEF_PALETTE.length]}
 function hexA(hex,a){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex||'');if(!m)return hex||'transparent';const n=parseInt(m[1],16);return'rgba('+((n>>16)&255)+','+((n>>8)&255)+','+(n&255)+','+a+')'}
+/* Shared "block" card — a routine group and a History day both render inside
+   one of these, so the whole screen reads as one consistent stack of blocks
+   with a colored accent stripe telling them apart at a glance. */
+function RoutineBlock({T,accent,dim,dropTarget,children}){
+  return h('div',{style:{borderRadius:14,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+(accent||T.hair),marginBottom:12,padding:'10px 14px',boxShadow:'0 1px 2px rgba(0,0,0,.04)',opacity:dim?0.4:1,transition:'opacity 120ms',outline:dropTarget?'2px solid '+T.accent:'none',outlineOffset:2}},children);
+}
 function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
@@ -3780,7 +3786,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
     return h('div',{style:{display:'flex',alignItems:'center',gap:6}},
       h('button',{onClick:()=>toggleCollapse(key),className:'act95','aria-label':isOpen?'Collapse group':'Expand group',
-        style:{display:'flex',alignItems:'center',gap:7,padding:'8px 12px',borderRadius:999,background:T.card,border:'1px solid '+T.hair,minWidth:0,overflow:'hidden',flex:1}},
+        style:{display:'flex',alignItems:'center',gap:7,padding:'2px 0',borderRadius:8,background:'transparent',border:'none',minWidth:0,overflow:'hidden',flex:1}},
         h('span',{style:{display:'flex',color:T.sub,flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(12)),
         h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
         h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,textAlign:'left'}},g?g.name:'Other'),
@@ -3799,13 +3805,13 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
       briefLog.length?h('button',{onClick:()=>{setBriefLog([]);saveBriefLog([])},className:'act90','aria-label':'Clear history',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null),
     isOpen?(briefLog.length===0
       ?h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px',lineHeight:1.5}},'Updates you miss are saved here automatically for 14 days, so you can catch up later.')
-      :h('div',null,briefLog.map(entry=>h('div',{key:entry.id,style:{padding:'8px 2px 10px',borderBottom:'1px solid '+T.hair}},
-        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:4}},
-          h('div',{style:{flex:1,fontSize:12.5,fontWeight:600,color:T.fg}},entry.slotName+' · '+fmtLogDate(entry.snapshotAt)),
-          h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px'}},entry.items.reduce((n,i)=>n+i.entries.length,0)+' missed')),
-        entry.items.map(it=>h('div',{key:it.id,style:{padding:'2px 0 6px'}},
+      :h('div',null,briefLog.map((entry,idx)=>h(RoutineBlock,{key:entry.id,T,accent:BRIEF_PALETTE[idx%BRIEF_PALETTE.length]},
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
+          h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},entry.slotName+' · '+fmtLogDate(entry.snapshotAt)),
+          h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px',flexShrink:0}},entry.items.reduce((n,i)=>n+i.entries.length,0)+' missed')),
+        entry.items.map((it,itIdx)=>h('div',{key:it.id,style:{padding:'6px 0',borderTop:itIdx?'1px solid '+T.hair:'none'}},
           h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:3}},it.name+(it.groupName?' · '+it.groupName:'')),
-          it.entries.map(e=>h('div',{key:e.url||e.publishedMs,onClick:()=>openExternalUrl(e.url),style:{display:'flex',gap:10,padding:'4px 0',cursor:'pointer',alignItems:'flex-start'}},
+          it.entries.map(e=>h('div',{key:e.url||e.publishedMs,onClick:()=>openExternalUrl(e.url),className:'act95',style:{display:'flex',gap:10,padding:'4px 0',cursor:'pointer',alignItems:'flex-start',borderRadius:8}},
             h('span',{style:{fontSize:11,color:T.meta,flexShrink:0,paddingTop:2}},new Date(e.publishedMs).toLocaleTimeString('en',{hour:'numeric',minute:'2-digit'})),
             h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
 
@@ -3852,9 +3858,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
           const dragThis=isDragging&&dragInfo.current.srcIdx===gIdx;
           const dropHere=isDragging&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx;
           const itemsOpen=!(collapsed.has(key)&&!q);
-          return h('div',{key,style:{opacity:dragThis?0.4:1,transition:'opacity 120ms',marginBottom:14}},
-            h('div',{style:{borderRadius:999,outline:dropHere?'2px solid '+T.accent:'none',outlineOffset:3}},sectionHead(g,list,gIdx)),
-            itemsOpen?h('div',{style:{marginTop:6,background:T.bg,borderRadius:14,border:'1px solid '+T.hair,boxShadow:'0 1px 2px rgba(0,0,0,.04)',padding:'4px 13px 6px'}},
+          return h(RoutineBlock,{key,T,accent:g?groupColor(g.id):T.sub,dim:dragThis,dropTarget:dropHere},
+            sectionHead(g,list,gIdx),
+            itemsOpen?h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair,paddingTop:6}},
               flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')):null);
         });
         return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;
