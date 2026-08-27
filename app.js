@@ -3517,19 +3517,95 @@ function MediaViewer({T,m,onClose,onActions}){
 
 /* ============================== daily brief ============================== */
 const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
+/* "2h ago" style stamp — a routine is about recency, so an absolute date only
+   earns its place once an item is older than a day. */
+function fmtAgo(ts){
+  if(!ts)return'';
+  const m=Math.floor((Date.now()-ts)/60000);
+  if(m<1)return'just now';
+  if(m<60)return m+'m ago';
+  const hr=Math.floor(m/60);if(hr<24)return hr+'h ago';
+  const d=Math.floor(hr/24);if(d===1)return'yesterday';
+  if(d<7)return d+'d ago';
+  return fmtDateShort(ts);
+}
+/* Feed titles arrive padded with channel branding and hashtag tails
+   ("Real title | Telugu Podcast | Raw Talks With VK | #shorts #telugushorts").
+   The source name is already the section header, so strip that boilerplate for
+   display only — the stored title is never touched, and if stripping would
+   leave nothing readable we keep the original. */
+const normTitleSeg=t=>String(t||'').toLowerCase().replace(/[^a-z0-9]+/g,'');
+const GENERIC_SEG=/^(shorts?|ytshorts?|podcasts?|telugupodcasts?|reels?|trending|viral|status|shortsfeed|shortvideo)$/;
+function cleanEntryTitle(title,sourceName){
+  const raw=String(title||'').trim();
+  if(!raw)return'';
+  const src=normTitleSeg(sourceName);
+  const junk=seg=>{
+    const t=seg.trim();
+    if(!t)return true;
+    if(/^(#[\p{L}\p{N}_]+[\s]*)+$/u.test(t))return true; // a pure run of hashtags
+    const n=normTitleSeg(t);
+    if(!n)return true;
+    if(GENERIC_SEG.test(n))return true;
+    if(src&&n.length>2&&(n===src||src.indexOf(n)>=0||n.indexOf(src)>=0))return true;
+    return false;
+  };
+  const segs=raw.split('|').map(x=>x.trim()).filter(Boolean);
+  const kept=segs.filter(seg=>!junk(seg));
+  let out=kept.join(' — ').trim();
+  out=out.replace(/(\s*#[\p{L}\p{N}_]+)+\s*$/u,'').trim(); // trailing hashtag tail
+  if(normTitleSeg(out))return out;
+  // Everything read as boilerplate (e.g. an emoji-only title). Fall back to the
+  // most substantive single segment rather than replaying the raw pipe soup.
+  let best='';
+  for(const seg of segs)if(normTitleSeg(seg).length>normTitleSeg(best).length)best=seg;
+  return best||raw;
+}
+/* Recover a thumbnail for history entries snapshotted before thumbs were kept. */
+function entryThumb(e){
+  if(e&&e.thumb)return e.thumb;
+  const m=/(?:v=|youtu\.be\/|\/shorts\/)([A-Za-z0-9_-]{6,})/.exec((e&&e.url)||'');
+  return m?'https://i.ytimg.com/vi/'+m[1]+'/hqdefault.jpg':'';
+}
+/* One update from a routine source. The live feed uses the full-bleed
+   "cinematic" card — cover art, gradient scrim, title set over the image —
+   because catching up on what's new is the whole point of this screen. History
+   uses the compact variant so a long catch-up backlog stays scannable. */
+function RoutineEntryCard({T,entry,kind,sourceName,onOpen,compact}){
+  const K=BRIEF_KIND[kind]||BRIEF_KIND.rss;
+  const thumb=entryThumb(entry);
+  const title=cleanEntryTitle(entry.title,sourceName)||'Update';
+  const when=fmtAgo(entry.publishedMs);
+  const play=kind==='youtube'?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',filter:'drop-shadow(0 1px 4px rgba(0,0,0,.7))',pointerEvents:'none'}},Icons.play(compact?18:30,true)):null;
+  const img=h('img',{src:thumb,alt:'',loading:'lazy',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',display:'block'},onError:ev=>{ev.target.style.opacity=0}});
+  if(compact){
+    return h('button',{onClick:onOpen,className:'act98',style:{display:'flex',gap:thumb?0:8,width:'100%',textAlign:'left',background:T.card,borderRadius:10,overflow:'hidden',alignItems:thumb?'stretch':'flex-start',padding:thumb?0:'8px 10px'}},
+      thumb?h('div',{style:{width:112,flexShrink:0,position:'relative',background:T.thumbBg,aspectRatio:'16 / 9'}},img,play)
+        :h('span',{style:{color:K.c,marginTop:1,flexShrink:0,display:'flex'}},K.ic(13)),
+      h('div',{style:{flex:1,minWidth:0,padding:thumb?'7px 11px':0}},
+        h('div',{style:{fontSize:13,fontWeight:500,color:T.fg,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},title),
+        when?h('div',{style:{fontSize:11,color:T.sub,marginTop:4}},when):null));
+  }
+  if(!thumb){
+    return h('button',{onClick:onOpen,className:'act98',style:{display:'flex',gap:9,width:'100%',textAlign:'left',background:T.card,borderRadius:12,padding:'11px 13px',alignItems:'flex-start',borderLeft:'3px solid '+K.c}},
+      h('span',{style:{color:K.c,marginTop:1,flexShrink:0,display:'flex'}},K.ic(14)),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:14,fontWeight:500,color:T.fg,lineHeight:1.4,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},title),
+        when?h('div',{style:{fontSize:11,color:T.sub,marginTop:5}},when):null));
+  }
+  return h('button',{onClick:onOpen,className:'act98',style:{position:'relative',display:'block',width:'100%',textAlign:'left',borderRadius:13,overflow:'hidden',background:T.thumbBg,aspectRatio:'16 / 9'}},
+    img,play,
+    h('span',{style:{position:'absolute',left:0,right:0,bottom:0,height:'72%',background:'linear-gradient(to top,rgba(0,0,0,.93) 0%,rgba(0,0,0,.72) 38%,rgba(0,0,0,0) 100%)',pointerEvents:'none'}}),
+    h('div',{style:{position:'absolute',left:0,right:0,bottom:0,padding:'11px 13px'}},
+      h('div',{style:{fontSize:14.5,fontWeight:600,color:'#fff',lineHeight:1.32,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',textShadow:'0 1px 3px rgba(0,0,0,.5)'}},title),
+      when?h('div',{style:{fontSize:11,fontWeight:500,color:'rgba(255,255,255,.82)',marginTop:4}},when):null));
+}
 function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPress,collapsed,onToggleCollapse}){
   const lp=useLongPress(onLongPress);
   const check=h('button',{onClick:e=>{e.stopPropagation();onToggle()},className:'act90',style:{display:'flex',flexShrink:0,color:done?T.accent:T.sub,padding:2,marginTop:1}},Icons.checkCircle(24,done));
   if(feedy){
     const es=entries||[],K=BRIEF_KIND[item.kind]||BRIEF_KIND.rss;
-    const card=e=>h('button',{key:e.id,onClick:()=>onEntry(e),className:'act98',style:{display:'flex',gap:e.thumb?0:8,width:'100%',textAlign:'left',background:T.card,borderRadius:10,overflow:'hidden',alignItems:e.thumb?'stretch':'flex-start',padding:e.thumb?0:'8px 10px'}},
-      e.thumb?h('div',{style:{width:92,flexShrink:0,position:'relative',background:T.hair,aspectRatio:'16 / 9'}},
-        h('img',{src:e.thumb,alt:'',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:ev=>{ev.target.style.opacity=0}}),
-        item.kind==='youtube'?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',filter:'drop-shadow(0 1px 3px rgba(0,0,0,.6))'}},Icons.play(18,true)):null)
-        :h('span',{style:{color:K.c,marginTop:1,flexShrink:0,display:'flex'}},K.ic(13)),
-      h('div',{style:{flex:1,minWidth:0,padding:e.thumb?'6px 10px':0}},
-        h('div',{style:{fontSize:12.5,color:T.fg,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.title||'Update'),
-        e.publishedMs?h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},fmtDateShort(e.publishedMs)):null));
+    const card=e=>h(RoutineEntryCard,{key:e.id,T,entry:e,kind:item.kind,sourceName:item.name,onOpen:()=>onEntry(e)});
     return h('div',Object.assign({},lp,{style:{display:'flex',gap:8,padding:'10px 4px',alignItems:'flex-start'}}),check,
       h('div',{style:{flex:1,minWidth:0}},
         h('div',{style:{display:'flex',alignItems:'center',gap:6}},
@@ -3554,6 +3630,9 @@ function BriefItem({T,item,entries,feedy,done,onToggle,onOpen,onEntry,onLongPres
 const BRIEF_LOG_KEY='insta_brief_log_v1';
 const BRIEF_LASTWIN_KEY='insta_brief_lastwin_v1';
 const LOG_MAX_AGE=14*24*60*60*1000;
+/* A catch-up day shows this many items per source before folding the rest
+   behind "+N more" — a 400-item backlog must never render as one wall. */
+const HIST_SOURCE_CAP=4;
 const loadBriefLog=()=>{try{return JSON.parse(localStorage.getItem(BRIEF_LOG_KEY)||'[]')}catch(e){return[]}};
 const saveBriefLog=l=>{try{localStorage.setItem(BRIEF_LOG_KEY,JSON.stringify(l))}catch(e){}};
 const fmtLogDate=ts=>{const d=new Date(ts),now=new Date(),diff=Math.floor((now-d)/86400000);const ds=d.toLocaleDateString('en',{month:'short',day:'numeric'});if(diff===0)return'Today · '+ds;if(diff===1)return'Yesterday · '+ds;return ds};
@@ -3575,7 +3654,11 @@ function briefDoneIds(done,key){
 const BRIEF_STREAK_KEY='insta_brief_streak_v1';
 const loadStreakDays=()=>{try{const a=JSON.parse(localStorage.getItem(BRIEF_STREAK_KEY)||'[]');return Array.isArray(a)?a.filter(x=>typeof x==='string'):[]}catch(e){return[]}};
 const saveStreakDays=a=>{try{localStorage.setItem(BRIEF_STREAK_KEY,JSON.stringify(a.slice(-400)))}catch(e){}};
-const loadBriefFocus=()=>{try{return localStorage.getItem('insta_brief_focus')||'all'}catch(e){return'all'}};
+/* "New" and "Completed" are momentary views whose counts go stale the instant
+   the routine window rolls over — persisting them lands you on an empty screen
+   at launch. Only the stable filters survive a reload. */
+const BRIEF_FOCUS_STICKY={all:1,todo:1};
+const loadBriefFocus=()=>{try{const v=localStorage.getItem('insta_brief_focus')||'all';return BRIEF_FOCUS_STICKY[v]?v:'all'}catch(e){return'all'}};
 function computeStreak(days){
   const set=new Set(days);if(!set.size)return{current:0,best:0};
   const sorted=[...set].sort();let best=1,run=1;
@@ -3653,9 +3736,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
   };
   const [briefLog,setBriefLog]=useState(loadBriefLog);
+  // Per-source "+N more" expansion inside a history day block.
+  const [histOpen,setHistOpen]=useState(()=>new Set());
+  const toggleHist=k=>setHistOpen(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);return n});
   const [streakDays,setStreakDays]=useState(loadStreakDays);
   const [focus,setFocus]=useState(loadBriefFocus);
-  const setFocusP=v=>{setFocus(v);try{localStorage.setItem('insta_brief_focus',v)}catch(e){}};
+  const setFocusP=v=>{setFocus(v);try{BRIEF_FOCUS_STICKY[v]?localStorage.setItem('insta_brief_focus',v):localStorage.removeItem('insta_brief_focus')}catch(e){}};
   const [query,setQuery]=useState('');
   const [searchOpen,setSearchOpen]=useState(false);
   const toggleSearch=()=>setSearchOpen(o=>{const n=!o;if(!n)setQuery('');return n});
@@ -3670,10 +3756,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
         const snz=brief.snoozed&&brief.snoozed[it.id];
         if(oldDoneIds.includes(it.id)||!hasFeed(it)||(snz&&snz>=stored.end))continue;
         const c=feeds[it.id];if(!c||!c.entries)continue;
-        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end&&!seenMap[e.url]);
+        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end&&!seenMap[e.url]).sort((a,b)=>b.publishedMs-a.publishedMs);
         if(!es.length)continue;
         const g=groups.find(x=>x.id===it.groupId);
-        missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs}))});
+        missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs,thumb:e.thumb||''}))});
       }
       if(missed.length){
         const entry={id:uid(),windowKey:stored.key,slotName:stored.slotName,snapshotAt:Date.now(),start:stored.start,end:stored.end,items:missed};
@@ -3809,11 +3895,19 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
           h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},entry.slotName+' · '+fmtLogDate(entry.snapshotAt)),
           h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px',flexShrink:0}},entry.items.reduce((n,i)=>n+i.entries.length,0)+' missed')),
-        entry.items.map((it,itIdx)=>h('div',{key:it.id,style:{padding:'6px 0',borderTop:itIdx?'1px solid '+T.hair:'none'}},
-          h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:3}},it.name+(it.groupName?' · '+it.groupName:'')),
-          it.entries.map(e=>h('div',{key:e.url||e.publishedMs,onClick:()=>openExternalUrl(e.url),className:'act95',style:{display:'flex',gap:10,padding:'4px 0',cursor:'pointer',alignItems:'flex-start',borderRadius:8}},
-            h('span',{style:{fontSize:11,color:T.meta,flexShrink:0,paddingTop:2}},new Date(e.publishedMs).toLocaleTimeString('en',{hour:'numeric',minute:'2-digit'})),
-            h('span',{style:{fontSize:13,color:T.fg,flex:1,lineHeight:1.4}},(e.title||'(no title)').slice(0,150)))))))))):null);};
+        entry.items.map((it,itIdx)=>{
+          const hk=entry.id+'/'+it.id;
+          // Sort at render as well as at capture, so history snapshotted by an
+          // earlier build (which stored feed order) also reads newest-first.
+          const all=(it.entries||[]).slice().sort((a,b)=>(b.publishedMs||0)-(a.publishedMs||0));
+          const isOpen=histOpen.has(hk);
+          const shown=isOpen?all:all.slice(0,HIST_SOURCE_CAP);
+          return h('div',{key:it.id,style:{padding:'8px 0',borderTop:itIdx?'1px solid '+T.hair:'none'}},
+            h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:6}},it.name+(it.groupName?' · '+it.groupName:'')),
+            h('div',{style:{display:'flex',flexDirection:'column',gap:6}},
+              shown.map(e=>h(RoutineEntryCard,{key:e.url||e.publishedMs,T,entry:e,kind:it.kind,sourceName:it.name,compact:true,onOpen:()=>openExternalUrl(e.url)})),
+              all.length>HIST_SOURCE_CAP?h('button',{onClick:()=>toggleHist(hk),className:'act95',style:{alignSelf:'flex-start',fontSize:12,fontWeight:600,color:T.accent,padding:'5px 2px'}},isOpen?'Show less':'+'+(all.length-HIST_SOURCE_CAP)+' more'):null));
+        }))))):null);};
 
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New'],['completed','Completed']];
   const focusRow=total?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'8px 14px 10px'}},
