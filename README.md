@@ -54,7 +54,8 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
 **My Routine**
-- 🗂 **Groups are tabs down the left** — a sticky side rail lists every group with its colour stripe and a count (or a red badge when something's new); the pane beside it shows just that group's channels and their new posts, so content starts at the top of the screen instead of below a stack of cards
+- 🗂 **Groups are tabs down the left** — a sticky side rail lists every group as a flat row with a colour dot and a count (or a red number when something's new); the pane beside it shows just that group's channels and their new posts, so content starts at the top of the screen instead of below a stack of cards
+- ⏴ **Collapse the rail** — the small arrow above it shrinks the rail to a slim column of colour-ringed dots (still badged when something's new), freeing width for reading; tap a dot to switch groups without expanding back
 - 📋 **All** — the first rail entry keeps the full stacked sweep of every group, exactly as before
 - ⏪ **Catch-up** — pinned above everything else and badged with what you missed. Updates you didn't open before a routine window rolled over are grouped **by day first** (Today / Yesterday / Fri, 29 Aug), then by window, then by source. Opening an item marks it read and drops the badge; **Mark all read** clears a whole day at once
 - 📌 **Pin to keep** — catch-up is swept after 14 days; pin anything you want to hold on to and it moves to a **Pinned** list that survives the sweep

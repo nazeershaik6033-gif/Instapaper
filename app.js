@@ -3923,30 +3923,48 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
       h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
   };
 
-  /* One rail entry: a colour stripe, the group's name, and either a "new"
-     badge or a plain source count on the line below. */
+  /* Rail entries read as one continuous list — a colour dot, the name, and a
+     plain bold count — instead of a stack of separate rounded cards; the
+     active row is marked by a flush accent bar, not a filled box. Collapsing
+     the rail (toggle sits in its own header, just above the list) swaps this
+     for a slim column of colour-ringed dots that keep the same information
+     in a fraction of the width. */
+  const [railOpen,setRailOpen]=useState(true);
   const railBtn=(id,label,opts)=>{
     const on=activeTab===id,o=opts||{};
+    if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,
+      style:{position:'relative',display:'flex',alignSelf:'center',width:28,height:28,borderRadius:14,flexShrink:0,
+        border:'2px solid '+(o.color||T.hair),background:on?(o.color||T.fg):'transparent'}},
+      o.alert?h('span',{style:{position:'absolute',top:-5,right:-6,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:T.danger,color:'#fff',fontSize:8,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',border:'1.5px solid '+T.bg}},o.alert>99?'99+':o.alert):null);
     return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95',
-      style:{display:'block',width:'100%',textAlign:'left',padding:'7px 7px 7px 8px',borderRadius:9,
-        borderLeft:'3px solid '+(o.color||T.hair),background:on?T.fg:T.card,color:on?T.bg:T.sub,
-        transition:'background 140ms'}},
-      h('div',{style:{fontSize:10,fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase',lineHeight:1.25,
-        overflow:'hidden',overflowWrap:'anywhere',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}},label),
-      o.alert?h('div',{style:{marginTop:3,display:'inline-flex',fontSize:9,fontWeight:700,color:'#fff',background:T.danger,borderRadius:999,padding:'1px 6px'}},o.alert+(o.alertUnit||' new'))
-        :(o.count!=null?h('div',{style:{marginTop:2,fontSize:9,fontWeight:600,color:on?T.bg:T.sub,opacity:on?.7:1}},o.count+(o.unit||'')):null));
+      style:{position:'relative',display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
+        padding:'8px 8px 8px 11px',borderBottom:'1px solid '+T.hair,background:'transparent',color:on?T.fg:T.sub}},
+      h('span',{style:{position:'absolute',left:0,top:6,bottom:6,width:2.5,borderRadius:2,background:on?(o.color||T.fg):'transparent'}}),
+      h('span',{style:{width:7,height:7,borderRadius:4,flexShrink:0,background:o.color||T.sub}}),
+      h('span',{style:{flex:1,minWidth:0,fontSize:12.5,fontWeight:on?700:500,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label),
+      o.alert?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:800,color:T.danger}},String(o.alert))
+        :(o.count!=null?h('span',{style:{flexShrink:0,fontSize:10.5,fontWeight:600,color:T.sub,opacity:.75}},String(o.count)):null));
   };
-  const rail=h('div',{ref:railRef,className:'sx','data-noswipe':'1',
-    style:{flex:'0 0 auto',width:'clamp(78px,25vw,112px)',display:'flex',flexDirection:'column',gap:5,
-      position:'sticky',top:6,alignSelf:'flex-start',maxHeight:'calc(100vh - 128px)',overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2}},
-    railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,alertUnit:' missed',count:missedTotal?null:0,unit:' missed'}),
-    railBtn('all','All',{color:T.sub,count:vis.length,unit:' items'}),
-    groups.map(g=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
-      return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length})}),
-    ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length}):null,
-    h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
-      style:{display:'flex',alignItems:'center',justifyContent:'center',gap:4,padding:'7px 4px',borderRadius:9,
-        border:'1px dashed '+T.hair,color:T.sub,fontSize:9.5,fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase'}},Icons.plus(13),'Group'));
+  const railToggle=h('button',{onClick:()=>setRailOpen(v=>!v),className:'act90','aria-label':railOpen?'Collapse groups':'Expand groups',
+    style:{display:'flex',alignItems:'center',justifyContent:'center',alignSelf:railOpen?'flex-end':'center',
+      width:24,height:24,borderRadius:7,border:'1px solid '+T.hair,color:T.sub,flexShrink:0,marginBottom:5}},
+    h('span',{style:{display:'flex',transform:railOpen?'rotate(180deg)':'none',transition:'transform 160ms'}},Icons.chevR(13)));
+  const rail=h('div',{'data-noswipe':'1',style:{flex:'0 0 auto',display:'flex',flexDirection:'column',
+      position:'sticky',top:6,alignSelf:'flex-start',maxHeight:'calc(100vh - 128px)'}},
+    railToggle,
+    h('div',{ref:railRef,className:'sy','data-noswipe':'1',
+      style:{flex:'0 0 auto',width:railOpen?'clamp(120px,32vw,152px)':42,display:'flex',flexDirection:'column',gap:railOpen?0:9,
+        overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2,paddingTop:railOpen?0:2,
+        borderTop:railOpen?'1px solid '+T.hair:'none',transition:'width 160ms'}},
+      railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0}),
+      railBtn('all','All',{color:T.sub,count:vis.length}),
+      groups.map(g=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
+        return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length})}),
+      ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length}):null,
+      railOpen?h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
+        style:{display:'flex',alignItems:'center',gap:7,padding:'9px 8px 9px 11px',color:T.sub,fontSize:12,fontWeight:600}},Icons.plus(14),'New group')
+        :h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
+          style:{display:'flex',alignSelf:'center',alignItems:'center',justifyContent:'center',width:28,height:28,borderRadius:14,border:'1px dashed '+T.hair,color:T.sub,flexShrink:0}},Icons.plus(13))));
 
 
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New'],['completed','Completed']];
