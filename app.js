@@ -3635,7 +3635,20 @@ const LOG_MAX_AGE=14*24*60*60*1000;
 const HIST_SOURCE_CAP=4;
 const loadBriefLog=()=>{try{return JSON.parse(localStorage.getItem(BRIEF_LOG_KEY)||'[]')}catch(e){return[]}};
 const saveBriefLog=l=>{try{localStorage.setItem(BRIEF_LOG_KEY,JSON.stringify(l))}catch(e){}};
-const fmtLogDate=ts=>{const d=new Date(ts),now=new Date(),diff=Math.floor((now-d)/86400000);const ds=d.toLocaleDateString('en',{month:'short',day:'numeric'});if(diff===0)return'Today · '+ds;if(diff===1)return'Yesterday · '+ds;return ds};
+/* Catch-up reads day-first — you remember "Friday", not "the 20:00 window" —
+   so days are the outer grouping and the routine window is the subhead. */
+const fmtDayLabel=ts=>{const d=new Date(ts),diff=Math.floor((new Date().setHours(0,0,0,0)-new Date(ts).setHours(0,0,0,0))/86400000);
+  if(diff===0)return'Today';if(diff===1)return'Yesterday';
+  return d.toLocaleDateString('en',{weekday:'short',day:'numeric',month:'short'})};
+/* Pinned catch-up items live in their own store so they outlive the 14-day
+   sweep that prunes the log itself. */
+const BRIEF_KEPT_KEY='insta_brief_kept_v1';
+const loadKept=()=>{try{const a=JSON.parse(localStorage.getItem(BRIEF_KEPT_KEY)||'[]');return Array.isArray(a)?a:[]}catch(e){return[]}};
+const saveKept=a=>{try{localStorage.setItem(BRIEF_KEPT_KEY,JSON.stringify(a.slice(0,300)))}catch(e){}};
+/* The tab you were last on is worth restoring; "Catch-up" is not — it empties
+   as you read it, so persisting it lands you on a blank screen at launch. */
+const BRIEF_TAB_KEY='insta_brief_tab';
+const loadBriefTab=()=>{try{return localStorage.getItem(BRIEF_TAB_KEY)||'all'}catch(e){return'all'}};
 /* brief "done" is a map of windowKey -> [itemIds] so checking items off in one
    time-slot is never wiped by another. Reads tolerate the old {key,ids} shape. */
 function normalizeDone(done){
@@ -3677,6 +3690,10 @@ function hexA(hex,a){const m=/^#?([0-9a-fA-F]{6})$/.exec(hex||'');if(!m)return h
 function RoutineBlock({T,accent,dim,dropTarget,children}){
   return h('div',{style:{borderRadius:14,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+(accent||T.hair),marginBottom:12,padding:'10px 14px',boxShadow:'0 1px 2px rgba(0,0,0,.04)',opacity:dim?0.4:1,transition:'opacity 120ms',outline:dropTarget?'2px solid '+T.accent:'none',outlineOffset:2}},children);
 }
+/* My Routine is a switcher, not a checklist: you go to Sports *or* AI, rarely
+   both in one sitting. So groups are tabs in one horizontal strip rather than a
+   stack of collapsible cards, with "Catch-up" pinned first (the reason you open
+   the app after a gap) and "All" second (the whole sweep, as before). */
 function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
@@ -3694,49 +3711,13 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const [gName,setGName]=useState('');
   const [busy,setBusy]=useState(false);
   const [slotSheet,setSlotSheet]=useState(false);
-  const [reorderMode,setReorderMode]=useState(false); // shows per-group drag handles only while active
-  // Per-group collapse for the brief; persisted so it survives reloads.
+  const [manage,setManage]=useState(false); // group management lives in a sheet, not on every card
+  // Per-source collapse (and per-group collapse inside the All tab); persisted.
   const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_brief_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_brief_collapsed',JSON.stringify([...n]))}catch(e){}return n});
-  /* Group reordering: press-and-drag the handle beside any group's name pill,
-     any time — no separate "reorder mode" to enter or exit. dragOver===-1
-     means idle; while dragging it tracks which group index is under the
-     pointer, both to preview the drop position and to flag the current
-     group being dragged (dragInfo.current.srcIdx). */
-  const [dragOver,setDragOver]=useState(-1);
-  const dragInfo=useRef({active:false,srcIdx:0,startY:0});
-  const numGroupsRef=useRef(groups.length);numGroupsRef.current=groups.length;
-  const startGroupDrag=(idx,e)=>{
-    const y=e.touches?e.touches[0].clientY:e.clientY;
-    dragInfo.current={active:true,srcIdx:idx,startY:y};
-    setDragOver(idx);
-    const onMove=ev=>{
-      if(!dragInfo.current.active)return;
-      const y2=ev.touches?ev.touches[0].clientY:ev.clientY;
-      const dy=y2-dragInfo.current.startY;
-      const ng=numGroupsRef.current;
-      const step=Math.round(dy/80);
-      setDragOver(Math.min(Math.max(dragInfo.current.srcIdx+step,0),ng-1));
-    };
-    const onEnd=ev=>{
-      if(!dragInfo.current.active)return;
-      dragInfo.current.active=false;
-      const y2=(ev.changedTouches&&ev.changedTouches[0])?ev.changedTouches[0].clientY:ev.clientY||0;
-      const dy=y2-dragInfo.current.startY;
-      const ng=numGroupsRef.current;
-      const src=dragInfo.current.srcIdx;
-      const step=Math.round(dy/80);
-      const dst=Math.min(Math.max(src+step,0),ng-1);
-      if(src!==dst)onBrief(b=>{const gs=[...b.groups];const[mv]=gs.splice(src,1);gs.splice(dst,0,mv);return{...b,groups:gs}});
-      setDragOver(-1);
-      window.removeEventListener('touchmove',onMove);window.removeEventListener('touchend',onEnd);
-      window.removeEventListener('mousemove',onMove);window.removeEventListener('mouseup',onEnd);
-    };
-    window.addEventListener('touchmove',onMove,{passive:true});window.addEventListener('touchend',onEnd);
-    window.addEventListener('mousemove',onMove);window.addEventListener('mouseup',onEnd);
-  };
   const [briefLog,setBriefLog]=useState(loadBriefLog);
-  // Per-source "+N more" expansion inside a history day block.
+  const [kept,setKept]=useState(loadKept);
+  // Per-source "+N more" expansion inside a catch-up day block.
   const [histOpen,setHistOpen]=useState(()=>new Set());
   const toggleHist=k=>setHistOpen(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);return n});
   const [streakDays,setStreakDays]=useState(loadStreakDays);
@@ -3745,6 +3726,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const [query,setQuery]=useState('');
   const [searchOpen,setSearchOpen]=useState(false);
   const toggleSearch=()=>setSearchOpen(o=>{const n=!o;if(!n)setQuery('');return n});
+  const [tab,setTab]=useState(loadBriefTab);
+  const [day,setDay]=useState(null); // catch-up day key being viewed; null = newest, '_kept' = pinned
   useEffect(()=>{
     if(!win.key)return;
     let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
@@ -3787,6 +3770,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
   const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
   const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
+  const moveGroup=(idx,dir)=>onBrief(b=>{const gs=[...(b.groups||[])];const dst=idx+dir;if(dst<0||dst>=gs.length)return b;const[mv]=gs.splice(idx,1);gs.splice(dst,0,mv);return{...b,groups:gs}});
   const saveItem=f=>{
     const raw=(f.url||'').trim();if(!raw){toastFn('Enter a link or handle');return}
     const patch={kind:f.kind,channelId:f.channelId||'',handle:'',feedUrl:'',url:''};
@@ -3859,17 +3843,76 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     catch(e){setDigest({err:(e&&e.message)||'Could not summarize right now'})}
     setAiBusy(false);
   };
+
+  /* ---- catch-up (History) ---------------------------------------------
+     Missed updates you have already opened stop counting: catching up should
+     empty the badge, not just display it. */
+  const seenMap=brief.seen||{};
+  const unseenOf=list=>(list||[]).filter(e=>!seenMap[e.url]);
+  const catchDays=useMemo(()=>{
+    const byDay=new Map();
+    for(const entry of briefLog){
+      const k=ymd(new Date(entry.snapshotAt));
+      if(!byDay.has(k))byDay.set(k,{key:k,ts:entry.snapshotAt,label:fmtDayLabel(entry.snapshotAt),entries:[]});
+      const d=byDay.get(k);d.entries.push(entry);if(entry.snapshotAt>d.ts)d.ts=entry.snapshotAt;
+    }
+    const days=[...byDay.values()].sort((a,b)=>b.ts-a.ts);
+    for(const d of days){
+      d.entries.sort((a,b)=>b.snapshotAt-a.snapshotAt);
+      d.unseen=d.entries.reduce((n,e)=>n+e.items.reduce((m,i)=>m+unseenOf(i.entries).length,0),0);
+      d.total=d.entries.reduce((n,e)=>n+e.items.reduce((m,i)=>m+(i.entries||[]).length,0),0);
+    }
+    return days;
+  },[briefLog,seenMap]);
+  const missedTotal=catchDays.reduce((n,d)=>n+d.unseen,0);
+  const curDay=(day==='_kept'&&kept.length)?'_kept':(catchDays.find(d=>d.key===day)||catchDays[0]||null);
+  const isKept=url=>kept.some(k=>k.url===url);
+  const toggleKeep=(e,it)=>{
+    const has=isKept(e.url);
+    const next=has?kept.filter(k=>k.url!==e.url)
+      :[{url:e.url,title:e.title,publishedMs:e.publishedMs,thumb:e.thumb||'',kind:it.kind,sourceName:it.name,groupName:it.groupName||null,keptAt:Date.now()}].concat(kept);
+    setKept(next);saveKept(next);vibrate(6);toastFn(has?'Unpinned':'Pinned — kept past 14 days');
+  };
+  const markDayRead=d=>{const urls=[];d.entries.forEach(e=>e.items.forEach(i=>(i.entries||[]).forEach(x=>urls.push(x.url))));markSeen(urls);toastFn('Marked as read')};
+
+  /* ---- tabs ------------------------------------------------------------ */
   const q=query.trim().toLowerCase();
   const matchQ=it=>!q||(((it.name||'')+' '+domainOf(it.url)).toLowerCase().indexOf(q)>=0);
-  const passesFocus=it=>matchQ(it)&&(focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):focus==='completed'?doneIds.includes(it.id):true);
-  const sections=groups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
   const ungrouped=vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
-  if(ungrouped.length)sections.push({g:null,list:ungrouped});
+  const tabOrder=['catchup','all'].concat(groups.map(g=>g.id)).concat(ungrouped.length?['_other']:[]);
+  const activeTab=tabOrder.indexOf(tab)>=0?tab:'all';
+  const setTabP=v=>{setTab(v);setDay(null);try{v==='catchup'?localStorage.removeItem(BRIEF_TAB_KEY):localStorage.setItem(BRIEF_TAB_KEY,v)}catch(e){}};
+  const tabList=activeTab==='all'?vis:activeTab==='_other'?ungrouped:activeTab==='catchup'?[]:vis.filter(i=>i.groupId===activeTab);
+  const groupNewCount=list=>win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+  const passesFocus=it=>matchQ(it)&&(focus==='todo'?!doneIds.includes(it.id):focus==='new'?(hasFeed(it)&&!win.future&&newEntries(it).length>0):focus==='completed'?doneIds.includes(it.id):true);
+  // Keep the selected tab in view when the rail is taller than its viewport.
+  const railRef=useRef(null),activeRef=useRef(null);
+  useEffect(()=>{
+    const rl=railRef.current,btn=activeRef.current;if(!rl||!btn)return;
+    if(rl.scrollHeight<=rl.clientHeight+2)return;
+    const want=btn.offsetTop-(rl.clientHeight-btn.offsetHeight)/2;
+    rl.scrollTo?rl.scrollTo({top:Math.max(0,want),behavior:'smooth'}):rl.scrollTop=Math.max(0,want);
+  },[activeTab]);
+  /* Swipe left/right moves down/up the rail. Gestures that start inside a
+     scroller of their own (the rail, the chip rows) are left alone. */
+  const swipe=useRef({x:0,y:0,on:false});
+  const goTab=d=>{const i=tabOrder.indexOf(activeTab),n=i+d;if(i<0||n<0||n>=tabOrder.length)return;vibrate(6);setTabP(tabOrder[n])};
+  const swipeH={
+    onTouchStart:e=>{if(e.touches.length!==1){swipe.current.on=false;return}
+      const t=e.touches[0];const inStrip=!!(e.target&&e.target.closest&&e.target.closest('[data-noswipe]'));
+      swipe.current={x:t.clientX,y:t.clientY,on:!inStrip}},
+    onTouchEnd:e=>{const s=swipe.current;if(!s.on)return;s.on=false;
+      const t=e.changedTouches&&e.changedTouches[0];if(!t)return;
+      const dx=t.clientX-s.x,dy=t.clientY-s.y;
+      if(Math.abs(dx)<64||Math.abs(dx)<Math.abs(dy)*1.8)return;
+      goTab(dx<0?1:-1)}
+  };
+
   const itemRow=it=>h(BriefItem,{key:it.id,T,item:it,feedy:hasFeed(it),entries:win.future?[]:newEntries(it),done:doneIds.includes(it.id),onToggle:()=>toggle(it.id),onOpen:()=>open(it),onEntry:openEntry,onLongPress:()=>setAct(it),collapsed:hasFeed(it)&&collapsed.has(it.id),onToggleCollapse:hasFeed(it)?()=>toggleCollapse(it.id):null});
-  const sectionHead=(g,list,gIdx)=>{
+  const sectionHead=(g,list)=>{
     const key=g?g.id:'_other';
     const isOpen=!collapsed.has(key);
-    const groupNew=win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
+    const groupNew=groupNewCount(list);
     return h('div',{style:{display:'flex',alignItems:'center',gap:6}},
       h('button',{onClick:()=>toggleCollapse(key),className:'act95','aria-label':isOpen?'Collapse group':'Expand group',
         style:{display:'flex',alignItems:'center',gap:7,padding:'2px 0',borderRadius:8,background:'transparent',border:'none',minWidth:0,overflow:'hidden',flex:1}},
@@ -3877,91 +3920,176 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
         h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
         h('span',{style:{fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,textAlign:'left'}},g?g.name:'Other'),
         groupNew?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 7px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},String(list.length))),
-      g&&reorderMode?h('button',{onMouseDown:e=>startGroupDrag(gIdx,e),onTouchStart:e=>startGroupDrag(gIdx,e),className:'act90','aria-label':'Reorder group',style:{display:'flex',flexShrink:0,color:T.sub,padding:6,cursor:'grab'}},Icons.drag(16)):null,
-      g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4,borderRadius:6}},Icons.pencil(15)):null,
-      g?h('button',{onClick:()=>{onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90','aria-label':'Delete group',style:{display:'flex',flexShrink:0,color:T.danger,padding:4,borderRadius:6}},Icons.trash(15)):null,
       h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
   };
-  // Brief history as a collapsible section (open when '_history' is in the set).
-  const histMissed=briefLog.reduce((n,e)=>n+e.items.reduce((m,i)=>m+i.entries.length,0),0);
-  const historySection=()=>{const isOpen=collapsed.has('_history');return h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair}},
-    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'14px 4px 4px'}},
-      h('button',{onClick:()=>toggleCollapse('_history'),className:'act90','aria-label':isOpen?'Collapse history':'Expand history',style:{display:'flex',color:T.sub,padding:3,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(15)),
-      h('div',{onClick:()=>toggleCollapse('_history'),style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},'History'+(histMissed?' · '+histMissed+' missed':'')),
-      briefLog.length?h('button',{onClick:()=>{setBriefLog([]);saveBriefLog([])},className:'act90','aria-label':'Clear history',style:{display:'flex',color:T.danger,padding:3}},Icons.trash(16)):null),
-    isOpen?(briefLog.length===0
-      ?h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 4px 10px',lineHeight:1.5}},'Updates you miss are saved here automatically for 14 days, so you can catch up later.')
-      :h('div',null,briefLog.map((entry,idx)=>h(RoutineBlock,{key:entry.id,T,accent:BRIEF_PALETTE[idx%BRIEF_PALETTE.length]},
-        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
-          h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},entry.slotName+' · '+fmtLogDate(entry.snapshotAt)),
-          h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px',flexShrink:0}},entry.items.reduce((n,i)=>n+i.entries.length,0)+' missed')),
-        entry.items.map((it,itIdx)=>{
-          const hk=entry.id+'/'+it.id;
-          // Sort at render as well as at capture, so history snapshotted by an
-          // earlier build (which stored feed order) also reads newest-first.
-          const all=(it.entries||[]).slice().sort((a,b)=>(b.publishedMs||0)-(a.publishedMs||0));
-          const isOpen=histOpen.has(hk);
-          const shown=isOpen?all:all.slice(0,HIST_SOURCE_CAP);
-          return h('div',{key:it.id,style:{padding:'8px 0',borderTop:itIdx?'1px solid '+T.hair:'none'}},
-            h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:6}},it.name+(it.groupName?' · '+it.groupName:'')),
-            h('div',{style:{display:'flex',flexDirection:'column',gap:6}},
-              shown.map(e=>h(RoutineEntryCard,{key:e.url||e.publishedMs,T,entry:e,kind:it.kind,sourceName:it.name,compact:true,onOpen:()=>openExternalUrl(e.url)})),
-              all.length>HIST_SOURCE_CAP?h('button',{onClick:()=>toggleHist(hk),className:'act95',style:{alignSelf:'flex-start',fontSize:12,fontWeight:600,color:T.accent,padding:'5px 2px'}},isOpen?'Show less':'+'+(all.length-HIST_SOURCE_CAP)+' more'):null));
-        }))))):null);};
+
+  /* One rail entry: a colour stripe, the group's name, and either a "new"
+     badge or a plain source count on the line below. */
+  const railBtn=(id,label,opts)=>{
+    const on=activeTab===id,o=opts||{};
+    return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95',
+      style:{display:'block',width:'100%',textAlign:'left',padding:'7px 7px 7px 8px',borderRadius:9,
+        borderLeft:'3px solid '+(o.color||T.hair),background:on?T.fg:T.card,color:on?T.bg:T.sub,
+        transition:'background 140ms'}},
+      h('div',{style:{fontSize:10,fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase',lineHeight:1.25,
+        overflow:'hidden',overflowWrap:'anywhere',display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical'}},label),
+      o.alert?h('div',{style:{marginTop:3,display:'inline-flex',fontSize:9,fontWeight:700,color:'#fff',background:T.danger,borderRadius:999,padding:'1px 6px'}},o.alert+(o.alertUnit||' new'))
+        :(o.count!=null?h('div',{style:{marginTop:2,fontSize:9,fontWeight:600,color:on?T.bg:T.sub,opacity:on?.7:1}},o.count+(o.unit||'')):null));
+  };
+  const rail=h('div',{ref:railRef,className:'sx','data-noswipe':'1',
+    style:{flex:'0 0 auto',width:'clamp(78px,25vw,112px)',display:'flex',flexDirection:'column',gap:5,
+      position:'sticky',top:6,alignSelf:'flex-start',maxHeight:'calc(100vh - 128px)',overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2}},
+    railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,alertUnit:' missed',count:missedTotal?null:0,unit:' missed'}),
+    railBtn('all','All',{color:T.sub,count:vis.length,unit:' items'}),
+    groups.map(g=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
+      return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length})}),
+    ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length}):null,
+    h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
+      style:{display:'flex',alignItems:'center',justifyContent:'center',gap:4,padding:'7px 4px',borderRadius:9,
+        border:'1px dashed '+T.hair,color:T.sub,fontSize:9.5,fontWeight:700,letterSpacing:'.03em',textTransform:'uppercase'}},Icons.plus(13),'Group'));
+
 
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New'],['completed','Completed']];
-  const focusRow=total?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'8px 14px 10px'}},
-    focusOpts.map(([v,l])=>{const active=focus===v;const cnt=v==='todo'?vis.filter(i=>!doneIds.includes(i.id)).length:v==='new'?newCount:v==='completed'?doneN:vis.length;
-      return h('button',{key:v,onClick:()=>setFocusP(v),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 13px',borderRadius:16,fontSize:12.5,fontWeight:600,border:'1px solid '+(active?T.fg:T.hair),background:active?T.fg:'transparent',color:active?T.bg:T.sub}},
-        l,h('span',{style:{fontSize:11,fontWeight:700,opacity:.75}},String(cnt)))})):null;
-  const searchRow=(total&&searchOpen)?h('div',{style:{padding:'0 14px 10px'}},
+  const focusRow=(activeTab!=='catchup'&&tabList.length)?h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'2px 14px 10px'}},
+    focusOpts.map(([v,l])=>{const active=focus===v;
+      const cnt=v==='todo'?tabList.filter(i=>!doneIds.includes(i.id)).length:v==='new'?tabList.filter(i=>hasFeed(i)&&!win.future&&newEntries(i).length>0).length:v==='completed'?tabList.filter(i=>doneIds.includes(i.id)).length:tabList.length;
+      return h('button',{key:v,onClick:()=>setFocusP(v),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'5px 12px',borderRadius:15,fontSize:12,fontWeight:600,border:'1px solid '+(active?T.fg:T.hair),background:active?T.fg:'transparent',color:active?T.bg:T.sub}},
+        l,h('span',{style:{fontSize:10.5,fontWeight:700,opacity:.75}},String(cnt)))})):null;
+  const searchRow=(total&&searchOpen&&activeTab!=='catchup')?h('div',{style:{padding:'0 14px 10px'}},
     h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,border:'1px solid '+(q?T.accent:T.hair),borderRadius:12,padding:'9px 12px',transition:'border-color 160ms'}},
       h('span',{style:{display:'flex',color:q?T.accent:T.sub,flexShrink:0}},Icons.search(17)),
       h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search channels & sites',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
         style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
-      query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null;
+      query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0}},Icons.x(17)):null)):null;
+
+  /* ---- catch-up view --------------------------------------------------- */
+  const keptRow=(e,idx)=>h('div',{key:e.url||idx,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:6}},
+    h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
+    h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
+  const catchupView=()=>{
+    if(!briefLog.length&&!kept.length)
+      return h('div',{style:{padding:'8px 4px'}},
+        h(EmptyState,{T,icon:Icons.clock(36),title:'Nothing missed yet',sub:'When a routine window rolls over with updates you didn’t open, they’re saved here so you can catch up later.'}));
+    const chips=catchDays.map(d=>({id:d.key,label:d.label,n:d.unseen})).concat(kept.length?[{id:'_kept',label:'Pinned',n:0,pin:true}]:[]);
+    const dayChips=h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 0 10px'}},
+      chips.map(c=>{const on=(c.id==='_kept')?curDay==='_kept':(curDay&&curDay.key===c.id);
+        return h('button',{key:c.id,onClick:()=>setDay(c.id),className:'act95',
+          style:{flexShrink:0,display:'flex',alignItems:'center',gap:5,padding:'6px 12px',borderRadius:9,fontSize:12.5,fontWeight:600,whiteSpace:'nowrap',
+            background:on?T.fg:T.card,color:on?T.bg:T.sub,border:'1px solid '+(on?T.fg:T.hair)}},
+          c.pin?h('span',{style:{display:'flex'}},Icons.pin(12)):null,c.label,
+          c.n?h('span',{style:{fontSize:10,fontWeight:700,color:'#fff',background:T.danger,borderRadius:999,padding:'1px 5px'}},String(c.n)):null)}));
+    const note=h('div',{style:{fontSize:11.5,color:T.sub,lineHeight:1.5,margin:'0 2px 12px'}},
+      'Kept for 14 days — pin anything you want to hold on to. Opening an item marks it read.');
+    let body;
+    if(curDay==='_kept'){
+      body=h('div',null,
+        h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,margin:'0 2px 8px'}},'Pinned · '+kept.length),
+        kept.map(keptRow));
+    }else if(!curDay){
+      body=h('div',{style:{fontSize:13,color:T.sub,padding:'10px 2px',lineHeight:1.5}},'Nothing saved for this day.');
+    }else{
+      body=h('div',null,
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
+          h('div',{style:{flex:1,fontSize:12,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub}},curDay.label+' · '+curDay.total+' saved'),
+          curDay.unseen?h('button',{onClick:()=>markDayRead(curDay),className:'act95',style:{fontSize:12,fontWeight:600,color:T.accent,padding:'3px 2px'}},'Mark all read'):null),
+        curDay.entries.map((entry,idx)=>{
+          const unseenN=entry.items.reduce((m,i)=>m+unseenOf(i.entries).length,0);
+          return h(RoutineBlock,{key:entry.id,T,accent:BRIEF_PALETTE[idx%BRIEF_PALETTE.length]},
+            h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
+              h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},fmtDayLabel(entry.snapshotAt)+' · '+entry.slotName),
+              unseenN?h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px',flexShrink:0}},unseenN+' unread')
+                :h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},'all read')),
+            entry.items.map((it,itIdx)=>{
+              const hk=entry.id+'/'+it.id;
+              // Sort at render as well as at capture, so history snapshotted by an
+              // earlier build (which stored feed order) also reads newest-first.
+              const all=(it.entries||[]).slice().sort((a,b)=>(b.publishedMs||0)-(a.publishedMs||0));
+              const isOpen=histOpen.has(hk);
+              const shown=isOpen?all:all.slice(0,HIST_SOURCE_CAP);
+              return h('div',{key:it.id,style:{padding:'8px 0',borderTop:itIdx?'1px solid '+T.hair:'none'}},
+                h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,marginBottom:6}},it.name+(it.groupName?' · '+it.groupName:'')),
+                h('div',{style:{display:'flex',flexDirection:'column',gap:6}},
+                  shown.map(e=>h('div',{key:e.url||e.publishedMs,style:{display:'flex',gap:6,alignItems:'flex-start',opacity:seenMap[e.url]?.5:1,transition:'opacity 160ms'}},
+                    h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:it.kind,sourceName:it.name,compact:true,onOpen:()=>openEntry(e)})),
+                    h('button',{onClick:()=>toggleKeep(e,it),className:'act90','aria-label':isKept(e.url)?'Unpin':'Pin',
+                      style:{display:'flex',color:isKept(e.url)?T.accent:T.sub,padding:5,flexShrink:0}},Icons.pin(15,isKept(e.url))))),
+                  all.length>HIST_SOURCE_CAP?h('button',{onClick:()=>toggleHist(hk),className:'act95',style:{alignSelf:'flex-start',fontSize:12,fontWeight:600,color:T.accent,padding:'5px 2px'}},isOpen?'Show less':'+'+(all.length-HIST_SOURCE_CAP)+' more'):null));
+            }));
+        }));
+    }
+    return h('div',null,dayChips,note,body,
+      (briefLog.length&&curDay!=='_kept')?h('button',{onClick:()=>{setBriefLog([]);saveBriefLog([]);setDay(null);toastFn('Catch-up cleared')},className:'act95',
+        style:{display:'flex',alignItems:'center',gap:7,margin:'6px 2px 0',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,color:T.danger,fontSize:13,fontWeight:600}},Icons.trash(15),'Clear catch-up'):null);
+  };
+
+  /* ---- routine list views ---------------------------------------------- */
+  const allView=()=>{
+    const sections=groups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
+    if(ungrouped.length)sections.push({g:null,list:ungrouped});
+    const rendered=sections.map(({g,list})=>{
+      const key=g?g.id:'_other';
+      const flist=list.filter(passesFocus);
+      if((focus!=='all'||q)&&!flist.length)return null;
+      const itemsOpen=!(collapsed.has(key)&&!q);
+      return h(RoutineBlock,{key,T,accent:g?groupColor(g.id):T.sub},
+        sectionHead(g,list),
+        itemsOpen?h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair,paddingTop:6}},
+          flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')):null);
+    });
+    return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;
+  };
+  const groupView=()=>{
+    const g=groups.find(x=>x.id===activeTab)||null;
+    const flist=tabList.filter(passesFocus);
+    const gid=g?g.id:null;
+    return h('div',null,
+      h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 2px 4px'}},
+        h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
+        h('div',{style:{flex:1,minWidth:0,fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+          (g?g.name:'Other')+' · '+tabList.length+' source'+(tabList.length===1?'':'s')),
+        g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4}},Icons.pencil(15)):null),
+      flist.length?flist.map(itemRow)
+        :h('div',{style:{fontSize:13.5,color:T.sub,padding:'16px 4px',lineHeight:1.5}},
+          tabList.length?'Nothing matches this filter.':'No channels or sites in this group yet.'),
+      h('button',{onClick:()=>setEdit({groupId:gid,kind:'link',name:'',url:''}),className:'act98',
+        style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',marginTop:10,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.accent,fontSize:13.5,fontWeight:600}},
+        Icons.plus(17),'Add to '+(g?g.name:'Other')));
+  };
+
   const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
   const rowBtnBadge=(icon,onClick,label,badge,disabled)=>h('div',{style:{position:'relative',flexShrink:0}},
     rowBtn(icon,onClick,false,label,disabled),
     badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
   return h('div',null,
-    h('div',{style:{display:'flex',gap:8,padding:'12px 14px 4px'}},
+    h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:8,padding:'12px 14px 4px',overflowX:'auto'}},
+      /* The routine window is now a labelled pill instead of a whole strip of
+         chips: the screen shows "now" unless you deliberately change it. */
+      h('button',{onClick:()=>setSlotSheet(true),className:'act98','aria-label':'Routine windows',
+        style:{flexShrink:0,display:'flex',alignItems:'center',gap:7,padding:'9px 13px',borderRadius:10,border:'1px solid '+(sel?T.accent:T.hair),background:'transparent',color:sel?T.accent:T.fg,fontSize:13,fontWeight:600}},
+        Icons.calendar(15),curSlot.name,win.sel===win.activeSlotId?h('span',{style:{fontSize:9,color:T.accent}},'●'):null),
       rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
-      rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
-      rowBtn(Icons.drag(17),()=>setReorderMode(m=>!m),reorderMode,reorderMode?'Done reordering':'Reorder groups'),
+      rowBtn(Icons.folder(17),()=>setManage(true),manage,'Manage groups'),
       rowBtn(Icons.bell(17,remindOn),toggleRemind,remindOn,'Routine reminders'),
       rowBtn(Icons.chart(17),()=>setStatsOpen(true),false,'Routine stats'),
       rowBtnBadge(aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),runDigest,'Summarize what’s new',newCount>0?String(newCount):'',aiBusy),
       onAskClaude?rowBtn(Icons.send(17),onAskClaude,false,'Ask Claude about my routine'):null),
-    h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 14px 8px'}},
-      slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',
-        style:{flexShrink:0,padding:'8px 18px',borderRadius:20,fontSize:14,fontWeight:600,border:'none',
-          background:s.id===win.sel?T.fg:'transparent',color:s.id===win.sel?T.bg:T.sub}},
-        s.name+(s.id===win.activeSlotId?' •':''))),
-      h('button',{onClick:()=>setSlotSheet(true),className:'act90',style:{flexShrink:0,display:'flex',alignItems:'center',color:T.sub,padding:'0 8px'}},Icons.calendar(18))),
     focusRow,
     searchRow,
-    h('div',{style:{padding:'2px 14px 0'}},
-      win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'14px 4px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
-      total?(()=>{
-        const isDragging=dragOver!==-1;
-        const rendered=sections.map(({g,list},gIdx)=>{
-          const key=g?g.id:'_other';
-          const flist=list.filter(passesFocus);
-          if((focus!=='all'||q)&&!isDragging&&!flist.length)return null;
-          const dragThis=isDragging&&dragInfo.current.srcIdx===gIdx;
-          const dropHere=isDragging&&dragOver===gIdx&&dragInfo.current.srcIdx!==gIdx;
-          const itemsOpen=!(collapsed.has(key)&&!q);
-          return h(RoutineBlock,{key,T,accent:g?groupColor(g.id):T.sub,dim:dragThis,dropTarget:dropHere},
-            sectionHead(g,list,gIdx),
-            itemsOpen?h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair,paddingTop:6}},
-              flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')):null);
-        });
-        return q&&!rendered.some(Boolean)?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},'No channels or sites match “'+query.trim()+'”.'):rendered;
-      })()
-        :h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
-      historySection(),
-      h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
+    /* Rail and content sit side by side: the rail scrolls (and sticks) on its
+       own, the pane beside it holds whichever tab is selected. With nothing
+       set up at all there is no rail to show — just the empty state. */
+    (total||briefLog.length||kept.length)
+      ?h('div',Object.assign({},swipeH,{style:{display:'flex',alignItems:'flex-start',gap:9,padding:'2px 12px 0'}}),
+        rail,
+        h('div',{style:{flex:1,minWidth:0}},
+          activeTab!=='catchup'&&win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'10px 2px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
+          activeTab==='catchup'?catchupView()
+            :total?(activeTab==='all'?allView():groupView())
+            :h('div',{style:{fontSize:13.5,color:T.sub,padding:'16px 2px',lineHeight:1.5}},'No channels or sites yet — tap + Group to start one, then add sources to it.'),
+          h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})))
+      :h('div',{style:{padding:'2px 14px 0'}},
+        h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
+        h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
 
     statsOpen?h(Sheet,{T,title:'Your routine stats',onClose:()=>setStatsOpen(false)},(()=>{
       const set=new Set(streakDays);
@@ -3990,9 +4118,29 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
               h('button',{onClick:()=>{copyText(digest.text);toastFn('Copied')},className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Copy'),
               h('button',{onClick:()=>setDigest(null),className:'act95',style:{flex:1,padding:'12px',borderRadius:11,background:T.fg,color:T.bg,fontSize:14,fontWeight:600}},'Done'))))):null,
 
-    slotSheet?h(Sheet,{T,title:'Brief times',maxH:'90%',onClose:()=>setSlotSheet(false)},
+    manage?h(Sheet,{T,title:'Groups',maxH:'90%',onClose:()=>setManage(false)},
       h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 12px',lineHeight:1.45}},'Each brief shows everything new since the previous one. Add as many as you like.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 12px',lineHeight:1.45}},'Groups are the tabs down the left of the routine screen. Reorder them here to change the order they appear in.'),
+        groups.map((g,idx)=>h('div',{key:g.id,style:{display:'flex',alignItems:'center',gap:6,padding:'9px 10px',marginBottom:8,borderRadius:11,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+groupColor(g.id)}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:14.5,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g.name),
+            h('div',{style:{fontSize:11.5,color:T.sub}},(n=>n+' source'+(n===1?'':'s'))(vis.filter(i=>i.groupId===g.id).length))),
+          h('button',{onClick:()=>moveGroup(idx,-1),disabled:idx===0,className:'act90','aria-label':'Move up',style:{display:'flex',color:T.sub,padding:5,opacity:idx===0?.3:1,transform:'rotate(-90deg)'}},Icons.chevR(16)),
+          h('button',{onClick:()=>moveGroup(idx,1),disabled:idx===groups.length-1,className:'act90','aria-label':'Move down',style:{display:'flex',color:T.sub,padding:5,opacity:idx===groups.length-1?.3:1,transform:'rotate(90deg)'}},Icons.chevR(16)),
+          h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',color:T.sub,padding:5}},Icons.pencil(16)),
+          h('button',{onClick:()=>{if(activeTab===g.id)setTabP('all');onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90','aria-label':'Delete group',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(16)))),
+        groups.length?null:h('div',{style:{fontSize:13.5,color:T.sub,padding:'6px 2px 12px',lineHeight:1.5}},'No groups yet. Create one, then move channels and sites into it.'),
+        h('button',{onClick:()=>{setManage(false);setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:4,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:14,lineHeight:1.5}},'Deleting a group keeps its channels — they move to "Other".'))):null,
+
+    slotSheet?h(Sheet,{T,title:'Routine windows',maxH:'90%',onClose:()=>setSlotSheet(false)},
+      h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 10px',lineHeight:1.45}},'Each window shows everything new since the previous one. The routine screen follows the current window unless you pick another one here.'),
+        h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 0 14px'}},
+          h('button',{onClick:()=>setSel(null),className:'act95',style:{flexShrink:0,padding:'7px 14px',borderRadius:16,fontSize:13,fontWeight:600,border:'1px solid '+(sel?T.hair:T.fg),background:sel?'transparent':T.fg,color:sel?T.sub:T.bg}},'Now'),
+          slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',style:{flexShrink:0,padding:'7px 14px',borderRadius:16,fontSize:13,fontWeight:600,whiteSpace:'nowrap',border:'1px solid '+(sel===s.id?T.fg:T.hair),background:sel===s.id?T.fg:'transparent',color:sel===s.id?T.bg:T.sub}},
+            s.name+(s.id===win.activeSlotId?' •':'')))),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,margin:'0 2px 10px'}},'Times'),
         slots.map(s=>h('div',{key:s.id,style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
           h('input',{value:s.name,onChange:e=>setSlot(s.id,{name:e.target.value}),placeholder:'Name',
             style:{flex:1,minWidth:0,border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:14.5}}),
@@ -4015,13 +4163,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
       h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{setItemGroup(moveIt.id,null);setMoveIt(null)}}),
       groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
-      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with "New group".')):null,
+      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with + Group at the bottom of the rail.')):null,
 
     grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
         h('input',{value:gName,autoFocus:true,onChange:e=>setGName(e.target.value),placeholder:'Group name (e.g. Social, Markets)',
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
-        h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onBrief(b=>({...b,groups:b.groups.map(g=>g.id===grp.rename?{...g,name:nm}:g)}));else onBrief(b=>({...b,groups:b.groups.concat([{id:uid(),name:nm}])}));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
+        h('button',{onClick:()=>{const nm=gName.trim()||'Group';
+          if(grp.rename)onBrief(b=>({...b,groups:b.groups.map(g=>g.id===grp.rename?{...g,name:nm}:g)}));
+          else{const ng={id:uid(),name:nm};onBrief(b=>({...b,groups:b.groups.concat([ng])}));setTabP(ng.id)}
+          setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
 
     edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
