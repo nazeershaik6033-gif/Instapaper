@@ -258,11 +258,69 @@ function browserTarget(input){
   if(/\s/.test(t)||!t.includes('.'))return search;
   return normalizeUrl(t)||search;
 }
-function faviconUrl(siteOrUrl){
+function faviconHost(siteOrUrl){
   let d=String(siteOrUrl||'');
   if(!/^https?:/i.test(d))d='https://'+d;
-  const host=domainOf(d)||d;
-  return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(host);
+  return domainOf(d)||d.replace(/^https?:\/\//,'').split('/')[0];
+}
+/* Legacy single-shot icon, still used by the vault and settings lists. New code
+   should use <SiteIcon>, which falls back instead of showing a blank square. */
+function faviconUrl(siteOrUrl){
+  return'https://www.google.com/s2/favicons?sz=64&domain='+encodeURIComponent(faviconHost(siteOrUrl));
+}
+/* Ordered icon sources, best quality first. Every one of these 404s when it has
+   nothing, so a miss falls through to the next and finally to a letter tile —
+   unlike Google's favicon service, which answers an unknown domain with a
+   low-res generic globe that then upscales into a blur. */
+function faviconSources(siteOrUrl){
+  const host=faviconHost(siteOrUrl);
+  if(!host)return[];
+  return[
+    'https://icons.duckduckgo.com/ip3/'+encodeURIComponent(host)+'.ico',
+    'https://'+host+'/apple-touch-icon.png',
+    'https://'+host+'/apple-touch-icon-precomposed.png',
+    'https://'+host+'/favicon.ico'
+  ];
+}
+const ICON_TINTS=['#d4574d','#cf7c2a','#b8912a','#5a9e4a','#2f9184','#3a7fc4','#6a63cf','#b0519a','#8a6a4c','#5d7183'];
+function iconTint(seed){
+  const s=String(seed||'?');
+  let n=0;for(let i=0;i<s.length;i++)n=(n*31+s.charCodeAt(i))>>>0;
+  return ICON_TINTS[n%ICON_TINTS.length];
+}
+/* First letters of the bookmark's own name, falling back to its domain.
+   Connectors are skipped so "How to Geek" reads HG rather than HT. */
+const MONO_SKIP=['to','of','the','and','a','an','for','in','on','at','my','de','la'];
+function monogramOf(name,host){
+  const src=String(name||'').trim()||String(host||'').replace(/\.[a-z.]+$/i,'');
+  const words=src.split(/[\s._-]+/).filter(Boolean);
+  if(!words.length)return'?';
+  const strong=words.filter((w,i)=>i===0||!MONO_SKIP.includes(w.toLowerCase()));
+  if(strong.length>1&&/^[A-Za-z0-9]/.test(strong[0])&&/^[A-Za-z0-9]/.test(strong[1]))
+    return(strong[0][0]+strong[1][0]).toUpperCase();
+  return strong[0].slice(0,2).toUpperCase();
+}
+/* A site icon that always renders something sharp: it walks faviconSources()
+   and, when they are all exhausted (or return a degenerate 1px sprite), draws a
+   tinted letter tile instead of the empty square the old <img> left behind. */
+function SiteIcon({T,url,name,size,plate,radius}){
+  const sources=useMemo(()=>faviconSources(url),[url]);
+  const [i,setI]=useState(0);
+  useEffect(()=>{setI(0)},[url]);
+  const box=plate||size;
+  const rad=radius==null?Math.round(box*0.28):radius;
+  const host=faviconHost(url);
+  const wrap=inner=>h('span',{style:{width:box,height:box,borderRadius:rad,flexShrink:0,overflow:'hidden',
+    display:'flex',alignItems:'center',justifyContent:'center',background:T.card}},inner);
+  if(i>=sources.length)
+    return wrap(h('span',{style:{width:'100%',height:'100%',display:'flex',alignItems:'center',justifyContent:'center',
+      background:iconTint(host),color:'#fff',fontSize:Math.round(box*0.4),fontWeight:700,letterSpacing:'.01em'}},
+      monogramOf(name,host)));
+  return wrap(h('img',{src:sources[i],alt:'',draggable:false,loading:'lazy',
+    style:{width:size,height:size,objectFit:'contain',borderRadius:Math.round(size*0.22)},
+    onError:()=>setI(n=>n+1),
+    /* a 1px tracking pixel or an empty .ico loads fine but shows nothing */
+    onLoad:e=>{if(e.target.naturalWidth&&e.target.naturalWidth<12)setI(n=>n+1)}}));
 }
 
 
@@ -4822,16 +4880,26 @@ function recordBrowserVisit(list,url,name){
   return arr.slice(0,300);
 }
 
-function BookmarkTile({T,site,onOpen,onPress,lifted,ghost,targeted}){
-  return h('div',{'data-bm':site.id,style:{position:'relative',minWidth:0,opacity:ghost?0.3:1,
-    transform:lifted?'scale(1.14)':'none',transition:'transform 150ms ease',zIndex:lifted?6:undefined,
-    touchAction:lifted?'none':undefined}},
-    targeted?h('span',{style:{position:'absolute',left:-5,top:-5,right:-5,bottom:-5,borderRadius:17,border:'2px solid '+T.accent,pointerEvents:'none'}}):null,
-    h('button',{onClick:onOpen,onTouchStart:onPress,onMouseDown:onPress,className:'act95',
-      style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,width:'100%',minWidth:0,background:'none'}},
-      h('span',{style:{width:54,height:54,borderRadius:14,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden',boxShadow:lifted?'0 8px 22px rgba(0,0,0,.35)':'none'}},
-        h('img',{src:faviconUrl(site.url),alt:'',draggable:false,style:{width:30,height:30},onError:e=>{e.target.style.opacity=0}})),
-      h('span',{style:{fontSize:11.5,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},site.name)));
+/* One saved link. A row rather than a tile: the same 44px-plus tap target, but
+   it carries the domain and when you were last there, and eight of them fit in
+   the space four tiles used to take. */
+function BookmarkRow({T,site,sub,onOpen,onPress,onMenu,editing,lifted,ghost,targeted}){
+  return h('div',{'data-bm':site.id,style:{position:'relative',opacity:ghost?0.3:1,
+    transform:lifted?'scale(1.03)':'none',transition:'transform 150ms ease',zIndex:lifted?6:undefined,
+    boxShadow:lifted?'0 10px 26px rgba(0,0,0,.4)':'none',borderRadius:12,
+    background:lifted?T.card:'transparent',touchAction:lifted?'none':undefined}},
+    targeted?h('span',{style:{position:'absolute',left:0,right:0,top:-2,height:2,background:T.accent,borderRadius:2,pointerEvents:'none'}}):null,
+    h('div',{style:{display:'flex',alignItems:'center',gap:11,paddingRight:2}},
+      editing?h('span',{style:{display:'flex',alignItems:'center',justifyContent:'center',width:22,height:46,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none'},
+        onTouchStart:onPress,onMouseDown:onPress},Icons.drag(14)):null,
+      h('button',{onClick:onOpen,onTouchStart:editing?undefined:onPress,onMouseDown:editing?undefined:onPress,className:'act98',
+        style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:11,padding:'7px 0',textAlign:'left',color:T.fg,background:'none'}},
+        h(SiteIcon,{T,url:site.url,name:site.name,size:22,plate:34}),
+        h('span',{style:{flex:1,minWidth:0}},
+          h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,lineHeight:1.3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},site.name),
+          h('span',{style:{display:'block',fontSize:11.5,color:T.sub,lineHeight:1.35,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},sub))),
+      h('button',{onClick:onMenu,'aria-label':'Actions for '+site.name,className:'act90',
+        style:{display:'flex',alignItems:'center',justifyContent:'center',width:38,height:44,flexShrink:0,color:T.sub}},Icons.dots(17))));
 }
 
 function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose}){
@@ -4846,6 +4914,9 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const [confirm,setConfirm]=useState(null); // {kind:'folder'|'site',...} — nothing is deleted without this
   const [histOpen,setHistOpen]=useState(false);
   const [histQ,setHistQ]=useState('');
+  /* Renaming, deleting and reordering live behind this toggle, so the default
+     screen is links only — no red trash can one mis-tap from your bookmarks. */
+  const [editMode,setEditMode]=useState(false);
   const hist=Array.isArray(history)?history:[];
   const go=(t,name)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
     const u=browserTarget(t);if(!u)return;
@@ -4858,10 +4929,6 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
   const tbtn=(icon,onClick,label)=>h('button',{onClick,'aria-label':label,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
   const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
-  const grid=children=>h('div',{style:{display:'grid',gridTemplateColumns:'repeat(4,1fr)',gap:14}},children);
-  const addBtn=(onClick)=>h('button',{key:'add',onClick,className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7}},
-    h('span',{style:{width:54,height:54,borderRadius:14,border:'1.5px dashed '+T.sub,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.plus(22)),
-    h('span',{style:{fontSize:11.5,color:T.sub}},'Add'));
 
   /* ---------- quick add: prefill from the clipboard when it holds a link ---------- */
   const quickAdd=async folderId=>{
@@ -4896,7 +4963,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       return arr;
     });
   };
-  const startPress=(site,e)=>{
+  const startPress=(site,e,immediate)=>{
     const pt=e.touches?e.touches[0]:e;
     const sx=pt.clientX,sy=pt.clientY;
     const st={armed:false,moved:false,target:null};
@@ -4934,16 +5001,26 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       st.armed=false;setLiftId(null);setDropT(null);
     };
     const onEnd=()=>finish(false);
-    st.timer=setTimeout(()=>{st.armed=true;setLiftId(site.id)},420);
+    if(immediate){st.armed=true;setLiftId(site.id);if(e.cancelable)e.preventDefault()}
+    else st.timer=setTimeout(()=>{st.armed=true;setLiftId(site.id)},420);
     window.addEventListener('touchmove',onMove,{passive:false});
     window.addEventListener('touchend',onEnd);
     window.addEventListener('touchcancel',onEnd);
     window.addEventListener('mousemove',onMove);
     window.addEventListener('mouseup',onEnd);
   };
-  const tile=st=>h(BookmarkTile,{key:st.id,T,site:st,
+  /* what each row says under its name: the domain, plus when you were last there */
+  const visitOf=u=>{const n=normalizeUrl(u)||u;return hist.find(x=>x.url===u||normalizeUrl(x.url)===n)};
+  const rowSub=st=>{
+    const v=visitOf(st.url);
+    const d=domainOf(st.url)||st.url;
+    if(!v||!v.at)return d;
+    return d+' · '+timeAgo(v.at)+((v.count||0)>2?' · '+v.count+' visits':'');
+  };
+  const row=st=>h(BookmarkRow,{key:st.id,T,site:st,sub:rowSub(st),editing:editMode,
     onOpen:()=>{if(dg.current.suppress)return;go(st.url,st.name)},
-    onPress:e=>startPress(st,e),
+    onPress:e=>startPress(st,e,editMode),
+    onMenu:()=>setActSite(st),
     lifted:liftId===st.id,ghost:!!liftId&&liftId===st.id&&!!dropT,
     targeted:!!dropT&&dropT.type==='site'&&dropT.id===st.id});
 
@@ -4988,63 +5065,73 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const typedUrl=(()=>{const t=input.trim();return(!t||/\s/.test(t)||!t.includes('.'))?'':(normalizeUrl(t)||'')})();
   const resultRow=(key,icon,title,sub,onClick,right)=>h('button',{key,onClick,className:'act98',
     style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'11px 4px',borderBottom:'1px solid '+T.hair,color:T.fg}},
-    h('span',{style:{width:26,height:26,borderRadius:7,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,overflow:'hidden',color:T.sub}},icon),
+    h('span',{style:{width:26,height:26,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0,color:T.sub}},icon),
     h('span',{style:{flex:1,minWidth:0}},
       h('span',{style:{display:'block',fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
       sub?h('span',{style:{display:'block',fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},sub):null),
     right||null);
-  const fav=u=>h('img',{src:faviconUrl(u),alt:'',style:{width:18,height:18},onError:e=>{e.target.style.opacity=0}});
+  const fav=(u,nm)=>h(SiteIcon,{T,url:u,name:nm,size:17,plate:26});
   const searchBody=h('div',null,
     h('div',{style:lblS},hits.length?'Saved links · '+hits.length:'No saved link matches'),
-    hits.map(s=>resultRow(s.id,fav(s.url),s.name,(s.folderId?fName_(s.folderId)+' · ':'')+s.url,()=>go(s.url,s.name),
+    hits.map(s=>resultRow(s.id,fav(s.url,s.name),s.name,(s.folderId?fName_(s.folderId)+' · ':'')+s.url,()=>go(s.url,s.name),
       h('span',{onClick:e=>{e.stopPropagation();setActSite(s)},className:'act90',style:{display:'flex',color:T.sub,padding:8,margin:-8}},Icons.dots(17)))),
     hHits.length?h(Fragment,null,
       h('div',{style:Object.assign({},lblS,{marginTop:18})},'Recently visited'),
-      hHits.map(x=>resultRow('h'+x.url,fav(x.url),x.name||domainOf(x.url),x.url,()=>go(x.url,x.name)))):null,
+      hHits.map(x=>resultRow('h'+x.url,fav(x.url,x.name),x.name||domainOf(x.url),x.url,()=>go(x.url,x.name)))):null,
     h('div',{style:Object.assign({},lblS,{marginTop:18})},'Go'),
     resultRow('go',Icons.search(16),'Search Google for “'+input.trim()+'”','',()=>go(input)),
     typedUrl?resultRow('open',Icons.external(16),'Open '+(domainOf(typedUrl)||input.trim()),typedUrl,()=>go(input)):null,
     typedUrl&&!alreadySaved(typedUrl)
       ?resultRow('save',Icons.plus(16),'Add to bookmarks',domainOf(typedUrl)||'',addCurrent):null);
 
-  /* ---------- home: most visited + folders + loose bookmarks ---------- */
+  /* ---------- home: a quick-launch strip, then every group as compact rows ---------- */
   const loose=sites.filter(s=>!s.folderId||!folders.some(f=>f.id===s.folderId));
-  const topSites=hist.slice().sort((a,b)=>(b.count||0)-(a.count||0)).filter(x=>(x.count||0)>1).slice(0,8);
+  const topSites=hist.slice().sort((a,b)=>(b.count||0)-(a.count||0)).filter(x=>(x.count||0)>1).slice(0,10);
   const iconBtn44=(icon,onClick,color,label)=>h('button',{onClick,'aria-label':label,className:'act90',
     style:{display:'flex',alignItems:'center',justifyContent:'center',width:44,height:44,flexShrink:0,color:color||T.sub}},icon);
+  const groupHead=(name,count,opts)=>h('div',{style:{display:'flex',alignItems:'center',gap:2,minHeight:38,marginBottom:2}},
+    (opts&&opts.onDrag)?h('span',{onMouseDown:opts.onDrag,onTouchStart:opts.onDrag,'aria-label':'Reorder '+name,className:'act90',
+      style:{display:'flex',alignItems:'center',justifyContent:'center',width:26,height:38,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none',marginLeft:-6}},Icons.drag(14)):null,
+    h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},name),
+    h('div',{style:{fontSize:11.5,color:T.sub,opacity:.65,marginLeft:7,flex:1}},count||''),
+    iconBtn44(Icons.plus(18),opts.onAdd,T.accent,'Add a link to '+name),
+    (opts&&opts.onRename)?iconBtn44(Icons.pencil(17),opts.onRename,T.sub,'Rename '+name):null,
+    (opts&&opts.onDelete)?h('span',{style:{width:10,flexShrink:0}}):null, // keeps Delete away from Rename
+    (opts&&opts.onDelete)?iconBtn44(Icons.trash(17),opts.onDelete,T.danger,'Delete '+name):null);
+  const emptyNote=t=>h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 2px 8px',lineHeight:1.5}},t);
   const homeBody=h('div',null,
-    topSites.length?h('div',{style:{marginBottom:22}},
-      h('div',{style:{display:'flex',alignItems:'center',marginBottom:8}},
+    topSites.length?h('div',{style:{marginBottom:18}},
+      h('div',{style:{display:'flex',alignItems:'center',minHeight:34,marginBottom:6}},
         h('div',{style:Object.assign({},lblS,{margin:0,flex:1})},'Most visited'),
         h('button',{onClick:()=>setHistOpen(true),className:'act95',style:{display:'flex',alignItems:'center',gap:6,color:T.accent,fontSize:12.5,fontWeight:600,padding:'6px 4px'}},Icons.clock(15),'History')),
-      h('div',{className:'sx',style:{display:'flex',gap:16,overflowX:'auto',paddingBottom:4}},
-        topSites.map(x=>h('button',{key:x.url,onClick:()=>go(x.url,x.name),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,width:62,flexShrink:0}},
-          h('span',{style:{width:48,height:48,borderRadius:13,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',overflow:'hidden'}},
-            h('img',{src:faviconUrl(x.url),alt:'',style:{width:26,height:26},onError:e=>{e.target.style.opacity=0}})),
-          h('span',{style:{fontSize:11,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},x.name||domainOf(x.url)))))):null,
+      h('div',{className:'sx',style:{display:'flex',gap:14,overflowX:'auto',paddingBottom:4}},
+        topSites.map(x=>h('button',{key:x.url,onClick:()=>go(x.url,x.name),className:'act95',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:6,width:62,flexShrink:0}},
+          h(SiteIcon,{T,url:x.url,name:x.name,size:26,plate:46}),
+          h('span',{style:{fontSize:10.5,lineHeight:1.25,color:T.meta,textAlign:'center',maxWidth:'100%',overflow:'hidden',
+            display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',wordBreak:'break-word'}},x.name||domainOf(x.url)))))):null,
     folders.map((f,fi)=>{
       const fSites=sites.filter(s=>s.folderId===f.id);
       const isTarget=!!dropT&&dropT.type==='folder'&&dropT.id===f.id;
       return h('div',{key:f.id,'data-folderdrop':f.id,
-        style:{marginBottom:20,borderRadius:14,outline:isTarget?'2px solid '+T.accent:'none',outlineOffset:6,
+        style:{marginBottom:14,borderRadius:12,outline:isTarget?'2px solid '+T.accent:'none',outlineOffset:6,
           opacity:fDragOver>=0&&fDragOver===fi?0.65:1}},
-        h('div',{style:{display:'flex',alignItems:'center',gap:2,marginBottom:6}},
-          h('button',{onMouseDown:e=>startFolderDrag(fi,e),onTouchStart:e=>startFolderDrag(fi,e),'aria-label':'Reorder folder',className:'act90',
-            style:{display:'flex',alignItems:'center',justifyContent:'center',width:34,height:44,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none',marginLeft:-8}},Icons.drag(15)),
-          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},f.name),
-          iconBtn44(Icons.plus(19),()=>quickAdd(f.id),T.accent,'Add a site to '+f.name),
-          iconBtn44(Icons.pencil(18),()=>{setFName(f.name);setMkFolder({rename:f.id})},T.sub,'Rename '+f.name),
-          h('span',{style:{width:14,flexShrink:0}}), // keeps Delete away from Rename
-          iconBtn44(Icons.trash(18),()=>setConfirm({kind:'folder',folder:f,count:fSites.length}),T.danger,'Delete '+f.name)),
-        grid([...fSites.map(tile),addBtn(()=>quickAdd(f.id))]));
+        groupHead(f.name,fSites.length||'',{
+          onAdd:()=>quickAdd(f.id),
+          onDrag:editMode?(e=>startFolderDrag(fi,e)):null,
+          onRename:editMode?(()=>{setFName(f.name);setMkFolder({rename:f.id})}):null,
+          onDelete:editMode?(()=>setConfirm({kind:'folder',folder:f,count:fSites.length})):null}),
+        fSites.length?fSites.map(row):emptyNote('Empty — tap + to put a link here.'));
     }),
-    h('div',{'data-folderdrop':'',style:{borderRadius:14,outline:!!dropT&&dropT.type==='folder'&&!dropT.id?'2px solid '+T.accent:'none',outlineOffset:6}},
-      h('div',{style:lblS},'Bookmarks'),
-      grid([...loose.map(tile),addBtn(()=>quickAdd(null))])),
-    h('div',{style:{display:'flex',gap:10,marginTop:18}},
-      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New folder'),
+    h('div',{'data-folderdrop':'',style:{marginBottom:14,borderRadius:12,outline:!!dropT&&dropT.type==='folder'&&!dropT.id?'2px solid '+T.accent:'none',outlineOffset:6}},
+      groupHead('Bookmarks',loose.length||'',{onAdd:()=>quickAdd(null)}),
+      loose.length?loose.map(row):emptyNote('Nothing loose here — tap + to save a link.')),
+    h('div',{style:{display:'flex',gap:10,marginTop:16}},
+      h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
       h('button',{onClick:()=>setHistOpen(true),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.clock(17),'History')),
-    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},'Type above to filter your saved links, or enter an address to open it. Hold a bookmark to lift it, then drag to reorder or drop it on another folder. Tap the key icon to copy a saved password while logging in.'));
+    h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},
+      editMode
+        ?'Drag ∷ to reorder a link or move it into another group. Tap Done when you’re finished.'
+        :'Tap ⋯ on any link for its actions. Edit lets you rename, reorder and remove.'));
 
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
@@ -5056,6 +5143,9 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
           onFocus:e=>{try{e.target.select()}catch(err){}},
           style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:14,minWidth:0}}),
         input?h('button',{onClick:()=>setInput(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
+      q?null:h('button',{onClick:()=>setEditMode(v=>!v),'aria-label':editMode?'Done editing':'Edit bookmarks',className:'act90',
+        style:{display:'flex',alignItems:'center',justifyContent:'center',minWidth:38,height:38,flexShrink:0,padding:'0 6px',
+          color:editMode?T.accent:T.fg,fontSize:14,fontWeight:editMode?700:500}},editMode?'Done':Icons.pencil(19)),
       tbtn(Icons.key(19),()=>setVaultOpen(true),'Passwords')),
     h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},q?searchBody:homeBody),
 
@@ -5094,7 +5184,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
           const hq=histQ.trim().toLowerCase();
           const rows=hist.filter(x=>!hq||((x.name||'')+' '+(x.url||'')).toLowerCase().includes(hq));
           if(!rows.length)return h('div',{style:{padding:'26px 0',textAlign:'center',color:T.sub,fontSize:13.5}},hist.length?'Nothing matches that.':'Nothing here yet — sites you open will be listed.');
-          return rows.slice(0,120).map(x=>resultRow('hh'+x.url,fav(x.url),x.name||domainOf(x.url),x.url+(x.count>1?' · '+x.count+' visits':''),()=>{setHistOpen(false);go(x.url,x.name)},
+          return rows.slice(0,120).map(x=>resultRow('hh'+x.url,fav(x.url,x.name),x.name||domainOf(x.url),x.url+(x.count>1?' · '+x.count+' visits':''),()=>{setHistOpen(false);go(x.url,x.name)},
             h('span',{onClick:e=>{e.stopPropagation();if(onHistory)onHistory(list=>list.filter(y=>y.url!==x.url))},className:'act90',style:{display:'flex',color:T.sub,padding:8,margin:-8}},Icons.x(16))));
         })()),
       hist.length?h('button',{onClick:()=>{if(onHistory)onHistory(()=>[]);},className:'act98',
