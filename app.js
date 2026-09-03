@@ -3693,6 +3693,72 @@ const LOG_MAX_AGE=14*24*60*60*1000;
 const HIST_SOURCE_CAP=4;
 const loadBriefLog=()=>{try{return JSON.parse(localStorage.getItem(BRIEF_LOG_KEY)||'[]')}catch(e){return[]}};
 const saveBriefLog=l=>{try{localStorage.setItem(BRIEF_LOG_KEY,JSON.stringify(l))}catch(e){}};
+/* Every routine boundary between two instants, oldest first. Catch-up has to
+   reconstruct the windows that rolled over while the app was closed, and
+   briefWindow only ever looks at yesterday→tomorrow. */
+function slotOccurrences(slots,fromTs,toTs){
+  const sorted=(slots||[]).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  if(!sorted.length||!(toTs>fromTs))return[];
+  const out=[],d=new Date(fromTs);d.setHours(0,0,0,0);d.setDate(d.getDate()-1);
+  for(let guard=0;guard<400&&d.getTime()<=toTs+86400000;guard++){
+    for(const s of sorted){const t=new Date(d);t.setHours(0,0,0,0);t.setMinutes(tmin(s.time));out.push({slot:s,ts:t.getTime(),date:ymd(t)})}
+    d.setDate(d.getDate()+1);
+  }
+  return out.sort((a,b)=>a.ts-b.ts);
+}
+/* Snapshot the whole stretch you were away for, not just the one window that
+   happened to be open last. Each routine window in [fromTs,toTs) becomes its
+   own log entry — keyed, like the live view, by the boundary that closes it —
+   so days you never opened the app still show up as catch-up days. */
+function buildCatchUpEntries(o){
+  const occ=slotOccurrences(o.slots,o.fromTs,o.toTs),seen=o.seen||{},out=[];
+  for(let i=1;i<occ.length;i++){
+    const from=Math.max(occ[i-1].ts,o.fromTs),to=Math.min(occ[i].ts,o.toTs);
+    if(!(to>from))continue;
+    const inst=occ[i],key=inst.date+'#'+inst.slot.id,done=o.doneOf(key)||[],missed=[];
+    for(const it of o.items){
+      const snz=o.snoozed&&o.snoozed[it.id];
+      if(done.includes(it.id)||!hasFeed(it)||(snz&&snz>=to))continue;
+      const c=o.feeds[it.id];if(!c||!c.entries)continue;
+      // A long absence can mean dozens of windows at once, so keep any single
+      // source's slice bounded — the log has to survive localStorage.
+      const es=c.entries.filter(e=>e.publishedMs>=from&&e.publishedMs<to&&!seen[e.url]).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,30);
+      if(!es.length)continue;
+      const g=o.groups.find(x=>x.id===it.groupId);
+      missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,
+        entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs,thumb:e.thumb||''}))});
+    }
+    if(missed.length)out.push({id:uid(),windowKey:key,slotName:inst.slot.name,snapshotAt:Date.now(),dayTs:inst.ts,start:from,end:to,items:missed});
+  }
+  return out.sort((a,b)=>b.dayTs-a.dayTs);
+}
+/* Merging rather than appending keeps the sweep idempotent: it runs again once
+   the feeds finish refreshing (a cold start reads stale caches first), and a
+   re-run must top up the window it already wrote instead of duplicating it.
+   Returns the original log untouched when there is nothing new to add. */
+function mergeCatchUp(log,fresh){
+  if(!fresh||!fresh.length)return log;
+  let changed=false;const byKey=new Map();
+  const out=(log||[]).map(e=>{const c={...e,items:(e.items||[]).map(i=>({...i,entries:(i.entries||[]).slice()}))};
+    if(c.windowKey&&!byKey.has(c.windowKey))byKey.set(c.windowKey,c);return c});
+  const add=[];
+  for(const f of fresh){
+    const ex=f.windowKey?byKey.get(f.windowKey):null;
+    if(!ex){add.push(f);if(f.windowKey)byKey.set(f.windowKey,f);changed=true;continue}
+    if(!ex.dayTs&&f.dayTs){ex.dayTs=f.dayTs;changed=true}
+    for(const fi of f.items){
+      const tgt=ex.items.find(i=>i.id===fi.id);
+      if(!tgt){ex.items.push({...fi,entries:fi.entries.slice()});changed=true;continue}
+      const have=new Set(tgt.entries.map(e=>e.url));
+      const nw=fi.entries.filter(e=>!have.has(e.url));
+      if(nw.length){tgt.entries=tgt.entries.concat(nw).sort((a,b)=>(b.publishedMs||0)-(a.publishedMs||0));changed=true}
+    }
+  }
+  if(!changed)return log;
+  const cutoff=Date.now()-LOG_MAX_AGE;
+  return add.concat(out).filter(e=>(e.dayTs||e.snapshotAt||0)>cutoff)
+    .sort((a,b)=>(b.dayTs||b.snapshotAt||0)-(a.dayTs||a.snapshotAt||0)).slice(0,300);
+}
 /* Catch-up reads day-first — you remember "Friday", not "the 20:00 window" —
    so days are the outer grouping and the routine window is the subhead. */
 const fmtDayLabel=ts=>{const d=new Date(ts),diff=Math.floor((new Date().setHours(0,0,0,0)-new Date(ts).setHours(0,0,0,0))/86400000);
@@ -3774,6 +3840,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_brief_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_brief_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const [briefLog,setBriefLog]=useState(loadBriefLog);
+  // A ref mirror so the catch-up sweep can merge into the current log without
+  // taking briefLog as a dependency (which would re-run it on its own writes).
+  const logRef=useRef(briefLog);
+  const putLog=l=>{logRef.current=l;setBriefLog(l);saveBriefLog(l)};
   const [kept,setKept]=useState(loadKept);
   // Per-source "+N more" expansion inside a catch-up day block.
   const [histOpen,setHistOpen]=useState(()=>new Set());
@@ -3786,38 +3856,42 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const toggleSearch=()=>setSearchOpen(o=>{const n=!o;if(!n)setQuery('');return n});
   const [tab,setTab]=useState(loadBriefTab);
   const [day,setDay]=useState(null); // catch-up day key being viewed; null = newest, '_kept' = pinned
-  useEffect(()=>{
-    if(!win.key)return;
+  /* Rollover tracking follows the *live* window, never the slot you are merely
+     browsing: tapping "Morning" at night must not rewrite the baseline that
+     catch-up measures the gap from. */
+  const liveWin=briefWindow(slots,null,now)||{sel:'',start:0,end:0,key:''};
+  const liveSlot=slots.find(s=>s.id===liveWin.sel)||curSlot;
+  const gapRef=useRef(null);
+  const [feedTick,setFeedTick]=useState(0);
+  useEffect(()=>{ // note the stretch that rolled over while we were away, then move the baseline
+    if(!liveWin.key)return;
     let stored=null;try{stored=JSON.parse(localStorage.getItem(BRIEF_LASTWIN_KEY)||'null')}catch(e){}
-    if(stored&&stored.key&&stored.key!==win.key){
-      const oldDoneIds=briefDoneIds(brief.done,stored.key);
-      const seenMap=brief.seen||{};
-      const missed=[];
-      for(const it of items){
-        const snz=brief.snoozed&&brief.snoozed[it.id];
-        if(oldDoneIds.includes(it.id)||!hasFeed(it)||(snz&&snz>=stored.end))continue;
-        const c=feeds[it.id];if(!c||!c.entries)continue;
-        const es=c.entries.filter(e=>e.publishedMs>=stored.start&&e.publishedMs<=stored.end&&!seenMap[e.url]).sort((a,b)=>b.publishedMs-a.publishedMs);
-        if(!es.length)continue;
-        const g=groups.find(x=>x.id===it.groupId);
-        missed.push({id:it.id,name:it.name,url:it.url,kind:it.kind,groupId:it.groupId,groupName:g?g.name:null,entries:es.map(e=>({title:e.title,url:e.url,publishedMs:e.publishedMs,thumb:e.thumb||''}))});
-      }
-      if(missed.length){
-        const entry={id:uid(),windowKey:stored.key,slotName:stored.slotName,snapshotAt:Date.now(),start:stored.start,end:stored.end,items:missed};
-        const cutoff=Date.now()-LOG_MAX_AGE;
-        const newLog=[entry,...briefLog].filter(e=>e.snapshotAt>cutoff).slice(0,300);
-        setBriefLog(newLog);saveBriefLog(newLog);
-      }
+    if(stored&&stored.key&&stored.key!==liveWin.key){
+      // The gap runs to the start of the window you are in now, not to the last
+      // moment the app happened to be open — everything in between is exactly
+      // what "catch up" means. Anything older than the log's own 14-day life is
+      // pointless to snapshot.
+      const from=Math.max(Number(stored.start)||0,Date.now()-LOG_MAX_AGE);
+      if(from>0&&liveWin.start>from){const g=gapRef.current;
+        gapRef.current={from:g?Math.min(g.from,from):from,to:g?Math.max(g.to,liveWin.start):liveWin.start}}
     }
-    try{localStorage.setItem(BRIEF_LASTWIN_KEY,JSON.stringify({key:win.key,start:win.start,end:win.end,slotName:curSlot.name}))}catch(e){}
-  },[win.key]);
+    try{localStorage.setItem(BRIEF_LASTWIN_KEY,JSON.stringify({key:liveWin.key,start:liveWin.start,end:liveWin.end,slotName:liveSlot.name}))}catch(e){}
+  },[liveWin.key]);
+  useEffect(()=>{ // sweep that gap into the log — again once the feeds land, since a cold start sees stale caches
+    const gap=gapRef.current;if(!gap)return;
+    const fresh=buildCatchUpEntries({slots,items,groups,feeds,seen:brief.seen||{},snoozed:brief.snoozed,
+      doneOf:k=>briefDoneIds(brief.done,k),fromTs:gap.from,toTs:gap.to});
+    const next=mergeCatchUp(logRef.current,fresh);
+    if(next!==logRef.current)putLog(next);
+  },[liveWin.key,feedTick]);
   useEffect(()=>{ // best-effort refresh of each feed's recent items
     let live=true;
     (async()=>{for(const it of items){
       if(!hasFeed(it))continue;
       const c=feeds[it.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
       try{const es=await fetchFeed(it);if(es&&live)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}
-    }})();
+    }
+    if(live)setFeedTick(t=>t+1);})();
     return()=>{live=false};
   },[]);
   const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
@@ -3910,13 +3984,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const catchDays=useMemo(()=>{
     const byDay=new Map();
     for(const entry of briefLog){
-      const k=ymd(new Date(entry.snapshotAt));
-      if(!byDay.has(k))byDay.set(k,{key:k,ts:entry.snapshotAt,label:fmtDayLabel(entry.snapshotAt),entries:[]});
-      const d=byDay.get(k);d.entries.push(entry);if(entry.snapshotAt>d.ts)d.ts=entry.snapshotAt;
+      // Group by the day the routine window belongs to, not by the moment the
+      // app noticed it: a Monday window swept on Wednesday is still Monday.
+      const ets=entry.dayTs||entry.snapshotAt;
+      const k=ymd(new Date(ets));
+      if(!byDay.has(k))byDay.set(k,{key:k,ts:ets,label:fmtDayLabel(ets),entries:[]});
+      const d=byDay.get(k);d.entries.push(entry);if(ets>d.ts)d.ts=ets;
     }
     const days=[...byDay.values()].sort((a,b)=>b.ts-a.ts);
     for(const d of days){
-      d.entries.sort((a,b)=>b.snapshotAt-a.snapshotAt);
+      d.entries.sort((a,b)=>(b.dayTs||b.snapshotAt)-(a.dayTs||a.snapshotAt));
       d.unseen=d.entries.reduce((n,e)=>n+e.items.reduce((m,i)=>m+unseenOf(i.entries).length,0),0);
       d.total=d.entries.reduce((n,e)=>n+e.items.reduce((m,i)=>m+(i.entries||[]).length,0),0);
     }
@@ -4072,7 +4149,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
           const unseenN=entry.items.reduce((m,i)=>m+unseenOf(i.entries).length,0);
           return h(RoutineBlock,{key:entry.id,T,accent:BRIEF_PALETTE[idx%BRIEF_PALETTE.length]},
             h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},
-              h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},fmtDayLabel(entry.snapshotAt)+' · '+entry.slotName),
+              h('div',{style:{flex:1,fontSize:13.5,fontWeight:700,color:T.fg}},fmtDayLabel(entry.dayTs||entry.snapshotAt)+' · '+entry.slotName),
               unseenN?h('span',{style:{fontSize:11,fontWeight:600,color:'#fff',background:'#d4564a',borderRadius:999,padding:'2px 8px',flexShrink:0}},unseenN+' unread')
                 :h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},'all read')),
             entry.items.map((it,itIdx)=>{
@@ -4094,7 +4171,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
         }));
     }
     return h('div',null,dayChips,note,body,
-      (briefLog.length&&curDay!=='_kept')?h('button',{onClick:()=>{setBriefLog([]);saveBriefLog([]);setDay(null);toastFn('Catch-up cleared')},className:'act95',
+      (briefLog.length&&curDay!=='_kept')?h('button',{onClick:()=>{putLog([]);setDay(null);toastFn('Catch-up cleared')},className:'act95',
         style:{display:'flex',alignItems:'center',gap:7,margin:'6px 2px 0',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,color:T.danger,fontSize:13,fontWeight:600}},Icons.trash(15),'Clear catch-up'):null);
   };
 
