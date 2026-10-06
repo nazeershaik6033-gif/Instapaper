@@ -3919,17 +3919,46 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const refreshingRef=useRef(false);
   const [refreshing,setRefreshing]=useState(false);
   const [feedsAt,setFeedsAt]=useState(0);
+  const failRef=useRef({}); // source id -> {at,n}: a failing source backs off instead of being retried every tick
+  const [progress,setProgress]=useState(null); // {done,total} while a pass is running
+  const [failN,setFailN]=useState(0);
   const refreshFeeds=useCallback(async force=>{
     if(refreshingRef.current)return;
-    refreshingRef.current=true;setRefreshing(true);
-    try{
-      for(const it of itemsRef.current){
-        if(!hasFeed(it))continue;
-        const c=feedsRef.current[it.id];if(!force&&c&&Date.now()-(c.fetchedAt||0)<10*60*1000)continue;
-        try{const es=await fetchFeed(it);if(es&&aliveRef.current){onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}}catch(e){}
+    const t0=Date.now();
+    const list=itemsRef.current.filter(it=>{
+      if(!hasFeed(it))return false;
+      if(force)return true; // manual refresh / window rollover ignores backoff
+      const f=failRef.current[it.id];
+      if(f&&t0-f.at<Math.min(30,5*f.n)*60000)return false; // 5, 10, 15… up to 30 min between retries
+      const c=feedsRef.current[it.id];
+      return!(c&&t0-(c.fetchedAt||0)<10*60*1000);
+    });
+    if(!list.length)return;
+    refreshingRef.current=true;setRefreshing(true);setProgress({done:0,total:list.length});
+    let idx=0,done=0,ok=0;
+    const withTimeout=(pr,ms)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
+    const worker=async()=>{
+      while(idx<list.length&&aliveRef.current){
+        const it=list[idx++];
+        try{
+          const es=await withTimeout(fetchFeed(it),25000);
+          if(!es)throw new Error('no feed');
+          delete failRef.current[it.id];ok++;
+          if(aliveRef.current)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}));
+        }catch(e){const f=failRef.current[it.id]||{n:0};failRef.current[it.id]={at:Date.now(),n:f.n+1}}
+        done++;if(aliveRef.current)setProgress({done,total:list.length});
       }
-      if(aliveRef.current){setFeedsAt(Date.now());setFeedTick(t=>t+1)}
-    }finally{refreshingRef.current=false;if(aliveRef.current)setRefreshing(false)}
+    };
+    try{await Promise.all([worker(),worker(),worker(),worker()])} // four at a time — one pass can't be held up by a single slow proxy
+    finally{
+      refreshingRef.current=false;
+      if(aliveRef.current){
+        setRefreshing(false);setProgress(null);
+        setFailN(itemsRef.current.filter(it=>failRef.current[it.id]).length);
+        if(ok)setFeedsAt(Date.now());
+        setFeedTick(t=>t+1);
+      }
+    }
   },[]);
   useEffect(()=>{aliveRef.current=true;return()=>{aliveRef.current=false}},[]);
   useEffect(()=>{ // on open (stale feeds only) and on every window rollover (everything — a gap was just detected)
@@ -4113,10 +4142,14 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
      in a fraction of the width. */
   const railOpen=!!(S&&S.routineRailMax); // minimised by default; Settings → Behavior picks the default, the chevron flips it live
   const setRailOpen=f=>{const v=typeof f==='function'?f(railOpen):f;if(onSetting)onSetting({routineRailMax:!!v})};
+  const [tip,setTip]=useState(null); // {text,top,left} label shown beside a minimised-rail button
+  const tipTimer=useRef(0);
+  const showTip=(e,text,ms)=>{const r=e.currentTarget.getBoundingClientRect();clearTimeout(tipTimer.current);setTip({text,top:r.top+r.height/2,left:r.right+8});if(ms)tipTimer.current=setTimeout(()=>setTip(null),ms)};
+  const hideTip=()=>{clearTimeout(tipTimer.current);setTip(null)};
   const railTags=uniqueLetters(['Catch-up','All'].concat(groups.map(g=>g.name),['Other']));
   const railBtn=(id,label,opts)=>{
     const on=activeTab===id,o=opts||{};
-    if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,title:label,
+    if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,onMouseEnter:e=>showTip(e,o.tip||label),onMouseLeave:hideTip,onFocus:e=>showTip(e,o.tip||label),onBlur:hideTip,onTouchStart:e=>showTip(e,o.tip||label,1400),
       style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',alignSelf:'center',width:36,height:36,borderRadius:18,flexShrink:0,
         border:'2px solid '+(o.color||T.hair),background:on?(o.color||T.fg):'transparent',color:on?'#fff':T.fg,fontSize:12,fontWeight:700,letterSpacing:'.01em'}},
       o.tag,
@@ -4141,7 +4174,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       style:{flex:'0 0 auto',width:railOpen?'clamp(120px,32vw,152px)':46,display:'flex',flexDirection:'column',gap:railOpen?0:9,
         overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2,paddingTop:railOpen?0:2,
         borderTop:railOpen?'1px solid '+T.hair:'none',transition:'width 160ms'}},
-      railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,tag:railTags[0]}),
+      railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,tag:railTags[0],tip:'Catch Up'}),
       railBtn('all','All',{color:T.sub,count:vis.length,tag:railTags[1]}),
       groups.map((g,gi)=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
         return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length,tag:railTags[2+gi]})}),
@@ -4149,7 +4182,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       railOpen?h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
         style:{display:'flex',alignItems:'center',gap:7,padding:'9px 8px 9px 11px',color:T.sub,fontSize:12,fontWeight:600}},Icons.plus(14),'New group')
         :h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
-          style:{display:'flex',alignSelf:'center',alignItems:'center',justifyContent:'center',width:28,height:28,borderRadius:14,border:'1px dashed '+T.hair,color:T.sub,flexShrink:0}},Icons.plus(13))));
+          style:{display:'flex',alignSelf:'center',alignItems:'center',justifyContent:'center',width:28,height:28,borderRadius:14,border:'1px dashed '+T.hair,color:T.sub,flexShrink:0}},Icons.plus(13))),
+    (!railOpen&&tip)?h('div',{role:'tooltip',style:{position:'fixed',top:tip.top,left:tip.left,transform:'translateY(-50%)',zIndex:90,pointerEvents:'none',padding:'6px 11px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,whiteSpace:'nowrap',boxShadow:'0 4px 14px rgba(0,0,0,.25)',maxWidth:'70vw',overflow:'hidden',textOverflow:'ellipsis'}},tip.text):null);
 
 
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New'],['completed','Completed']];
@@ -4170,7 +4204,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
-    h('span',{style:{flex:1,fontSize:11.5,color:T.sub}},refreshing?'Checking your sources…':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
+    h('span',{style:{flex:1,fontSize:11.5,color:failN&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
     h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh catch-up',
       style:{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:9,border:'1px solid '+T.hair,color:T.fg,fontSize:12,fontWeight:600,opacity:refreshing?.5:1}},
       h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
