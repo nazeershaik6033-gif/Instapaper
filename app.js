@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -3818,11 +3818,39 @@ function RoutineBlock({T,accent,dim,dropTarget,children}){
    both in one sitting. So groups are tabs in one horizontal strip rather than a
    stack of collapsible cards, with "Catch-up" pinned first (the reason you open
    the app after a gap) and "All" second (the whole sweep, as before). */
-function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
+/* Two-letter tag for the minimised rail: initials of the first two words
+   ("Daily Watch" -> DW), else the first two letters ("Health" -> He). */
+function twoLetters(name){
+  const words=String(name||'').split(/[\s\-_/&.,]+/).map(w=>Array.from(w).filter(c=>/[\p{L}\p{N}]/u.test(c)).join('')).filter(Boolean);
+  if(!words.length)return'··';
+  if(words.length>1)return(Array.from(words[0])[0]+Array.from(words[1])[0]).toUpperCase();
+  const c=Array.from(words[0]);
+  return c.length>1?c[0].toUpperCase()+c[1].toLowerCase():c[0].toUpperCase();
+}
+/* Tags for a list of names, nudged apart when two collide so no two rail
+   buttons read the same. */
+function uniqueLetters(names){
+  const used=new Set(),out=[];
+  names.forEach(n=>{
+    let l=twoLetters(n);
+    if(used.has(l)){
+      const c=Array.from(String(n).replace(/[^\p{L}\p{N}]/gu,''));
+      const alt=c.length>1?c[0].toUpperCase()+c[1].toLowerCase():l;
+      l=alt;
+      for(let k=2;used.has(l);k++)l=Array.from(alt)[0]+k;
+    }
+    used.add(l);out.push(l);
+  });
+  return out;
+}
+function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const vis=items.filter(i=>!snoozedNow(i.id));
   const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
+  // The clock has to tick: a PWA stays open for days, and without a re-render the
+  // routine window never rolls over, so Catch-up would never sweep or refresh.
+  const [,setClock]=useState(0);
   const now=new Date();
   const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
   const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
@@ -3884,15 +3912,34 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
     const next=mergeCatchUp(logRef.current,fresh);
     if(next!==logRef.current)putLog(next);
   },[liveWin.key,feedTick]);
-  useEffect(()=>{ // best-effort refresh of each feed's recent items
-    let live=true;
-    (async()=>{for(const it of items){
-      if(!hasFeed(it))continue;
-      const c=feeds[it.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
-      try{const es=await fetchFeed(it);if(es&&live)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}
-    }
-    if(live)setFeedTick(t=>t+1);})();
-    return()=>{live=false};
+  /* Refresh every source's recent items. `force` ignores the freshness window
+     (manual refresh, window rollover); otherwise only feeds older than 10 min. */
+  const itemsRef=useRef(items),feedsRef=useRef(feeds);itemsRef.current=items;feedsRef.current=feeds;
+  const aliveRef=useRef(true);
+  const refreshingRef=useRef(false);
+  const [refreshing,setRefreshing]=useState(false);
+  const [feedsAt,setFeedsAt]=useState(0);
+  const refreshFeeds=useCallback(async force=>{
+    if(refreshingRef.current)return;
+    refreshingRef.current=true;setRefreshing(true);
+    try{
+      for(const it of itemsRef.current){
+        if(!hasFeed(it))continue;
+        const c=feedsRef.current[it.id];if(!force&&c&&Date.now()-(c.fetchedAt||0)<10*60*1000)continue;
+        try{const es=await fetchFeed(it);if(es&&aliveRef.current){onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}}catch(e){}
+      }
+      if(aliveRef.current){setFeedsAt(Date.now());setFeedTick(t=>t+1)}
+    }finally{refreshingRef.current=false;if(aliveRef.current)setRefreshing(false)}
+  },[]);
+  useEffect(()=>{aliveRef.current=true;return()=>{aliveRef.current=false}},[]);
+  useEffect(()=>{ // on open (stale feeds only) and on every window rollover (everything — a gap was just detected)
+    refreshFeeds(!!gapRef.current);
+  },[liveWin.key]);
+  useEffect(()=>{ // keep going while the app stays open: every minute, and when it returns to the foreground
+    const wake=()=>{if(document.hidden)return;setClock(n=>n+1);refreshFeeds(false)};
+    const iv=setInterval(wake,60*1000);
+    document.addEventListener('visibilitychange',wake);window.addEventListener('focus',wake);window.addEventListener('pageshow',wake);
+    return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',wake);window.removeEventListener('focus',wake);window.removeEventListener('pageshow',wake)};
   },[]);
   const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
   const toggle=id=>{if(!win.key)return;vibrate(8);onBrief(b=>{const map=normalizeDone(b.done);const cur=map[win.key]||[];map[win.key]=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:map}})};
@@ -4064,12 +4111,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
      the rail (toggle sits in its own header, just above the list) swaps this
      for a slim column of colour-ringed dots that keep the same information
      in a fraction of the width. */
-  const [railOpen,setRailOpen]=useState(true);
+  const railOpen=!!(S&&S.routineRailMax); // minimised by default; Settings → Behavior picks the default, the chevron flips it live
+  const setRailOpen=f=>{const v=typeof f==='function'?f(railOpen):f;if(onSetting)onSetting({routineRailMax:!!v})};
+  const railTags=uniqueLetters(['Catch-up','All'].concat(groups.map(g=>g.name),['Other']));
   const railBtn=(id,label,opts)=>{
     const on=activeTab===id,o=opts||{};
-    if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,
-      style:{position:'relative',display:'flex',alignSelf:'center',width:28,height:28,borderRadius:14,flexShrink:0,
-        border:'2px solid '+(o.color||T.hair),background:on?(o.color||T.fg):'transparent'}},
+    if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,title:label,
+      style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',alignSelf:'center',width:36,height:36,borderRadius:18,flexShrink:0,
+        border:'2px solid '+(o.color||T.hair),background:on?(o.color||T.fg):'transparent',color:on?'#fff':T.fg,fontSize:12,fontWeight:700,letterSpacing:'.01em'}},
+      o.tag,
       o.alert?h('span',{style:{position:'absolute',top:-5,right:-6,minWidth:14,height:14,padding:'0 3px',borderRadius:7,background:T.danger,color:'#fff',fontSize:8,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',border:'1.5px solid '+T.bg}},o.alert>99?'99+':o.alert):null);
     return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95',
       style:{position:'relative',display:'flex',alignItems:'center',gap:8,width:'100%',textAlign:'left',
@@ -4088,14 +4138,14 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
       position:'sticky',top:6,alignSelf:'flex-start',maxHeight:'calc(100vh - 128px)'}},
     railToggle,
     h('div',{ref:railRef,className:'sy','data-noswipe':'1',
-      style:{flex:'0 0 auto',width:railOpen?'clamp(120px,32vw,152px)':42,display:'flex',flexDirection:'column',gap:railOpen?0:9,
+      style:{flex:'0 0 auto',width:railOpen?'clamp(120px,32vw,152px)':46,display:'flex',flexDirection:'column',gap:railOpen?0:9,
         overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2,paddingTop:railOpen?0:2,
         borderTop:railOpen?'1px solid '+T.hair:'none',transition:'width 160ms'}},
-      railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0}),
-      railBtn('all','All',{color:T.sub,count:vis.length}),
-      groups.map(g=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
-        return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length})}),
-      ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length}):null,
+      railBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,tag:railTags[0]}),
+      railBtn('all','All',{color:T.sub,count:vis.length,tag:railTags[1]}),
+      groups.map((g,gi)=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
+        return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length,tag:railTags[2+gi]})}),
+      ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length,tag:railTags[2+groups.length]}):null,
       railOpen?h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
         style:{display:'flex',alignItems:'center',gap:7,padding:'9px 8px 9px 11px',color:T.sub,fontSize:12,fontWeight:600}},Icons.plus(14),'New group')
         :h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
@@ -4119,9 +4169,14 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
   const keptRow=(e,idx)=>h('div',{key:e.url||idx,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:6}},
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
+  const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
+    h('span',{style:{flex:1,fontSize:11.5,color:T.sub}},refreshing?'Checking your sources…':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
+    h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh catch-up',
+      style:{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:9,border:'1px solid '+T.hair,color:T.fg,fontSize:12,fontWeight:600,opacity:refreshing?.5:1}},
+      h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
   const catchupView=()=>{
     if(!briefLog.length&&!kept.length)
-      return h('div',{style:{padding:'8px 4px'}},
+      return h('div',{style:{padding:'8px 4px'}},refreshBar,
         h(EmptyState,{T,icon:Icons.clock(36),title:'Nothing missed yet',sub:'When a routine window rolls over with updates you didn’t open, they’re saved here so you can catch up later.'}));
     const chips=catchDays.map(d=>({id:d.key,label:d.label,n:d.unseen})).concat(kept.length?[{id:'_kept',label:'Pinned',n:0,pin:true}]:[]);
     const dayChips=h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 0 10px'}},
@@ -4170,7 +4225,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onAskClaude}){
             }));
         }));
     }
-    return h('div',null,dayChips,note,body,
+    return h('div',null,refreshBar,dayChips,note,body,
       (briefLog.length&&curDay!=='_kept')?h('button',{onClick:()=>{putLog([]);setDay(null);toastFn('Catch-up cleared')},className:'act95',
         style:{display:'flex',alignItems:'center',gap:7,margin:'6px 2px 0',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,color:T.danger,fontSize:13,fontWeight:600}},Icons.trash(15),'Clear catch-up'):null);
   };
@@ -5410,6 +5465,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
       h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Pick your theme above. Line spacing and per-article tweaks live in the Aa menu inside the reader.'));
   }else if(page==='behavior'){
     content=h(Fragment,null,
+      head('My Routine sidebar'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
+        h('div',{style:{flex:1}},
+          h('div',{style:{fontSize:15.5}},'Group sidebar'),
+          h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3,lineHeight:1.45}},'Minimised shows each group as two letters. The arrow above the list flips it any time.')),
+        h('div',{style:{display:'flex',gap:6,flexShrink:0}},
+          [[false,'Minimise'],[true,'Maximise']].map(o=>h('button',{key:o[1],onClick:()=>set({routineRailMax:o[0]}),className:'act95 trc',
+            style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:!!S.routineRailMax===o[0]?T.fg:T.card,color:!!S.routineRailMax===o[0]?T.bg:T.meta}},o[1])))),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
@@ -6428,6 +6491,7 @@ function App(){
   else if(scope.type==='photos')body=h(PhotosView,{T,S,media:media.filter(m=>!m.threadId),albums,onPick:pickFiles,onPickToAlbum:(albumId,accept,capture)=>{pendingAlbumRef.current=albumId;pickFiles(accept,capture)},onUpdate:updateMedia,onDelete:deleteMedia,onAddAlbum:addAlbum,onRenameAlbum:renameAlbum,onDeleteAlbum:deleteAlbum,toastFn});
   else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn,
+    onSetting:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
     onAskClaude:()=>setAiOpen({routine:true})});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
