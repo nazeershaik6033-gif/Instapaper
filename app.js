@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false,routineLayout:'stories'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -4140,8 +4140,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
      the rail (toggle sits in its own header, just above the list) swaps this
      for a slim column of colour-ringed dots that keep the same information
      in a fraction of the width. */
-  const railOpen=!!(S&&S.routineRailMax); // minimised by default; Settings → Behavior picks the default, the chevron flips it live
-  const setRailOpen=f=>{const v=typeof f==='function'?f(railOpen):f;if(onSetting)onSetting({routineRailMax:!!v})};
+  const storiesOn=!S||(S.routineLayout||'stories')==='stories'; // groups as a story row on top (default) or the side rail
+  const railOpen=!!(S&&S.routineRailMax); // side-rail width: minimised by default; Settings → Behavior
   const [tip,setTip]=useState(null); // {text,top,left} label shown beside a minimised-rail button
   const tipTimer=useRef(0);
   const showTip=(e,text,ms)=>{const r=e.currentTarget.getBoundingClientRect();clearTimeout(tipTimer.current);setTip({text,top:r.top+r.height/2,left:r.right+8});if(ms)tipTimer.current=setTimeout(()=>setTip(null),ms)};
@@ -4163,13 +4163,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       o.alert?h('span',{style:{flexShrink:0,fontSize:11,fontWeight:800,color:T.danger}},String(o.alert))
         :(o.count!=null?h('span',{style:{flexShrink:0,fontSize:10.5,fontWeight:600,color:T.sub,opacity:.75}},String(o.count)):null));
   };
-  const railToggle=h('button',{onClick:()=>setRailOpen(v=>!v),className:'act90','aria-label':railOpen?'Collapse groups':'Expand groups',
-    style:{display:'flex',alignItems:'center',justifyContent:'center',alignSelf:railOpen?'flex-end':'center',
-      width:24,height:24,borderRadius:7,border:'1px solid '+T.hair,color:T.sub,flexShrink:0,marginBottom:5}},
-    h('span',{style:{display:'flex',transform:railOpen?'rotate(180deg)':'none',transition:'transform 160ms'}},Icons.chevR(13)));
   const rail=h('div',{'data-noswipe':'1',style:{flex:'0 0 auto',display:'flex',flexDirection:'column',
       position:'sticky',top:6,alignSelf:'flex-start',maxHeight:'calc(100vh - 128px)'}},
-    railToggle,
     h('div',{ref:railRef,className:'sy','data-noswipe':'1',
       style:{flex:'0 0 auto',width:railOpen?'clamp(120px,32vw,152px)':46,display:'flex',flexDirection:'column',gap:railOpen?0:9,
         overflowY:'auto',overscrollBehavior:'contain',paddingBottom:2,paddingTop:railOpen?0:2,
@@ -4186,6 +4181,33 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     (!railOpen&&tip)?h('div',{role:'tooltip',style:{position:'fixed',top:tip.top,left:tip.left,transform:'translateY(-50%)',zIndex:90,pointerEvents:'none',padding:'6px 11px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,whiteSpace:'nowrap',boxShadow:'0 4px 14px rgba(0,0,0,.25)',maxWidth:'70vw',overflow:'hidden',textOverflow:'ellipsis'}},tip.text):null);
 
 
+  /* Story row: the same tabs as the rail, laid out like Instagram stories — a
+     ring around the two-letter tag with the name underneath. A gradient ring
+     means something unread; the selected tab is filled. */
+  const storyRef=useRef(null),storyActiveRef=useRef(null);
+  useEffect(()=>{
+    const sc=storyRef.current,btn=storyActiveRef.current;if(!sc||!btn||sc.scrollWidth<=sc.clientWidth+2)return;
+    const want=btn.offsetLeft-(sc.clientWidth-btn.offsetWidth)/2;
+    sc.scrollTo?sc.scrollTo({left:Math.max(0,want),behavior:'smooth'}):sc.scrollLeft=Math.max(0,want);
+  },[activeTab,storiesOn]);
+  const storyBtn=(id,label,o)=>{
+    const on=activeTab===id,col=o.color||T.sub,unread=o.alert>0;
+    return h('button',{key:id,ref:on?storyActiveRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,'aria-current':on?'true':undefined,
+      style:{flexShrink:0,width:68,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+      h('div',{style:{position:'relative',width:60,height:60,borderRadius:'50%',padding:2.5,
+          background:unread?'conic-gradient(from 210deg,'+col+','+T.accent+','+col+')':col,opacity:unread||on?1:.55}},
+        h('div',{style:{width:'100%',height:'100%',borderRadius:'50%',border:'2.5px solid '+T.bg,boxSizing:'border-box',background:on?col:T.card,color:on?'#fff':T.fg,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16,fontWeight:700,letterSpacing:'.01em'}},o.tag),
+        unread?h('span',{style:{position:'absolute',top:-3,right:-4,minWidth:18,height:18,padding:'0 4px',borderRadius:9,background:T.danger,color:'#fff',fontSize:10,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+T.bg,boxSizing:'border-box'}},o.alert>99?'99+':o.alert):null),
+      h('span',{style:{width:'100%',fontSize:11,fontWeight:on?700:500,color:on?T.fg:T.sub,textAlign:'center',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label));
+  };
+  const storyRow=h('div',{ref:storyRef,className:'sx','data-noswipe':'1',style:{display:'flex',gap:10,overflowX:'auto',padding:'10px 14px 8px'}},
+    storyBtn('catchup','Catch-up',{color:T.sub,alert:missedTotal||0,tag:railTags[0]}),
+    storyBtn('all','All',{color:T.sub,alert:0,tag:railTags[1]}),
+    groups.map((g,gi)=>storyBtn(g.id,g.name,{color:groupColor(g.id),alert:groupNewCount(vis.filter(i=>i.groupId===g.id)),tag:railTags[2+gi]})),
+    ungrouped.length?storyBtn('_other','Other',{color:T.sub,alert:0,tag:railTags[2+groups.length]}):null,
+    h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',style:{flexShrink:0,width:68,display:'flex',flexDirection:'column',alignItems:'center',gap:5}},
+      h('div',{style:{width:60,height:60,borderRadius:'50%',border:'1.5px dashed '+T.hair,color:T.sub,display:'flex',alignItems:'center',justifyContent:'center'}},Icons.plus(18)),
+      h('span',{style:{fontSize:11,color:T.sub}},'New')));
   const focusOpts=[['all','All'],['todo','To‑do'],['new','New'],['completed','Completed']];
   const focusRow=(activeTab!=='catchup'&&tabList.length)?h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'2px 14px 10px'}},
     focusOpts.map(([v,l])=>{const active=focus===v;
@@ -4315,6 +4337,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       rowBtn(Icons.chart(17),()=>setStatsOpen(true),false,'Routine stats'),
       rowBtnBadge(aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),runDigest,'Summarize what’s new',newCount>0?String(newCount):'',aiBusy),
       onAskClaude?rowBtn(Icons.send(17),onAskClaude,false,'Ask Claude about my routine'):null),
+    (storiesOn&&(total||briefLog.length||kept.length))?storyRow:null,
     focusRow,
     searchRow,
     /* Rail and content sit side by side: the rail scrolls (and sticks) on its
@@ -4322,7 +4345,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
        set up at all there is no rail to show — just the empty state. */
     (total||briefLog.length||kept.length)
       ?h('div',Object.assign({},swipeH,{style:{display:'flex',alignItems:'flex-start',gap:9,padding:'2px 12px 0'}}),
-        rail,
+        storiesOn?null:rail,
         h('div',{style:{flex:1,minWidth:0}},
           activeTab!=='catchup'&&win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'10px 2px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
           activeTab==='catchup'?catchupView()
@@ -5499,14 +5522,21 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
       h('div',{style:{padding:'18px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.5}},'Pick your theme above. Line spacing and per-article tweaks live in the Aa menu inside the reader.'));
   }else if(page==='behavior'){
     content=h(Fragment,null,
-      head('My Routine sidebar'),
+      head('My Routine groups'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('div',{style:{flex:1}},
-          h('div',{style:{fontSize:15.5}},'Group sidebar'),
-          h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3,lineHeight:1.45}},'Minimised shows each group as two letters. The arrow above the list flips it any time.')),
+          h('div',{style:{fontSize:15.5}},'Layout'),
+          h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3,lineHeight:1.45}},'Show your groups as a row of stories on top, or as a rail down the side.')),
+        h('div',{style:{display:'flex',gap:6,flexShrink:0}},
+          [['stories','Stories'],['rail','Side rail']].map(o=>h('button',{key:o[0],onClick:()=>set({routineLayout:o[0]}),className:'act95 trc',
+            style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:(S.routineLayout||'stories')===o[0]?T.fg:T.card,color:(S.routineLayout||'stories')===o[0]?T.bg:T.meta}},o[1])))),
+      (S.routineLayout||'stories')==='rail'?h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'16px 20px 0'}},
+        h('div',{style:{flex:1}},
+          h('div',{style:{fontSize:15.5}},'Side rail size'),
+          h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3,lineHeight:1.45}},'Minimised shows each group as two letters.')),
         h('div',{style:{display:'flex',gap:6,flexShrink:0}},
           [[false,'Minimise'],[true,'Maximise']].map(o=>h('button',{key:o[1],onClick:()=>set({routineRailMax:o[0]}),className:'act95 trc',
-            style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:!!S.routineRailMax===o[0]?T.fg:T.card,color:!!S.routineRailMax===o[0]?T.bg:T.meta}},o[1])))),
+            style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:!!S.routineRailMax===o[0]?T.fg:T.card,color:!!S.routineRailMax===o[0]?T.bg:T.meta}},o[1])))):null,
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
