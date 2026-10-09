@@ -450,7 +450,7 @@ async function resolveYtChannelId(url){
   return'';
 }
 async function fetchYtVideos(channelId){
-  const raw=await fetchRawAcross('https://www.youtube.com/feeds/videos.xml?channel_id='+channelId,t=>/<entry[\s>]/i.test(t));
+  const raw=await fetchRawAcross('https://www.youtube.com/feeds/videos.xml?channel_id='+channelId,t=>/<entry[\s>]/i.test(t),9000);
   const doc=new DOMParser().parseFromString(raw,'text/xml');
   const entries=[].slice.call(doc.getElementsByTagName('entry'),0,20);
   return entries.map(entry=>{
@@ -516,7 +516,7 @@ function routineOpenUrl(kind,raw,name){
   const u=normalizeUrl(raw);return isNavigableUrl(u)?u:webSearch;
 }
 async function fetchTelegram(handle){ // public channel preview at t.me/s/<handle>
-  const raw=await fetchRawAcross('https://t.me/s/'+encodeURIComponent(handle),t=>/tgme_widget_message/.test(t));
+  const raw=await fetchRawAcross('https://t.me/s/'+encodeURIComponent(handle),t=>/tgme_widget_message/.test(t),9000);
   const doc=new DOMParser().parseFromString(raw,'text/html');
   const msgs=[].slice.call(doc.querySelectorAll('.tgme_widget_message'));
   return msgs.map(m=>{
@@ -544,7 +544,7 @@ function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddi
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
 async function fetchRss(url){
-  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t));
+  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t),9000);
   return parseRssText(raw);
 }
 /* Fast fetch for feed discovery: race a direct request against every CORS
@@ -842,12 +842,26 @@ const PROXIES=[u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u),u=
    first response that passes the `ok` validator wins, so one slow or dead
    proxy no longer stalls the load. The longest failing body is kept as a
    last-resort fallback. */
-function fetchRawAcross(url,ok){
-  return new Promise((resolve,reject)=>{
+/* Optional own proxy (Settings → Behavior → Feed proxy, see worker/feed-proxy.js).
+   When set it is tried first and alone — it is fast and not rate-limited — and
+   the public pool is only the fallback. */
+const FEED_PROXY_KEY='insta_feed_proxy';
+const getFeedProxy=()=>{try{const v=(localStorage.getItem(FEED_PROXY_KEY)||'').trim();return/^https?:\/\//i.test(v)?v:''}catch(e){return''}};
+async function fetchViaOwnProxy(url,ok,ms){
+  const base=getFeedProxy();if(!base)throw new Error('no own proxy');
+  const res=await fetchWithTimeout(base+(/[?&=]$/.test(base)?'':(base.includes('?')?'&url=':'?url='))+encodeURIComponent(url),{},ms);
+  if(!res.ok)throw new Error('own proxy '+res.status);
+  const text=await res.text();
+  if(!text||(ok&&!ok(text)))throw new Error('own proxy bad body');
+  return text;
+}
+function fetchRawAcross(url,ok,ms){
+  ms=ms||18000;
+  const pool=()=>new Promise((resolve,reject)=>{
     let pending=PROXIES.length,best='',lastErr=null,done=false;
     PROXIES.forEach(async p=>{
       try{
-        const res=await fetchWithTimeout(p(url),{},18000);
+        const res=await fetchWithTimeout(p(url),{},ms);
         if(!res.ok)throw new Error('proxy '+res.status);
         const text=await res.text();
         if(!text)throw new Error('empty proxy response');
@@ -863,6 +877,8 @@ function fetchRawAcross(url,ok){
       }
     });
   });
+  if(!getFeedProxy())return pool();
+  return fetchViaOwnProxy(url,ok,ms).catch(()=>pool());
 }
 function fetchRawHtml(url){return fetchRawAcross(url,t=>t.length>200)}
 
@@ -3922,6 +3938,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const failRef=useRef({}); // source id -> {at,n}: a failing source backs off instead of being retried every tick
   const [progress,setProgress]=useState(null); // {done,total} while a pass is running
   const [failN,setFailN]=useState(0);
+  const [proxyDown,setProxyDown]=useState(false); // the pass gave up early because no proxy answered
   const refreshFeeds=useCallback(async force=>{
     if(refreshingRef.current)return;
     const t0=Date.now();
@@ -3935,26 +3952,29 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     });
     if(!list.length)return;
     refreshingRef.current=true;setRefreshing(true);setProgress({done:0,total:list.length});
-    let idx=0,done=0,ok=0;
+    let idx=0,done=0,ok=0,bad=0,tripped=false;
     const withTimeout=(pr,ms)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
     const worker=async()=>{
-      while(idx<list.length&&aliveRef.current){
+      while(idx<list.length&&aliveRef.current&&!tripped){
         const it=list[idx++];
         try{
-          const es=await withTimeout(fetchFeed(it),25000);
+          const es=await withTimeout(fetchFeed(it),14000);
           if(!es)throw new Error('no feed');
-          delete failRef.current[it.id];ok++;
+          delete failRef.current[it.id];ok++;bad=0;
           if(aliveRef.current)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}));
-        }catch(e){const f=failRef.current[it.id]||{n:0};failRef.current[it.id]={at:Date.now(),n:f.n+1}}
+        }catch(e){const f=failRef.current[it.id]||{n:0};failRef.current[it.id]={at:Date.now(),n:f.n+1};
+          // nothing has worked and the first few all failed: the proxies are down, so stop waiting on the rest
+          if(++bad>=4&&!ok)tripped=true}
         done++;if(aliveRef.current)setProgress({done,total:list.length});
       }
     };
-    try{await Promise.all([worker(),worker(),worker(),worker()])} // four at a time — one pass can't be held up by a single slow proxy
+    try{await Promise.all([worker(),worker(),worker()])}
     finally{
       refreshingRef.current=false;
       if(aliveRef.current){
         setRefreshing(false);setProgress(null);
         setFailN(itemsRef.current.filter(it=>failRef.current[it.id]).length);
+        setProxyDown(tripped);
         if(ok)setFeedsAt(Date.now());
         setFeedTick(t=>t+1);
       }
@@ -4226,7 +4246,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
-    h('span',{style:{flex:1,fontSize:11.5,color:failN&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
+    h('span',{style:{flex:1,fontSize:11.5,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):proxyDown?'The public feed proxies aren’t responding right now. Set up your own in Settings → Behavior → Feed proxy for reliable updates.':failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
     h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh catch-up',
       style:{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:9,border:'1px solid '+T.hair,color:T.fg,fontSize:12,fontWeight:600,opacity:refreshing?.5:1}},
       h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
@@ -5537,6 +5557,12 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
         h('div',{style:{display:'flex',gap:6,flexShrink:0}},
           [[false,'Minimise'],[true,'Maximise']].map(o=>h('button',{key:o[1],onClick:()=>set({routineRailMax:o[0]}),className:'act95 trc',
             style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:!!S.routineRailMax===o[0]?T.fg:T.card,color:!!S.routineRailMax===o[0]?T.bg:T.meta}},o[1])))):null,
+      head('Feed proxy (optional)'),
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'My Routine reads YouTube, Telegram and RSS through public proxies, which are often slow or blocked. Deploy worker/feed-proxy.js from the repo on Cloudflare Workers (free) and paste its address here, e.g. https://your-worker.workers.dev/?url='),
+        h('input',{defaultValue:(()=>{try{return localStorage.getItem(FEED_PROXY_KEY)||''}catch(e){return''}})(),placeholder:'https://your-worker.workers.dev/?url=',autoCapitalize:'off',autoCorrect:'off',spellCheck:false,
+          onChange:e=>{try{const v=e.target.value.trim();v?localStorage.setItem(FEED_PROXY_KEY,v):localStorage.removeItem(FEED_PROXY_KEY)}catch(err){}},
+          style:{width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,boxSizing:'border-box'}})),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
