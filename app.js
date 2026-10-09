@@ -449,8 +449,12 @@ async function resolveYtChannelId(url){
   }catch(e){}
   return'';
 }
+const YT_OK=t=>/<entry[\s>]/i.test(t);
+const ytFeedUrl=channelId=>'https://www.youtube.com/feeds/videos.xml?channel_id='+channelId;
 async function fetchYtVideos(channelId){
-  const raw=await fetchRawAcross('https://www.youtube.com/feeds/videos.xml?channel_id='+channelId,t=>/<entry[\s>]/i.test(t),9000);
+  return parseYtText(await fetchRawAcross(ytFeedUrl(channelId),YT_OK,9000));
+}
+function parseYtText(raw){
   const doc=new DOMParser().parseFromString(raw,'text/xml');
   const entries=[].slice.call(doc.getElementsByTagName('entry'),0,20);
   return entries.map(entry=>{
@@ -515,8 +519,12 @@ function routineOpenUrl(kind,raw,name){
   }
   const u=normalizeUrl(raw);return isNavigableUrl(u)?u:webSearch;
 }
+const TG_OK=t=>/tgme_widget_message/.test(t);
+const tgFeedUrl=handle=>'https://t.me/s/'+encodeURIComponent(handle);
 async function fetchTelegram(handle){ // public channel preview at t.me/s/<handle>
-  const raw=await fetchRawAcross('https://t.me/s/'+encodeURIComponent(handle),t=>/tgme_widget_message/.test(t),9000);
+  return parseTelegramText(await fetchRawAcross(tgFeedUrl(handle),TG_OK,9000));
+}
+function parseTelegramText(raw){
   const doc=new DOMParser().parseFromString(raw,'text/html');
   const msgs=[].slice.call(doc.querySelectorAll('.tgme_widget_message'));
   return msgs.map(m=>{
@@ -605,8 +613,33 @@ async function discoverFeed(url){
   return'';
 }
 function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
+const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}));
+/* What to fetch and how to read it, for a source — shared by the one-by-one path and the batch path. */
+function feedSpec(it){
+  if(it.kind==='youtube'&&it.channelId)return{url:ytFeedUrl(it.channelId),parse:raw=>ytEntries(parseYtText(raw))};
+  if(it.kind==='telegram'&&it.handle)return{url:tgFeedUrl(it.handle),parse:parseTelegramText};
+  if(it.kind==='rss'&&it.feedUrl)return{url:it.feedUrl,parse:parseRssText};
+  return null;
+}
+/* One request to your own proxy for many feeds; the proxy fetches them in
+   parallel at the edge. Resolves to {url: body}. Throws if the proxy has no
+   batch endpoint, so callers can fall back to fetching one by one. */
+async function fetchBatchViaOwnProxy(urls,ms){
+  const base=getFeedProxy();if(!base)throw new Error('no own proxy');
+  const root=base.replace(/[?&]?url=?$/,'').replace(/[?&]$/,'');
+  const out={};
+  for(let i=0;i<urls.length;i+=12){ // keep the request URL comfortably short
+    const chunk=urls.slice(i,i+12);
+    const res=await fetchWithTimeout(root+(root.includes('?')?'&':'?')+chunk.map(u=>'u='+encodeURIComponent(u)).join('&'),{},ms||15000);
+    if(!res.ok)throw new Error('batch '+res.status);
+    const j=await res.json();
+    if(!j||!Array.isArray(j.results))throw new Error('no batch endpoint');
+    j.results.forEach(r=>{if(r&&r.ok&&r.body)out[r.url]=r.body});
+  }
+  return out;
+}
 async function fetchFeed(it){
-  if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}))}
+  if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return ytEntries(vs)}
   if(it.kind==='telegram'&&it.handle)return await fetchTelegram(it.handle);
   if(it.kind==='rss'&&it.feedUrl)return await fetchRss(it.feedUrl);
   return null;
@@ -3935,6 +3968,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const refreshingRef=useRef(false);
   const [refreshing,setRefreshing]=useState(false);
   const [feedsAt,setFeedsAt]=useState(0);
+  const activeTabRef=useRef('');
   const failRef=useRef({}); // source id -> {at,n}: a failing source backs off instead of being retried every tick
   const [progress,setProgress]=useState(null); // {done,total} while a pass is running
   const [failN,setFailN]=useState(0);
@@ -3951,8 +3985,31 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       return!(c&&t0-(c.fetchedAt||0)<10*60*1000);
     });
     if(!list.length)return;
+    // what you are looking at refreshes first
+    const tabNow=activeTabRef.current;
+    list.sort((a,b)=>((a.groupId===tabNow||tabNow==='all')?0:1)-((b.groupId===tabNow||tabNow==='all')?0:1));
     refreshingRef.current=true;setRefreshing(true);setProgress({done:0,total:list.length});
+    const total0=list.length;
     let idx=0,done=0,ok=0,bad=0,tripped=false;
+    // With your own proxy: one request for every feed. Anything it could not
+    // deliver falls through to the one-by-one path below.
+    let rest=list;
+    if(getFeedProxy()){
+      try{
+        const specs=list.map(it=>({it,sp:feedSpec(it)})).filter(x=>x.sp);
+        const bodies=await fetchBatchViaOwnProxy(specs.map(x=>x.sp.url),12000);
+        const left=[];
+        for(const{it,sp}of specs){
+          const body=bodies[sp.url];let es=null;
+          if(body){try{es=sp.parse(body)}catch(e){}}
+          if(es&&aliveRef.current){delete failRef.current[it.id];ok++;done++;onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}
+          else left.push(it);
+        }
+        if(aliveRef.current)setProgress({done,total:total0});
+        rest=left;
+      }catch(e){rest=list} // no batch endpoint / proxy down: the normal path decides
+    }
+    const todo=rest.slice();list.length=0;todo.forEach(x=>list.push(x));idx=0; // (rest may be the same array as list)
     const withTimeout=(pr,ms)=>Promise.race([pr,new Promise((_,rej)=>setTimeout(()=>rej(new Error('timeout')),ms))]);
     const worker=async()=>{
       while(idx<list.length&&aliveRef.current&&!tripped){
@@ -3965,7 +4022,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
         }catch(e){const f=failRef.current[it.id]||{n:0};failRef.current[it.id]={at:Date.now(),n:f.n+1};
           // nothing has worked and the first few all failed: the proxies are down, so stop waiting on the rest
           if(++bad>=4&&!ok)tripped=true}
-        done++;if(aliveRef.current)setProgress({done,total:list.length});
+        done++;if(aliveRef.current)setProgress({done,total:total0});
       }
     };
     try{await Promise.all([worker(),worker(),worker()])}
@@ -4112,6 +4169,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const ungrouped=vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
   const tabOrder=['catchup','all'].concat(groups.map(g=>g.id)).concat(ungrouped.length?['_other']:[]);
   const activeTab=tabOrder.indexOf(tab)>=0?tab:'all';
+  activeTabRef.current=activeTab;
   const setTabP=v=>{setTab(v);setDay(null);try{v==='catchup'?localStorage.removeItem(BRIEF_TAB_KEY):localStorage.setItem(BRIEF_TAB_KEY,v)}catch(e){}};
   const tabList=activeTab==='all'?vis:activeTab==='_other'?ungrouped:activeTab==='catchup'?[]:vis.filter(i=>i.groupId===activeTab);
   const groupNewCount=list=>win.future?0:list.reduce((n,it)=>n+(hasFeed(it)?newEntries(it).length:0),0);
