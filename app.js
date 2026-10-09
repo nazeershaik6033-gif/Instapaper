@@ -638,6 +638,23 @@ async function fetchBatchViaOwnProxy(urls,ms){
   }
   return out;
 }
+/* Server-side snapshot: .github/workflows/refresh-feeds.yml fetches every source
+   from GitHub's servers and publishes feeds.json on the `feeds-data` branch.
+   Reading it needs no proxy and is one small request. Resolves to
+   {at, feeds:{url:{at,body}}} or null when it is not set up / unreachable. */
+function feedsSnapshotUrl(){
+  let owner='nazeershaik6033-gif',repo='Instapaper';
+  try{const h=location.hostname;if(/\.github\.io$/i.test(h)){owner=h.split('.')[0];const seg=location.pathname.split('/')[1];if(seg)repo=seg}}catch(e){}
+  return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/feeds-data/feeds.json?t='+Math.floor(Date.now()/60000);
+}
+async function fetchFeedsSnapshot(){
+  try{
+    const res=await fetchWithTimeout(feedsSnapshotUrl(),{cache:'no-store'},9000);
+    if(!res.ok)return null;
+    const j=await res.json();
+    return j&&j.feeds?{at:j.fetchedAt||0,feeds:j.feeds}:null;
+  }catch(e){return null}
+}
 async function fetchFeed(it){
   if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return ytEntries(vs)}
   if(it.kind==='telegram'&&it.handle)return await fetchTelegram(it.handle);
@@ -3972,6 +3989,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
   const failRef=useRef({}); // source id -> {at,n}: a failing source backs off instead of being retried every tick
   const [progress,setProgress]=useState(null); // {done,total} while a pass is running
   const [failN,setFailN]=useState(0);
+  const [snapAt,setSnapAt]=useState(0); // when the server snapshot (GitHub Action) last refreshed
   const [proxyDown,setProxyDown]=useState(false); // the pass gave up early because no proxy answered
   const refreshFeeds=useCallback(async force=>{
     if(refreshingRef.current)return;
@@ -3991,10 +4009,28 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     refreshingRef.current=true;setRefreshing(true);setProgress({done:0,total:list.length});
     const total0=list.length;
     let idx=0,done=0,ok=0,bad=0,tripped=false;
-    // With your own proxy: one request for every feed. Anything it could not
+    // 1) Server snapshot (GitHub Action): instant, no proxies. Whatever it
+    //    covers is done; the rest goes on to the paths below.
+    let todoAll=list;
+    try{
+      const snap=await fetchFeedsSnapshot();
+      if(snap){
+        const left=[];
+        for(const it of list){
+          const sp=feedSpec(it),e=sp&&snap.feeds[sp.url];let es=null;
+          if(e&&e.body){try{es=sp.parse(e.body)}catch(err){}}
+          if(es&&aliveRef.current){delete failRef.current[it.id];ok++;done++;onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}))}
+          else left.push(it);
+        }
+        if(aliveRef.current){setProgress({done,total:total0});setSnapAt(snap.at||0)}
+        todoAll=left;
+      }
+    }catch(e){todoAll=list}
+    list.splice(0,list.length,...todoAll.slice());
+    // 2) With your own proxy: one request for every feed. Anything it could not
     // deliver falls through to the one-by-one path below.
-    let rest=list;
-    if(getFeedProxy()){
+    let rest=list.slice();
+    if(list.length&&getFeedProxy()){
       try{
         const specs=list.map(it=>({it,sp:feedSpec(it)})).filter(x=>x.sp);
         const bodies=await fetchBatchViaOwnProxy(specs.map(x=>x.sp.url),12000);
@@ -4304,7 +4340,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
-    h('span',{style:{flex:1,fontSize:11.5,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):proxyDown?'The public feed proxies aren’t responding right now. Set up your own in Settings → Behavior → Feed proxy for reliable updates.':failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt):'Not checked yet'),
+    h('span',{style:{flex:1,fontSize:11.5,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):proxyDown?'The public feed proxies aren’t responding right now. Set up your own in Settings → Behavior → Feed proxy for reliable updates.':failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt)+(snapAt&&Date.now()-snapAt>90*60000?' · server feed last ran '+timeAgo(snapAt):''):'Not checked yet'),
     h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh catch-up',
       style:{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:9,border:'1px solid '+T.hair,color:T.fg,fontSize:12,fontWeight:600,opacity:refreshing?.5:1}},
       h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
@@ -5496,6 +5532,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const fileRef=useRef(null);
+  const [srcCopied,setSrcCopied]=useState(0);
   const [page,setPage]=useState('root');
   /* live OpenRouter model catalog (cached for a day) */
   const orActive=(S.aiProvider||'openrouter')==='openrouter';
@@ -5621,6 +5658,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
         h('input',{defaultValue:(()=>{try{return localStorage.getItem(FEED_PROXY_KEY)||''}catch(e){return''}})(),placeholder:'https://your-worker.workers.dev/?url=',autoCapitalize:'off',autoCorrect:'off',spellCheck:false,
           onChange:e=>{try{const v=e.target.value.trim();v?localStorage.setItem(FEED_PROXY_KEY,v):localStorage.removeItem(FEED_PROXY_KEY)}catch(err){}},
           style:{width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,boxSizing:'border-box'}})),
+      head('Server-side refresh (GitHub)'),
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Copy your sources, then paste them into routine-sources.json in the repo (see README → Server-side refresh).'),
+        h('button',{onClick:()=>{
+            const urls=[...new Set(((data.brief&&data.brief.items)||[]).map(it=>{const sp=feedSpec(it);return sp?sp.url:null}).filter(Boolean))];
+            copyText(JSON.stringify({urls},null,2));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
+          className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
+          srcCopied?'Copied '+srcCopied+' sources ✓':'Copy my sources')),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),

@@ -1,0 +1,36 @@
+name: Refresh feeds
+# Keeps My Routine's sources fresh from a server, so the app does not depend on public CORS proxies.
+# Result goes to a single-commit branch `feeds-data` (feeds.json) — main stays clean.
+on:
+  schedule:
+    - cron: '*/20 * * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: refresh-feeds
+  cancel-in-progress: true
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Fetch feeds
+        run: |
+          if [ ! -f routine-sources.json ]; then echo "No routine-sources.json yet — see README (Server-side refresh)."; exit 0; fi
+          node scripts/refresh-feeds.mjs routine-sources.json "$RUNNER_TEMP/feeds.json"
+      - name: Publish to feeds-data
+        run: |
+          [ -f "$RUNNER_TEMP/feeds.json" ] || exit 0
+          git config user.name "feed-refresh[bot]"
+          git config user.email "feed-refresh@users.noreply.github.com"
+          git checkout --orphan feeds-data-tmp
+          git rm -rf --quiet . || true
+          cp "$RUNNER_TEMP/feeds.json" feeds.json
+          git add feeds.json
+          git commit -q -m "feeds $(date -u +%FT%TZ)"
+          git push -f origin feeds-data-tmp:feeds-data
