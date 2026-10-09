@@ -121,6 +121,19 @@ premium personalized newspaper (separate from the in-app Daily Brief checklist).
 3. Tap the **Share** button → **Add to Home Screen**
 4. Launch it from your home screen — it runs full screen and works offline
 
+## Server-side refresh (reliable My Routine updates)
+
+My Routine reads YouTube / Telegram / RSS in the browser through free public proxies, which are often blocked.
+A GitHub Action fetches the same sources from a server instead and the app reads the result first:
+
+1. In the app: **Settings → Behavior → Server-side refresh → Copy my sources**.
+2. In this repo, edit `routine-sources.json`, paste, commit (re-copy and paste again whenever you add or remove sources).
+3. GitHub → **Actions → Refresh feeds → Run workflow** once. After that it runs every ~20 minutes on its own
+   and publishes `feeds.json` to the `feeds-data` branch (so `main` stays clean).
+
+The app uses that snapshot automatically; anything it does not cover still goes through the proxies as before.
+Note: GitHub pauses scheduled workflows in repos with no activity for 60 days — re-run the workflow if that happens.
+
 ## Notes
 
 - Saving a **new** article needs an internet connection (the page is fetched through public read-it-later proxies). Reading everything you've already saved works fully offline.
