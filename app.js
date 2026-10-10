@@ -452,7 +452,7 @@ async function resolveYtChannelId(url){
 const YT_OK=t=>/<entry[\s>]/i.test(t);
 const ytFeedUrl=channelId=>'https://www.youtube.com/feeds/videos.xml?channel_id='+channelId;
 async function fetchYtVideos(channelId){
-  return parseYtText(await fetchRawAcross(ytFeedUrl(channelId),YT_OK,9000));
+  return parseYtText(await fetchRawAcross(ytFeedUrl(channelId),YT_OK,9000,()=>rss2jsonXml(ytFeedUrl(channelId),'yt')));
 }
 function parseYtText(raw){
   const doc=new DOMParser().parseFromString(raw,'text/xml');
@@ -552,7 +552,7 @@ function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddi
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
 async function fetchRss(url){
-  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t),9000);
+  const raw=await fetchRawAcross(url,t=>/<(?:item|entry)[\s>]/i.test(t),9000,()=>rss2jsonXml(url,'rss'));
   return parseRssText(raw);
 }
 /* Fast fetch for feed discovery: race a direct request against every CORS
@@ -905,27 +905,89 @@ async function fetchViaOwnProxy(url,ok,ms){
   if(!text||(ok&&!ok(text)))throw new Error('own proxy bad body');
   return text;
 }
-function fetchRawAcross(url,ok,ms){
+/* The public pool: more proxies than any one of them is worth relying on, so the
+   app keeps score of which ones answer on this device, tries the best first and
+   rests a proxy that has just failed three times in a row for 30 minutes. */
+const PROXY_DEFS=[
+  {id:'allorigins',build:u=>'https://api.allorigins.win/raw?url='+encodeURIComponent(u)},
+  {id:'codetabs',build:u=>'https://api.codetabs.com/v1/proxy/?quest='+encodeURIComponent(u)},
+  {id:'corsproxy.io',build:u=>'https://corsproxy.io/?url='+encodeURIComponent(u)},
+  {id:'corsproxy.org',build:u=>'https://corsproxy.org/?'+encodeURIComponent(u)},
+  {id:'thingproxy',build:u=>'https://thingproxy.freeboard.io/fetch/'+u},
+  {id:'cors.lol',build:u=>'https://api.cors.lol/?url='+encodeURIComponent(u)},
+  {id:'fringe',build:u=>'https://cors-proxy.fringe.zone/'+u},
+  {id:'allorigins-json',build:u=>'https://api.allorigins.win/get?url='+encodeURIComponent(u),
+    unwrap:t=>{const j=JSON.parse(t);if(!j||typeof j.contents!=='string')throw new Error('no contents');return j.contents}},
+];
+const PROXY_STATS_KEY='insta_proxy_stats';
+const proxyStats=()=>{try{return JSON.parse(localStorage.getItem(PROXY_STATS_KEY)||'{}')||{}}catch(e){return{}}};
+function noteProxy(id,ok){
+  try{
+    const st=proxyStats(),e=st[id]||{ok:0,fail:0,streak:0,at:0};
+    if(ok){e.ok++;e.streak=0}else{e.fail++;e.streak++;e.at=Date.now()}
+    st[id]=e;localStorage.setItem(PROXY_STATS_KEY,JSON.stringify(st));
+  }catch(e){}
+}
+function orderedProxyDefs(){
+  const st=proxyStats(),now=Date.now();
+  const score=d=>{const e=st[d.id];return e?(e.ok+1)/(e.ok+e.fail+2):.5};
+  const resting=d=>{const e=st[d.id];return!!(e&&e.streak>=3&&now-e.at<30*60*1000)};
+  const live=PROXY_DEFS.filter(d=>!resting(d));
+  return(live.length?live:PROXY_DEFS).slice().sort((a,b)=>score(b)-score(a));
+}
+/* rss2json turns a feed into JSON from its own servers (cached ~1h), which gets
+   past proxies that block us. Re-wrapped as XML so the normal parsers read it. */
+async function rss2jsonXml(feedUrl,kind){
+  const res=await fetchWithTimeout('https://api.rss2json.com/v1/api.json?rss_url='+encodeURIComponent(feedUrl)+'&count=20',{},9000);
+  if(!res.ok)throw new Error('rss2json '+res.status);
+  const j=await res.json();
+  if(!j||j.status!=='ok'||!Array.isArray(j.items)||!j.items.length)throw new Error('rss2json empty');
+  const iso=d=>{const t=Date.parse(String(d||'').replace(' ','T')+(/[zZ]|[+-]\d\d:?\d\d$/.test(String(d||''))?'':'Z'));return isNaN(t)?'':new Date(t).toISOString()};
+  if(kind==='yt'){
+    const ents=j.items.map(it=>{
+      const m=String(it.guid||'').match(/yt:video:([\w-]{11})/)||String(it.link||'').match(/[?&]v=([\w-]{11})/);if(!m)return'';
+      return'<entry><yt:videoId>'+m[1]+'</yt:videoId><title>'+escapeHtml(it.title||'')+'</title><published>'+iso(it.pubDate)+'</published>'+(it.thumbnail?'<media:thumbnail url="'+escapeHtml(it.thumbnail)+'"/>':'')+'</entry>';
+    }).join('');
+    if(!ents)throw new Error('rss2json: no videos');
+    return'<?xml version="1.0"?><feed xmlns="http://www.w3.org/2005/Atom" xmlns:yt="http://www.youtube.com/xml/schemas/2015" xmlns:media="http://search.yahoo.com/mrss/">'+ents+'</feed>';
+  }
+  return'<?xml version="1.0"?><rss version="2.0"><channel>'+j.items.map(it=>'<item><title>'+escapeHtml(it.title||'')+'</title><link>'+escapeHtml(it.link||'')+'</link><pubDate>'+iso(it.pubDate)+'</pubDate></item>').join('')+'</channel></rss>';
+}
+function fetchRawAcross(url,ok,ms,alt){
   ms=ms||18000;
   const pool=()=>new Promise((resolve,reject)=>{
-    let pending=PROXIES.length,best='',lastErr=null,done=false;
-    PROXIES.forEach(async p=>{
+    const defs=orderedProxyDefs().slice();
+    // last in line: a source-specific fallback (e.g. rss2json), same race rules as the proxies
+    if(alt)defs.push({id:'alt',alt});
+    let next=0,settled=0,best='',lastErr=null,done=false,timer=0;
+    const end=()=>{done=true;clearInterval(timer)};
+    const launch=()=>{if(!done&&next<defs.length)run(defs[next++])};
+    const run=async d=>{
+      let fault=true;
       try{
-        const res=await fetchWithTimeout(p(url),{},ms);
-        if(!res.ok)throw new Error('proxy '+res.status);
-        const text=await res.text();
+        let text;
+        if(d.alt)text=await d.alt();
+        else{
+          const res=await fetchWithTimeout(d.build(url),{},ms);
+          if(!res.ok){if(res.status===404||res.status===410)fault=false; // the source is gone, not the proxy's fault
+            throw new Error('proxy '+res.status)}
+          text=await res.text();
+          if(d.unwrap)text=d.unwrap(text);
+        }
         if(!text)throw new Error('empty proxy response');
-        if(!ok||ok(text)){if(!done){done=true;resolve(text)}return}
+        if(!ok||ok(text)){if(!d.alt)noteProxy(d.id,true);if(!done){end();resolve(text)}return}
         if(text.length>best.length)best=text;
         throw new Error('proxy body failed validation');
-      }catch(e){if(!lastErr)lastErr=e}
+      }catch(e){if(!lastErr)lastErr=e;if(fault&&!d.alt)noteProxy(d.id,false)}
       finally{
-        if(--pending===0&&!done){
-          if(best)resolve(best);
-          else reject(lastErr||new Error('all proxies failed'));
+        settled++;
+        if(!done){
+          if(settled===defs.length){end();best?resolve(best):reject(lastErr||new Error('all proxies failed'))}
+          else launch(); // one failed: bring the next in at once
         }
       }
-    });
+    };
+    launch();timer=setInterval(launch,600); // and stagger a new one every 0.6s while earlier ones are still waiting
   });
   if(!getFeedProxy())return pool();
   return fetchViaOwnProxy(url,ok,ms).catch(()=>pool());
@@ -4051,7 +4113,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       while(idx<list.length&&aliveRef.current&&!tripped){
         const it=list[idx++];
         try{
-          const es=await withTimeout(fetchFeed(it),14000);
+          const es=await withTimeout(fetchFeed(it),20000);
           if(!es)throw new Error('no feed');
           delete failRef.current[it.id];ok++;bad=0;
           if(aliveRef.current)onBrief(b=>({...b,feeds:{...(b.feeds||{}),[it.id]:{fetchedAt:Date.now(),entries:es}}}));
