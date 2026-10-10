@@ -642,16 +642,43 @@ async function fetchBatchViaOwnProxy(urls,ms){
    from GitHub's servers and publishes feeds.json on the `feeds-data` branch.
    Reading it needs no proxy and is one small request. Resolves to
    {at, feeds:{url:{at,body}}} or null when it is not set up / unreachable. */
-function feedsSnapshotUrl(){
+function repoSlug(){
   let owner='nazeershaik6033-gif',repo='Instapaper';
   try{const h=location.hostname;if(/\.github\.io$/i.test(h)){owner=h.split('.')[0];const seg=location.pathname.split('/')[1];if(seg)repo=seg}}catch(e){}
+  return{owner,repo};
+}
+function feedsSnapshotUrl(){
+  const{owner,repo}=repoSlug();
   return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/feeds-data/feeds.json?t='+Math.floor(Date.now()/60000);
+}
+const SNAP_OK_KEY='insta_snapshot_ok';
+const snapshotWasSeen=()=>{try{return localStorage.getItem(SNAP_OK_KEY)==='1'}catch(e){return false}};
+/* Every feed URL the routine reads — what the GitHub job needs in routine-sources.json. */
+function sourceUrlsOf(brief){
+  return[...new Set(((brief&&brief.items)||[]).map(it=>{const sp=feedSpec(it);return sp?sp.url:null}).filter(Boolean))];
+}
+/* One tap to set up (or update) server-side refresh. First time: GitHub's "new file" page with
+   routine-sources.json already filled in — just press Commit. After that the file exists, so the
+   list goes to the clipboard and the file's edit page opens to paste into. */
+function sourcesGithubUrl(brief,exists){
+  const{owner,repo}=repoSlug(),json=JSON.stringify({urls:sourceUrlsOf(brief)},null,2);
+  return exists
+    ?'https://github.com/'+owner+'/'+repo+'/edit/main/routine-sources.json'
+    :'https://github.com/'+owner+'/'+repo+'/new/main?filename=routine-sources.json&value='+encodeURIComponent(json);
+}
+function setupServerRefresh(brief,toastFn){
+  const exists=snapshotWasSeen();
+  if(!sourceUrlsOf(brief).length){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
+  if(exists){copyText(JSON.stringify({urls:sourceUrlsOf(brief)},null,2));toastFn&&toastFn('Sources copied — paste them into the file on GitHub')}
+  else toastFn&&toastFn('On GitHub, press “Commit new file”');
+  openExternalUrl(sourcesGithubUrl(brief,exists));
 }
 async function fetchFeedsSnapshot(){
   try{
     const res=await fetchWithTimeout(feedsSnapshotUrl(),{cache:'no-store'},9000);
     if(!res.ok)return null;
     const j=await res.json();
+    if(j&&j.feeds){try{localStorage.setItem(SNAP_OK_KEY,'1')}catch(e){}}
     return j&&j.feeds?{at:j.fetchedAt||0,feeds:j.feeds}:null;
   }catch(e){return null}
 }
@@ -4402,13 +4429,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,margin:'0 2px 8px'}},
-    h('span',{style:{flex:1,fontSize:11.5,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):proxyDown?'The public feed proxies aren’t responding right now. Set up your own in Settings → Behavior → Feed proxy for reliable updates.':failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt)+(snapAt&&Date.now()-snapAt>90*60000?' · server feed last ran '+timeAgo(snapAt):''):'Not checked yet'),
+    h('span',{style:{flex:1,fontSize:11.5,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub}},refreshing?('Checking your sources…'+(progress?' '+progress.done+'/'+progress.total:'')):proxyDown?'The public feed proxies aren’t responding right now.'+(snapAt?'':' Use the button below to fix it for good.'):failN?(feedsAt?'Checked '+timeAgo(feedsAt)+' · ':'')+failN+' source'+(failN>1?'s':'')+' couldn’t be reached — tap Refresh to retry':feedsAt?'Checked '+timeAgo(feedsAt)+(snapAt&&Date.now()-snapAt>90*60000?' · server feed last ran '+timeAgo(snapAt):''):'Not checked yet'),
     h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh catch-up',
       style:{display:'flex',alignItems:'center',gap:6,padding:'5px 10px',borderRadius:9,border:'1px solid '+T.hair,color:T.fg,fontSize:12,fontWeight:600,opacity:refreshing?.5:1}},
       h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
+  const fixBar=(!refreshing&&(failN||proxyDown)&&!snapAt)?h('button',{onClick:()=>setupServerRefresh(brief,toastFn),className:'act95',
+    style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',margin:'0 0 10px',padding:'11px 14px',borderRadius:10,background:T.accent,color:'#fff',fontSize:13.5,fontWeight:650}},
+    snapshotWasSeen()?'Update sources on GitHub':'Fix this for good: set up server refresh (2 taps)'):null;
   const catchupView=()=>{
     if(!briefLog.length&&!kept.length)
-      return h('div',{style:{padding:'8px 4px'}},refreshBar,
+      return h('div',{style:{padding:'8px 4px'}},refreshBar,fixBar,
         h(EmptyState,{T,icon:Icons.clock(36),title:'Nothing missed yet',sub:'When a routine window rolls over with updates you didn’t open, they’re saved here so you can catch up later.'}));
     const chips=catchDays.map(d=>({id:d.key,label:d.label,n:d.unseen})).concat(kept.length?[{id:'_kept',label:'Pinned',n:0,pin:true}]:[]);
     const dayChips=h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 0 10px'}},
@@ -4457,7 +4487,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
             }));
         }));
     }
-    return h('div',null,refreshBar,dayChips,note,body,
+    return h('div',null,refreshBar,fixBar,dayChips,note,body,
       (briefLog.length&&curDay!=='_kept')?h('button',{onClick:()=>{putLog([]);setDay(null);toastFn('Catch-up cleared')},className:'act95',
         style:{display:'flex',alignItems:'center',gap:7,margin:'6px 2px 0',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,color:T.danger,fontSize:13,fontWeight:600}},Icons.trash(15),'Clear catch-up'):null);
   };
@@ -5722,12 +5752,16 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
           style:{width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,boxSizing:'border-box'}})),
       head('Server-side refresh (GitHub)'),
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Copy your sources, then paste them into routine-sources.json in the repo (see README → Server-side refresh).'),
-        h('button',{onClick:()=>{
-            const urls=[...new Set(((data.brief&&data.brief.items)||[]).map(it=>{const sp=feedSpec(it);return sp?sp.url:null}).filter(Boolean))];
-            copyText(JSON.stringify({urls},null,2));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
-          className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
-          srcCopied?'Copied '+srcCopied+' sources ✓':'Copy my sources')),
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Tap the button, then press “Commit new file” on GitHub. It starts by itself. Re-do this whenever you add or remove sources.'),
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
+          h('button',{onClick:()=>setupServerRefresh(data.brief,msg=>{setSrcCopied(-1);setTimeout(()=>setSrcCopied(0),2500)}),
+            className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},
+            snapshotWasSeen()?'Update sources on GitHub':'Save sources to GitHub'),
+          h('button',{onClick:()=>{
+              const urls=sourceUrlsOf(data.brief);
+              copyText(JSON.stringify({urls},null,2));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
+            className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
+            srcCopied>0?'Copied '+srcCopied+' sources ✓':'Copy my sources'))),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
