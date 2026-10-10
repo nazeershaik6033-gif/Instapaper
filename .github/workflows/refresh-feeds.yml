@@ -2,6 +2,9 @@ name: Refresh feeds
 # Keeps My Routine's sources fresh from a server, so the app does not depend on public CORS proxies.
 # Result goes to a single-commit branch `feeds-data` (feeds.json) — main stays clean.
 on:
+  push:
+    branches: [main]
+    paths: [routine-sources.json]
   schedule:
     - cron: '*/20 * * * *'
   workflow_dispatch:
