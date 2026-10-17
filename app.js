@@ -660,18 +660,23 @@ function sourceUrlsOf(brief){
 /* One tap to set up (or update) server-side refresh. First time: GitHub's "new file" page with
    routine-sources.json already filled in — just press Commit. After that the file exists, so the
    list goes to the clipboard and the file's edit page opens to paste into. */
-function sourcesGithubUrl(brief,exists){
-  const{owner,repo}=repoSlug(),json=JSON.stringify({urls:sourceUrlsOf(brief)},null,2);
-  return exists
-    ?'https://github.com/'+owner+'/'+repo+'/edit/main/routine-sources.json'
-    :'https://github.com/'+owner+'/'+repo+'/new/main?filename=routine-sources.json&value='+encodeURIComponent(json);
+const sourcesJson=brief=>JSON.stringify({urls:sourceUrlsOf(brief)},null,1);
+function sourcesGithubUrl(brief,exists,inline){
+  const{owner,repo}=repoSlug(),base='https://github.com/'+owner+'/'+repo;
+  if(exists)return base+'/edit/main/routine-sources.json';
+  const u=base+'/new/main?filename=routine-sources.json';
+  return inline===false?u:u+'&value='+encodeURIComponent(sourcesJson(brief));
 }
+/* GitHub fails on very long query strings (a long source list opens a blank or error page),
+   so past a safe length the list goes to the clipboard and the page opens empty to paste into. */
+const GH_URL_MAX=3500;
 function setupServerRefresh(brief,toastFn){
   const exists=snapshotWasSeen();
   if(!sourceUrlsOf(brief).length){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
-  if(exists){copyText(JSON.stringify({urls:sourceUrlsOf(brief)},null,2));toastFn&&toastFn('Sources copied — paste them into the file on GitHub')}
+  const full=sourcesGithubUrl(brief,exists),inline=!exists&&full.length<=GH_URL_MAX;
+  if(!inline){copyText(sourcesJson(brief));toastFn&&toastFn('Sources copied — paste them into the file, then press Commit')}
   else toastFn&&toastFn('On GitHub, press “Commit new file”');
-  openExternalUrl(sourcesGithubUrl(brief,exists));
+  openExternalUrl(inline?full:sourcesGithubUrl(brief,exists,false));
 }
 async function fetchFeedsSnapshot(){
   try{
