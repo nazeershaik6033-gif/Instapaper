@@ -5312,6 +5312,8 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   /* Renaming, deleting and reordering live behind this toggle, so the default
      screen is links only — no red trash can one mis-tap from your bookmarks. */
   const [editMode,setEditMode]=useState(false);
+  const [bClosed,setBClosed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_browser_collapsed')||'[]'))}catch(e){return new Set()}});
+  const toggleB=key=>setBClosed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_browser_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const hist=Array.isArray(history)?history:[];
   const go=(t,name)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
     const u=browserTarget(t);if(!u)return;
@@ -5484,15 +5486,27 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const topSites=hist.slice().sort((a,b)=>(b.count||0)-(a.count||0)).filter(x=>(x.count||0)>1).slice(0,10);
   const iconBtn44=(icon,onClick,color,label)=>h('button',{onClick,'aria-label':label,className:'act90',
     style:{display:'flex',alignItems:'center',justifyContent:'center',width:44,height:44,flexShrink:0,color:color||T.sub}},icon);
-  const groupHead=(name,count,opts)=>h('div',{style:{display:'flex',alignItems:'center',gap:2,minHeight:38,marginBottom:2}},
-    (opts&&opts.onDrag)?h('span',{onMouseDown:opts.onDrag,onTouchStart:opts.onDrag,'aria-label':'Reorder '+name,className:'act90',
-      style:{display:'flex',alignItems:'center',justifyContent:'center',width:26,height:38,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none',marginLeft:-6}},Icons.drag(14)):null,
-    h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},name),
-    h('div',{style:{fontSize:11.5,color:T.sub,opacity:.65,marginLeft:7,flex:1}},count||''),
-    iconBtn44(Icons.plus(18),opts.onAdd,T.accent,'Add a link to '+name),
-    (opts&&opts.onRename)?iconBtn44(Icons.pencil(17),opts.onRename,T.sub,'Rename '+name):null,
-    (opts&&opts.onDelete)?h('span',{style:{width:10,flexShrink:0}}):null, // keeps Delete away from Rename
-    (opts&&opts.onDelete)?iconBtn44(Icons.trash(17),opts.onDelete,T.danger,'Delete '+name):null);
+  /* Each group is a block card: accent stripe, colour dot, collapse chevron, count, and
+     edit / delete / add always in reach (delete still asks before removing anything). */
+  const groupHead=(key,name,count,opts)=>{
+    const open=!bClosed.has(key),col=opts.color;
+    return h('div',{style:{display:'flex',alignItems:'center',gap:2,minHeight:44}},
+      opts.onDrag?h('span',{onMouseDown:opts.onDrag,onTouchStart:opts.onDrag,'aria-label':'Reorder '+name,className:'act90',
+        style:{display:'flex',alignItems:'center',justifyContent:'center',width:24,height:44,flexShrink:0,color:T.sub,cursor:'grab',touchAction:'none',marginLeft:-6}},Icons.drag(14)):null,
+      h('button',{onClick:()=>toggleB(key),'aria-label':(open?'Collapse ':'Expand ')+name,'aria-expanded':open,className:'act95',
+        style:{display:'flex',alignItems:'center',gap:8,flex:1,minWidth:0,minHeight:44,textAlign:'left',color:T.sub}},
+        h('span',{style:{display:'flex',flexShrink:0,transform:open?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(14)),
+        h('span',{style:{width:12,height:12,borderRadius:'50%',background:col,boxShadow:'0 0 0 4px '+hexA(col,.18),flexShrink:0}}),
+        h('span',{style:{fontSize:14,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},name)),
+      h('span',{style:{fontSize:14,color:T.sub,flexShrink:0,padding:'0 4px'}},count||''),
+      opts.onRename?iconBtn44(Icons.pencil(17),opts.onRename,T.sub,'Rename '+name):null,
+      opts.onDelete?iconBtn44(Icons.trash(17),opts.onDelete,T.danger,'Delete '+name):null,
+      iconBtn44(Icons.plus(20),opts.onAdd,T.accent,'Add a link to '+name));
+  };
+  const groupBlock=(key,accent,head,rows,note,extra)=>h('div',Object.assign({key,style:{borderRadius:16,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+accent,
+      marginBottom:14,padding:'2px 12px '+(bClosed.has(key)?'2px':'6px')+' 10px',boxShadow:'0 1px 2px rgba(0,0,0,.04)'}},extra||{}),
+    head,
+    bClosed.has(key)?null:h('div',{style:{borderTop:'1px solid '+T.hair,paddingTop:4}},rows.length?rows:note));
   const emptyNote=t=>h('div',{style:{fontSize:12.5,color:T.sub,padding:'6px 2px 8px',lineHeight:1.5}},t);
   const homeBody=h('div',null,
     topSites.length?h('div',{style:{marginBottom:18}},
@@ -5507,26 +5521,30 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
     folders.map((f,fi)=>{
       const fSites=sites.filter(s=>s.folderId===f.id);
       const isTarget=!!dropT&&dropT.type==='folder'&&dropT.id===f.id;
-      return h('div',{key:f.id,'data-folderdrop':f.id,
-        style:{marginBottom:14,borderRadius:12,outline:isTarget?'2px solid '+T.accent:'none',outlineOffset:6,
-          opacity:fDragOver>=0&&fDragOver===fi?0.65:1}},
-        groupHead(f.name,fSites.length||'',{
+      return groupBlock('f'+f.id,groupColor(f.id),
+        groupHead('f'+f.id,f.name,fSites.length||'',{color:groupColor(f.id),
           onAdd:()=>quickAdd(f.id),
           onDrag:editMode?(e=>startFolderDrag(fi,e)):null,
-          onRename:editMode?(()=>{setFName(f.name);setMkFolder({rename:f.id})}):null,
-          onDelete:editMode?(()=>setConfirm({kind:'folder',folder:f,count:fSites.length})):null}),
-        fSites.length?fSites.map(row):emptyNote('Empty — tap + to put a link here.'));
+          onRename:()=>{setFName(f.name);setMkFolder({rename:f.id})},
+          onDelete:()=>setConfirm({kind:'folder',folder:f,count:fSites.length})}),
+        fSites.map(row),emptyNote('Empty — tap + to put a link here.'),
+        {'data-folderdrop':f.id,style:{borderRadius:16,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+groupColor(f.id),marginBottom:14,
+          padding:'2px 12px '+(bClosed.has('f'+f.id)?'2px':'6px')+' 10px',boxShadow:'0 1px 2px rgba(0,0,0,.04)',
+          outline:isTarget?'2px solid '+T.accent:'none',outlineOffset:3,opacity:fDragOver>=0&&fDragOver===fi?0.65:1}});
     }),
-    h('div',{'data-folderdrop':'',style:{marginBottom:14,borderRadius:12,outline:!!dropT&&dropT.type==='folder'&&!dropT.id?'2px solid '+T.accent:'none',outlineOffset:6}},
-      groupHead('Bookmarks',loose.length||'',{onAdd:()=>quickAdd(null)}),
-      loose.length?loose.map(row):emptyNote('Nothing loose here — tap + to save a link.')),
+    groupBlock('_loose',T.sub,
+      groupHead('_loose','Bookmarks',loose.length||'',{color:T.sub,onAdd:()=>quickAdd(null)}),
+      loose.map(row),emptyNote('Nothing loose here — tap + to save a link.'),
+      {'data-folderdrop':'',style:{borderRadius:16,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+T.sub,marginBottom:14,
+        padding:'2px 12px '+(bClosed.has('_loose')?'2px':'6px')+' 10px',boxShadow:'0 1px 2px rgba(0,0,0,.04)',
+        outline:!!dropT&&dropT.type==='folder'&&!dropT.id?'2px solid '+T.accent:'none',outlineOffset:3}}),
     h('div',{style:{display:'flex',gap:10,marginTop:16}},
       h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
       h('button',{onClick:()=>setHistOpen(true),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.clock(17),'History')),
     h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},
       editMode
         ?'Drag ∷ to reorder a link or move it into another group. Tap Done when you’re finished.'
-        :'Tap ⋯ on any link for its actions. Edit lets you rename, reorder and remove.'));
+        :'Tap a group’s name to collapse it, ⋯ on a link for its actions. Edit lets you reorder.'));
 
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
