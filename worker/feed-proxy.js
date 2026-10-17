@@ -1,7 +1,7 @@
 // Tiny CORS proxy for the app's feed fetching (YouTube / Telegram / RSS).
 // Deploy on Cloudflare Workers (free): dash.cloudflare.com -> Workers & Pages -> Create -> paste this -> Deploy.
 // Then in the app: Settings -> Behavior -> Feed proxy, paste  https://<your-worker>.workers.dev/?url=
-const ALLOWED = ['youtube.com', 't.me', 'telegram.me']; // add any RSS hosts you follow; use ['*'] to allow all
+const ALLOWED = ['youtube.com', 't.me', 'telegram.me', 'eenadu.net']; // add any RSS hosts you follow; use ['*'] to allow all
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; RoutineFeedProxy/1.0)', Accept: '*/*' };
 const allowed = host => ALLOWED.includes('*') || ALLOWED.some(d => host === d || host.endsWith('.' + d));

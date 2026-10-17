@@ -5283,6 +5283,117 @@ function recordBrowserVisit(list,url,name){
 /* One saved link. A row rather than a tile: the same 44px-plus tap target, but
    it carries the domain and when you were last there, and eight of them fit in
    the space four tiles used to take. */
+
+/* ============================== e-paper -> PDF ============================== */
+/* Newspaper e-papers (Eenadu etc.) show a page at a time. This reads the viewer page,
+   finds the page images, downloads them and stitches one PDF you can save or share.
+   Everything runs on the device; fetches go via your own feed proxy when one is set. */
+const IMG_RE=/(?:https?:)?\/\/[^"'\s)<>\\]+?\.(?:jpe?g|png|webp)(?:\?[^"'\s)<>\\]*)?|["'(]((?:\.{0,2}\/)?[^"'\s)<>\\:]+?\.(?:jpe?g|png|webp)(?:\?[^"'\s)<>\\]*)?)/gi;
+function epaperProxied(u){
+  const base=getFeedProxy();
+  if(base)return base.includes('url=')?base.replace(/url=.*$/,'url=')+encodeURIComponent(u):base+(base.includes('?')?'&':'?')+'url='+encodeURIComponent(u);
+  return'https://corsproxy.io/?url='+encodeURIComponent(u);
+}
+async function epaperGet(u,kind,ms){
+  const tries=[u,epaperProxied(u)];let last;
+  for(const t of tries){
+    try{const res=await fetchWithTimeout(t,{},ms||25000);if(!res.ok)throw new Error('http '+res.status);return kind==='blob'?await res.blob():await res.text()}catch(e){last=e}
+  }
+  throw last||new Error('unreachable');
+}
+function epaperFindImages(html,pageUrl){
+  const out=[],seen=new Set();
+  let m;IMG_RE.lastIndex=0;
+  while((m=IMG_RE.exec(html))){
+    let raw=m[1]||m[0];if(/^["'(]/.test(raw))raw=raw.slice(1);
+    raw=raw.replace(/\\\//g,'/');
+    let abs;try{abs=new URL(raw.startsWith('//')?'https:'+raw:raw,pageUrl).href}catch(e){continue}
+    if(/logo|icon|sprite|favicon|banner|avatar|button|loader|spinner|\bad[s_-]/i.test(abs))continue;
+    if(seen.has(abs))continue;seen.add(abs);out.push(abs);
+  }
+  return out;
+}
+const blobToImg=blob=>new Promise((res,rej)=>{const u=URL.createObjectURL(blob),im=new Image();im.onload=()=>res({im,u});im.onerror=()=>{URL.revokeObjectURL(u);rej(new Error('not an image'))};im.src=u});
+/* Re-encode every page as a plain JPEG (what a PDF can embed directly), capped in size. */
+async function epaperPageJpeg(blob){
+  const{im,u}=await blobToImg(blob);
+  const k=Math.min(1,1700/Math.max(im.naturalWidth,1)),w=Math.round(im.naturalWidth*k),hh=Math.round(im.naturalHeight*k);
+  const c=document.createElement('canvas');c.width=w;c.height=hh;
+  const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,w,hh);x.drawImage(im,0,0,w,hh);URL.revokeObjectURL(u);
+  const jb=await new Promise(r=>c.toBlob(r,'image/jpeg',0.82));
+  return{w,h:hh,bytes:new Uint8Array(await jb.arrayBuffer())};
+}
+/* Minimal PDF writer: one JPEG per page, page size = image size in points. */
+function epaperBuildPdf(pages){
+  const enc=new TextEncoder(),parts=[],offs=[];let len=0;
+  const push=b=>{const a=typeof b==='string'?enc.encode(b):b;parts.push(a);len+=a.length};
+  const obj=(n,body)=>{offs[n]=len;push(n+' 0 obj\n');if(typeof body==='string')push(body);else body.forEach(push);push('\nendobj\n')};
+  const N=pages.length;
+  push('%PDF-1.4\n');
+  obj(1,'<< /Type /Catalog /Pages 2 0 R >>');
+  obj(2,'<< /Type /Pages /Count '+N+' /Kids ['+pages.map((p,i)=>(3+i*3)+' 0 R').join(' ')+'] >>');
+  pages.forEach((p,i)=>{
+    const pg=3+i*3,im=pg+1,ct=pg+2,cs='q '+p.w+' 0 0 '+p.h+' 0 0 cm /Im0 Do Q';
+    obj(pg,'<< /Type /Page /Parent 2 0 R /MediaBox [0 0 '+p.w+' '+p.h+'] /Resources << /XObject << /Im0 '+im+' 0 R >> >> /Contents '+ct+' 0 R >>');
+    obj(im,['<< /Type /XObject /Subtype /Image /Width '+p.w+' /Height '+p.h+' /ColorSpace /DeviceRGB /BitsPerComponent 8 /Filter /DCTDecode /Length '+p.bytes.length+' >>\nstream\n',p.bytes,'\nendstream']);
+    obj(ct,'<< /Length '+cs.length+' >>\nstream\n'+cs+'\nendstream');
+  });
+  const xref=len,total=3+N*3;
+  push('xref\n0 '+total+'\n0000000000 65535 f \n');
+  for(let n=1;n<total;n++)push(String(offs[n]).padStart(10,'0')+' 00000 n \n');
+  push('trailer\n<< /Size '+total+' /Root 1 0 R >>\nstartxref\n'+xref+'\n%%EOF');
+  return new Blob(parts,{type:'application/pdf'});
+}
+function EpaperSheet({T,startUrl,onClose}){
+  const [url,setUrl]=useState(startUrl||'');
+  const [list,setList]=useState('');
+  const [msg,setMsg]=useState('');
+  const [busy,setBusy]=useState(false);
+  const [pdf,setPdf]=useState(null); // {blob,url,name,pages}
+  const inpS={width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,marginTop:8};
+  const find=async()=>{
+    const u=normalizeUrl(url);if(!u){setMsg('Paste the e-paper page address first');return}
+    setBusy(true);setMsg('Reading the page…');setPdf(null);
+    try{
+      const html=await epaperGet(u,'text');
+      const imgs=epaperFindImages(html,u);
+      setList(imgs.join('\n'));
+      setMsg(imgs.length?('Found '+imgs.length+' image'+(imgs.length>1?'s':'')+'. Remove any that aren’t newspaper pages, then build.'):'No page images found in that page. If the paper loads its pages with scripts, paste the page image addresses below, one per line.');
+    }catch(e){setMsg('Couldn’t open that page ('+(e.message||'blocked')+'). Set a feed proxy in Settings → Behavior, or paste the page image addresses below.')}
+    setBusy(false);
+  };
+  const build=async()=>{
+    const urls=list.split(/\s+/).map(x=>x.trim()).filter(x=>/^https?:\/\//i.test(x));
+    if(!urls.length){setMsg('Add at least one page image address');return}
+    setBusy(true);setPdf(null);
+    const pages=[];let bad=0;
+    for(let i=0;i<urls.length;i++){
+      setMsg('Downloading page '+(i+1)+' of '+urls.length+'…');
+      try{pages.push(await epaperPageJpeg(await epaperGet(urls[i],'blob',40000)))}catch(e){bad++}
+    }
+    if(!pages.length){setMsg('None of those images could be downloaded. The site probably blocks it — a feed proxy that allows the host is needed.');setBusy(false);return}
+    const blob=epaperBuildPdf(pages),d=new Date();
+    const name='epaper-'+d.getFullYear()+'-'+String(d.getMonth()+1).padStart(2,'0')+'-'+String(d.getDate()).padStart(2,'0')+'.pdf';
+    setPdf({blob,url:URL.createObjectURL(blob),name,pages:pages.length});
+    setMsg('PDF ready · '+pages.length+' pages · '+(blob.size/1048576).toFixed(1)+' MB'+(bad?' · '+bad+' page'+(bad>1?'s':'')+' skipped':''));
+    setBusy(false);
+  };
+  const share=async()=>{
+    try{const f=new File([pdf.blob],pdf.name,{type:'application/pdf'});
+      if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:pdf.name});return}}catch(e){if(e&&e.name==='AbortError')return}
+    window.open(pdf.url,'_blank');
+  };
+  return h(Sheet,{T,onClose,title:'E-paper to PDF',maxH:'90%',z:97},
+    h('div',{style:{padding:'0 18px 16px'}},
+      h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5}},'Paste the e-paper page address. The app finds every page image, downloads them and joins them into one PDF.'),
+      h('input',{value:url,onChange:e=>setUrl(e.target.value),placeholder:'https://epaper.eenadu.net/…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inpS}),
+      h(PrimaryBtn,{T,label:busy?'Working…':'Find pages',disabled:busy,onClick:find}),
+      list||msg?h('textarea',{value:list,onChange:e=>setList(e.target.value),placeholder:'Page image addresses, one per line',rows:7,autoCapitalize:'none',spellCheck:false,
+        style:Object.assign({},inpS,{fontSize:12,fontFamily:'ui-monospace,monospace',resize:'vertical'})}):null,
+      msg?h('div',{style:{fontSize:13,color:T.meta,lineHeight:1.5,marginTop:10}},msg):null,
+      list.trim()?h(PrimaryBtn,{T,label:'Build PDF',disabled:busy,onClick:build}):null,
+      pdf?h(PrimaryBtn,{T,label:'Save / share PDF',onClick:share}):null));
+}
 function BookmarkRow({T,site,sub,onOpen,onPress,onMenu,editing,lifted,ghost,targeted}){
   return h('div',{'data-bm':site.id,style:{position:'relative',opacity:ghost?0.3:1,
     transform:lifted?'scale(1.03)':'none',transition:'transform 150ms ease',zIndex:lifted?6:undefined,
@@ -5313,6 +5424,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const [fName,setFName]=useState('');
   const [confirm,setConfirm]=useState(null); // {kind:'folder'|'site',...} — nothing is deleted without this
   const [histOpen,setHistOpen]=useState(false);
+  const [epaper,setEpaper]=useState(null); // {url}
   const [histQ,setHistQ]=useState('');
   /* Renaming, deleting and reordering live behind this toggle, so the default
      screen is links only — no red trash can one mis-tap from your bookmarks. */
@@ -5546,6 +5658,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
     h('div',{style:{display:'flex',gap:10,marginTop:16}},
       h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
       h('button',{onClick:()=>setHistOpen(true),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.clock(17),'History')),
+    h('button',{onClick:()=>setEpaper({url:''}),className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',marginTop:10,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.download(18),'E-paper to PDF'),
     h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},
       editMode
         ?'Drag ∷ to reorder a link or move it into another group. Tap Done when you’re finished.'
@@ -5590,6 +5703,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
         }}),
       h('button',{onClick:()=>setConfirm(null),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:2,color:T.fg,fontSize:15,fontWeight:500,textAlign:'center'}},'Cancel')):null,
 
+    epaper?h(EpaperSheet,{T,startUrl:epaper.url,onClose:()=>setEpaper(null)}):null,
     histOpen?h(Sheet,{T,onClose:()=>{setHistOpen(false);setHistQ('')},title:'History',maxH:'86%'},
       h('div',{style:{padding:'0 20px 8px'}},
         h('div',{style:{display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'9px 12px'}},
