@@ -4,9 +4,12 @@ name: Refresh feeds
 on:
   push:
     branches: [main]
-    paths: [routine-sources.json]
+    paths: [routine-sources.json, .github/workflows/refresh-feeds.yml, scripts/refresh-feeds.mjs]
   schedule:
-    - cron: '*/20 * * * *'
+    # GitHub drops/delays crons on busy marks (:00/:20/:40) and may skip */N entirely,
+    # so use odd minutes, several per hour, so at least one lands.
+    - cron: '7,37 * * * *'
+    - cron: '17 */3 * * *'
   workflow_dispatch:
 permissions:
   contents: write
