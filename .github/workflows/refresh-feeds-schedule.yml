@@ -1,0 +1,41 @@
+name: Refresh feeds (schedule)
+# GitHub only runs scheduled workflows from the repo's DEFAULT branch, and this repo's default
+# branch is not `main`. So the cron lives here, and the job checks out `main` for the real work
+# (routine-sources.json + scripts/refresh-feeds.mjs). Output goes to the `feeds-data` branch.
+on:
+  schedule:
+    # off-peak odd minutes, several per hour, so at least one lands
+    - cron: '7,37 * * * *'
+    - cron: '17 */3 * * *'
+  workflow_dispatch:
+permissions:
+  contents: write
+concurrency:
+  group: refresh-feeds
+  cancel-in-progress: false
+jobs:
+  refresh:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Fetch feeds
+        run: |
+          if [ ! -f routine-sources.json ]; then echo "No routine-sources.json on main."; exit 0; fi
+          node scripts/refresh-feeds.mjs routine-sources.json "$RUNNER_TEMP/feeds.json"
+      - name: Publish to feeds-data
+        run: |
+          [ -f "$RUNNER_TEMP/feeds.json" ] || exit 0
+          git config user.name "feed-refresh[bot]"
+          git config user.email "feed-refresh@users.noreply.github.com"
+          git checkout --orphan feeds-data-tmp
+          git rm -rf --quiet . || true
+          cp "$RUNNER_TEMP/feeds.json" feeds.json
+          git add feeds.json
+          git commit -q -m "feeds $(date -u +%FT%TZ)"
+          git push -f origin feeds-data-tmp:feeds-data
