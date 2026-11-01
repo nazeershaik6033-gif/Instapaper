@@ -4108,7 +4108,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
     let todoAll=list;
     try{
       const snap=await fetchFeedsSnapshot();
-      if(snap){
+      // a stale snapshot (the scheduled job stopped) must not count as "refreshed" — go live instead
+      if(snap&&aliveRef.current&&snap.at&&Date.now()-snap.at>3*3600*1000){setSnapAt(snap.at);}
+      else if(snap){
         const left=[];
         for(const it of list){
           const sp=feedSpec(it),e=sp&&snap.feeds[sp.url];let es=null;
