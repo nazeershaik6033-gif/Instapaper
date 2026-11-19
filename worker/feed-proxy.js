@@ -50,4 +50,34 @@ export default {
     for (const k in cors) out.headers.set(k, cors[k]);
     return out;
   },
+
+  // Optional: an on-time trigger for the GitHub "Refresh feeds" job.
+  // GitHub's own cron is best-effort — on a quiet repo it fires a few times a day at
+  // random times, so My Routine's server copy can be hours old at your routine time.
+  // Cloudflare Cron Triggers do fire on schedule, so let this worker kick the job off:
+  //   1. GitHub → Settings → Developer settings → Fine-grained tokens → new token for this
+  //      repo only, permission "Actions: Read and write".
+  //   2. Worker → Settings → Variables → add secret GH_TOKEN = that token
+  //      (optional: GH_REPO = owner/repo if you forked it).
+  //   3. Worker → Settings → Triggers → Cron Triggers → add  45 * * * *
+  //      (hourly at :45, i.e. 15 minutes before any routine time on the hour).
+  // Without GH_TOKEN this does nothing.
+  async scheduled(event, env, ctx) {
+    if (!env.GH_TOKEN) return;
+    const repo = env.GH_REPO || 'nazeershaik6033-gif/Instapaper';
+    const gh = (path, init) => fetch('https://api.github.com/repos/' + repo + path, {
+      ...init,
+      headers: { Authorization: 'Bearer ' + env.GH_TOKEN, Accept: 'application/vnd.github+json', 'User-Agent': 'routine-feed-cron', ...(init && init.headers) },
+    });
+    ctx.waitUntil((async () => {
+      // scheduled workflows live on the default branch, so dispatch it there
+      const info = await gh('');
+      if (!info.ok) { console.log('repo lookup failed', info.status); return; }
+      const ref = (await info.json()).default_branch;
+      const r = await gh('/actions/workflows/' + (env.GH_WORKFLOW || 'refresh-feeds-schedule.yml') + '/dispatches', {
+        method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ ref }),
+      });
+      console.log('dispatch', ref, r.status);
+    })());
+  },
 };
