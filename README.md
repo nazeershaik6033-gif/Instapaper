@@ -128,11 +128,18 @@ A GitHub Action fetches the same sources from a server instead and the app reads
 
 1. In the app tap **Fix this for good: set up server refresh** (shown in Catch-up when feeds fail), or **Settings → Behavior → Server-side refresh → Save sources to GitHub**.
 2. GitHub opens a new `routine-sources.json` with your sources already filled in — press **Commit new file**.
-3. That commit starts the **Refresh feeds** workflow by itself (Actions tab shows the run). After that it runs every ~20 minutes
+3. That commit starts the **Refresh feeds** workflow by itself (Actions tab shows the run). After that it runs on GitHub's schedule
    and publishes `feeds.json` to the `feeds-data` branch (so `main` stays clean).
    When you add or remove sources, tap **Update sources on GitHub**: the list is copied and the file's edit page opens — paste and commit.
 
-The app uses that snapshot automatically; anything it does not cover still goes through the proxies as before.
+The app shows that snapshot instantly, then still fetches live anything the snapshot doesn't cover or that is more than
+20 minutes old — and **Refresh** always fetches live. The status line under the tabs says how current the list really is.
+
+**On-time server refresh.** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a
+day at random times (the Actions history shows gaps of 5–8 hours), so the server copy can be hours old at your routine time.
+If you deployed `worker/feed-proxy.js` on Cloudflare, its optional `scheduled` handler fixes that: add a `GH_TOKEN` secret
+(a fine-grained token for this repo with *Actions: Read and write*) and a Cron Trigger such as `45 * * * *`, and the
+worker starts the GitHub job on time. Instructions are at the bottom of the worker file.
 Note: GitHub pauses scheduled workflows in repos with no activity for 60 days — re-run the workflow if that happens.
 
 ## Notes
