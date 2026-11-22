@@ -5226,6 +5226,7 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
   const [tab,setTab]=useState(initialTab&&trs[initialTab]?initialTab:'');
   const [mode,setMode]=useState('text'); // text | highlights | notes
   const [selbar,setSelbar]=useState(null);
+  const [markPop,setMarkPop]=useState(null); // {hid,top,left} — tapped a highlight
   const contentRef=useRef(null),scrollRef=useRef(null);
   const jumpRef=useRef(null);
   const text=tab?(trs[tab]||''):(a.transcript||'');
@@ -5255,7 +5256,10 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         const txt=sel.toString().replace(/\s+/g,' ').trim();
         if(txt.length>1){
           const r=sel.getRangeAt(0).getBoundingClientRect();
-          setSelbar({top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,100,window.innerWidth-100),text:txt});
+          const rg=sel.getRangeAt(0);
+          const hids=[...new Set([...contentRef.current.querySelectorAll('mark.hl')].filter(m=>{try{return rg.intersectsNode(m)}catch(e){return false}}).map(m=>m.getAttribute('data-hid')))];
+          setMarkPop(null);
+          setSelbar({top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,100,window.innerWidth-100),text:txt,hids});
           return;
         }
       }
@@ -5264,9 +5268,20 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
     document.addEventListener('selectionchange',onSel);
     return()=>{document.removeEventListener('selectionchange',onSel);clearTimeout(t)};
   },[]);
-  const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null)};
+  const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null);setMarkPop(null)};
+  const removeHl=ids=>{
+    const set=new Set(ids);
+    patch(x=>({highlights:(x.highlights||[]).filter(e=>!set.has(e.id))}));
+    toastFn(ids.length>1?ids.length+' highlights removed':'Highlight removed');
+  };
+  const clearAllHl=()=>{
+    if(!allHl.length)return;
+    if(!confirm('Remove all '+allHl.length+' highlight'+(allHl.length>1?'s':'')+' from this transcript? Their notes go too. Your video notes stay.'))return;
+    removeHl(allHl.map(x=>x.id));
+  };
   const selAct=k=>{
     const txt=selbar&&selbar.text;if(!txt)return;
+    if(k==='unhl'){removeHl(selbar.hids);clearSel();return}
     if(k==='copy'){copyText(txt);toastFn('Copied')}
     else addHighlight(txt,k==='note',{src:'transcript',lang:tab});
     clearSel();
@@ -5301,13 +5316,16 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
       ?h('div',null,
         h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}},
           h('span',{style:{fontSize:12.5,color:T.sub}},allHl.length+' highlight'+(allHl.length>1?'s':'')+' · tap one to jump to it'),
-          h('button',{onClick:copyHighlights,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.accent,fontWeight:500}},Icons.copy(15),'Copy all')),
+          h('div',{style:{display:'flex',gap:16}},
+            h('button',{onClick:copyHighlights,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.accent,fontWeight:500}},Icons.copy(15),'Copy all'),
+            h('button',{onClick:clearAllHl,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.danger,fontWeight:500}},Icons.trash(15),'Clear all'))),
         allHl.slice().sort((x,y)=>(x.createdAt||0)-(y.createdAt||0)).map(x=>h('div',{key:x.id,style:{marginBottom:14}},
           h('div',{onClick:()=>jumpTo(x),className:'act98',style:{cursor:'pointer',fontFamily:fontCss(S.font),fontSize:Math.max(S.fontSize-2,15),lineHeight:1.55,padding:'10px 14px',borderLeft:'3px solid #e8c547',background:T.card,borderRadius:'0 10px 10px 0',color:T.fg}},x.text),
           h('div',{style:{display:'flex',alignItems:'flex-start',gap:8,marginTop:6}},
             h('div',{style:{flex:1,fontSize:13.5,color:x.note?T.meta:T.sub,fontStyle:x.note?'italic':'normal',lineHeight:1.45}},x.note||(x.lang?x.lang+' · ':'')+'No note'),
             x.note&&x.lang?h('span',{style:{fontSize:11.5,color:T.sub}},x.lang):null,
-            h('button',{onClick:()=>onHighlightTap(x.id),className:'act95',style:{fontSize:12.5,color:T.accent,flexShrink:0}},x.note?'Edit note':'Add note')))))
+            h('button',{onClick:()=>onHighlightTap(x.id),className:'act95',style:{fontSize:12.5,color:T.accent,flexShrink:0}},x.note?'Edit note':'Add note'),
+            h('button',{onClick:()=>removeHl([x.id]),'aria-label':'Remove highlight',className:'act95',style:{display:'flex',alignItems:'center',gap:3,fontSize:12.5,color:T.danger,flexShrink:0,marginLeft:6}},Icons.trash(14),'Remove')))))
       :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14,lineHeight:1.6}},'No highlights yet.',h('br'),'In Transcript, select any text and tap Highlight or Note. Highlights also appear on your Notes page.');
   }else if(mode==='notes'){
     body=h('div',null,
@@ -5323,7 +5341,14 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         chip('Original',tab==='',()=>{clearSel();setTab('')},'_o'),langs.map(l=>chip(l,tab===l,()=>{clearSel();setTab(l)}))):null,
       text.trim()
         ?h('div',{ref:contentRef,className:'rc',dangerouslySetInnerHTML:{__html:html},
-            onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
+            onClick:e=>{
+              const m=e.target.closest?e.target.closest('mark.hl'):null;
+              if(!m){if(markPop)setMarkPop(null);return}
+              const sel=window.getSelection();if(sel&&!sel.isCollapsed)return; // selecting, not tapping
+              e.preventDefault();
+              const r=m.getBoundingClientRect();
+              setMarkPop({hid:m.getAttribute('data-hid'),top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,120,window.innerWidth-120)});
+            },
             style:{fontFamily:fontCss(S.font),fontSize:S.fontSize,lineHeight:S.lineHeight,color:T.fg,userSelect:'text',WebkitUserSelect:'text',...rcVars}})
         :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14}},'No transcript yet.'),
       text.trim()?h('div',{style:{marginTop:24,fontSize:12,color:T.sub,textAlign:'center'}},wordCount(text).toLocaleString()+' words · select text to highlight or add a note'):null);
@@ -5339,10 +5364,24 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         mode==='text'&&text.trim()?h('button',{onClick:()=>{copyText(text);toastFn('Transcript copied')},'aria-label':'Copy transcript',className:'act90',style:{display:'flex',color:T.meta,padding:8}},Icons.copy(19)):null),
       h('div',{style:{display:'flex',gap:4,margin:'0 14px 10px',padding:3,borderRadius:11,background:T.card}},
         seg('text','Transcript'),seg('highlights','Highlights'+(allHl.length?' ('+allHl.length+')':'')),seg('notes','Notes'+(notes.trim()?' ✓':'')))),
-    h('div',{ref:scrollRef,className:'sy',onScroll:()=>{if(selbar)setSelbar(null)},style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}},
+    h('div',{ref:scrollRef,className:'sy',onScroll:()=>{if(selbar)setSelbar(null);if(markPop)setMarkPop(null)},style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}},
       h('div',{style:{maxWidth:660,margin:'0 auto',padding:'18px 22px calc(40px + '+SAFE_B+')'}},body)),
     selbar?h('div',{className:'fdin',style:{position:'fixed',top:selbar.top,left:selbar.left,transform:'translateX(-50%)',zIndex:65,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
-      [['Highlight','hl'],['Note','note'],['Copy','copy']].map(([l,k],i)=>h('button',{key:k,onMouseDown:e=>e.preventDefault(),onClick:()=>selAct(k),style:{padding:'11px 15px',color:'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null);
+      (selbar.hids&&selbar.hids.length?[['Unhighlight','unhl'],['Note','note'],['Copy','copy']]:[['Highlight','hl'],['Note','note'],['Copy','copy']])
+        .map(([l,k],i)=>h('button',{key:k,onMouseDown:e=>e.preventDefault(),onClick:()=>selAct(k),style:{padding:'11px 15px',color:k==='unhl'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
+    markPop?(()=>{
+      const x=allHl.find(e=>e.id===markPop.hid);
+      if(!x)return null;
+      return h(Fragment,null,
+        h('div',{onClick:()=>setMarkPop(null),style:{position:'fixed',inset:0,zIndex:64}}),
+        h('div',{className:'fdin',style:{position:'fixed',top:markPop.top,left:markPop.left,transform:'translateX(-50%)',zIndex:65,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
+          [['Remove highlight','rm'],[x.note?'Edit note':'Note','note'],['Copy','copy']].map(([l,k],i)=>h('button',{key:k,onClick:()=>{
+            setMarkPop(null);
+            if(k==='rm')removeHl([x.id]);
+            else if(k==='note')onHighlightTap(x.id);
+            else{copyText(x.text+(x.note?'\n\nNote: '+x.note:''));toastFn('Copied')}
+          },style:{padding:'11px 14px',color:k==='rm'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none',whiteSpace:'nowrap'}},l))));
+    })():null);
 }
 
 /* ============================== AI assistant ============================== */
