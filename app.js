@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -1684,6 +1684,9 @@ function loadStore(){
   if(!d||typeof d!=='object')d={};
   d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
+  // The app now opens on Home / Library. Move existing installs over once;
+  // Settings → Home page can still pick My Routine again afterwards.
+  if(!d.settings.homeDefaultV2){if(d.settings.homePage==='brief')d.settings.homePage='home';d.settings.homeDefaultV2=true}
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
@@ -4218,7 +4221,7 @@ function uniqueLetters(names){
   });
   return out;
 }
-function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
+function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const vis=items.filter(i=>!snoozedNow(i.id));
@@ -4663,8 +4666,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0}},Icons.x(17)):null)):null;
 
   /* ---- catch-up view --------------------------------------------------- */
+  // "Save to Home" — adds the update to the library without leaving the app.
+  const saveBtn=(e,sourceName)=>{
+    const on=!!(isSaved&&isSaved(e.url));
+    return onSaveEntry?h('button',{onClick:()=>{if(!on)onSaveEntry(e,sourceName)},className:'act90','aria-label':on?'Saved to Home':'Save to Home',title:on?'In Home':'Save to Home',
+      style:{display:'flex',color:on?T.accent:T.sub,padding:5,flexShrink:0}},on?Icons.check(16):Icons.plus(16)):null;
+  };
   const keptRow=(e,idx)=>h('div',{key:e.url||idx,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:6}},
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
+    saveBtn(e,e.sourceName),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   /* One quiet status line on every tab: how current the list is, when the next
      routine window opens, and a Refresh that always goes live. Errors are the
@@ -4728,6 +4738,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
                 h('div',{style:{display:'flex',flexDirection:'column',gap:6}},
                   shown.map(e=>h('div',{key:e.url||e.publishedMs,style:{display:'flex',gap:6,alignItems:'flex-start',opacity:seenMap[e.url]?.5:1,transition:'opacity 160ms'}},
                     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:it.kind,sourceName:it.name,compact:true,onOpen:()=>openEntry(e)})),
+                    saveBtn(e,it.name),
                     h('button',{onClick:()=>toggleKeep(e,it),className:'act90','aria-label':isKept(e.url)?'Unpin':'Pin',
                       style:{display:'flex',color:isKept(e.url)?T.accent:T.sub,padding:5,flexShrink:0}},Icons.pin(15,isKept(e.url))))),
                   all.length>HIST_SOURCE_CAP?h('button',{onClick:()=>toggleHist(hk),className:'act95',style:{alignSelf:'flex-start',fontSize:12,fontWeight:600,color:T.accent,padding:'5px 2px'}},isOpen?'Show less':'+'+(all.length-HIST_SOURCE_CAP)+' more'):null));
@@ -6461,7 +6472,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
       ['threads','Threads','Your saved threads',Icons.thread(20)],
       ['tags','Tags','Browse by tag',Icons.tag(20)]
     ];
-    const cur=S.homePage||'brief';
+    const cur=S.homePage||'home';
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 6px',fontSize:13,color:T.sub,lineHeight:1.55}},'Choose which screen opens when you launch the app. This is your own pick — change it any time.'),
       h('div',{style:{margin:'6px 16px 0',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
@@ -7034,7 +7045,7 @@ function App(){
   const [scope,setScope]=useState(()=>{
     const valid=['brief','headlines','home','photos','liked','archive','notes','threads','tags','blogs'];
     const hp=data.settings&&data.settings.homePage;
-    return{type:valid.includes(hp)?hp:'brief'};
+    return{type:valid.includes(hp)?hp:'home'};
   });
   const [query,setQuery]=useState('');
   const [searchScope,setSearchScope]=useState('all'); // all|title|source|tags
@@ -7285,6 +7296,31 @@ function App(){
     const vid=ytIdOf(url);
     update(d=>({...d,articles:[{id:uid(),url,title:domainOf(url)||url,source:domainOf(url),author:'',image:vid?('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'):'',html:'',text:'',excerpt:'',words:0,readMin:0,isVideo:!!vid,videoId:vid,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:folderId||null,tags:[],progress:0,opens:0,highlights:[]},...d.articles]}));
     setAddS(null);toastFn('Link saved — download it later from the article');
+  };
+  /* Save a My Routine / Catch-up entry straight to Home. YouTube entries are
+     built from the feed data (title, thumbnail, channel) — instant, no page
+     fetch; other links go through the normal fetch, falling back to a stub. */
+  const savedKeys=useMemo(()=>{
+    const s=new Set();
+    data.articles.forEach(a=>{if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
+    return s;
+  },[data.articles]);
+  const isEntrySaved=url=>{if(!url)return false;const v=ytIdOf(url);return savedKeys.has(url)||(v?savedKeys.has('yt:'+v):false)};
+  const saveRoutineEntry=async(e,sourceName)=>{
+    const url=e&&e.url;if(!url)return;
+    if(isEntrySaved(url)){toastFn('Already in Home');return}
+    const vid=ytIdOf(url);
+    if(vid){
+      const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
+      const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
+        html:'',text:'',excerpt:sourceName?('Video by '+sourceName):'Saved video',words:0,readMin:0,isVideo:true,videoId:vid,publishedAt:e.publishedMs||0,
+        addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]};
+      update(d=>({...d,articles:[article,...d.articles]}));
+      toastFn('Saved to Home');
+      return;
+    }
+    toastFn('Saving to Home…');
+    try{await addByUrl(url)}catch(err){saveStub(url)}
   };
   const retryFetch=async id=>{
     const a=byId(id);if(!a||!a.url)return;
@@ -7579,7 +7615,8 @@ function App(){
   else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn,
     onSetting:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
-    onAskClaude:()=>setAiOpen({routine:true})});
+    onAskClaude:()=>setAiOpen({routine:true}),
+    isSaved:isEntrySaved,onSaveEntry:saveRoutineEntry});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     starred:S.briefStarred||[],muted:S.briefMuted||[],
