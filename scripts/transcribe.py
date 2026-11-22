@@ -77,6 +77,9 @@ def download_audio(url, out_dir):
             return path, title, length, name
         except Exception as e:
             errors.append(f"{name}: {str(e).splitlines()[0][:200]}")
+    if any(re.search(r"not a bot|detected as a bot|sign in to confirm", e, re.I) for e in errors):
+        raise RuntimeError("YouTube blocked the audio download from GitHub's servers (\"confirm you're not a bot\"). "
+                           "Use Gemini or a transcription website for this video.")
     raise RuntimeError("Couldn't download the audio from YouTube (" + "; ".join(errors) + ")")
 
 

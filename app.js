@@ -260,7 +260,7 @@ async function ghApi(S,path,init){
   if(res.status===401)throw new Error('GitHub token is invalid or expired — update it in Settings → AI → Video transcripts.');
   if(res.status===403)throw new Error('GitHub token can\'t run workflows here. It needs access to '+owner+'/'+repo+' with "Actions: Read and write".');
   if(res.status===404)throw new Error('GitHub can\'t find the "Transcribe video" workflow in '+owner+'/'+repo+'. Make sure it is on the default branch and the token can see this repo.');
-  if(!res.ok){let m='GitHub error '+res.status;try{const j=await res.json();if(j.message)m+=': '+j.message}catch(e){}throw new Error(m)}
+  if(!res.ok){let m='GitHub error '+res.status;try{const j=await res.json();if(j.message)m+=': '+j.message}catch(e){}const err=new Error(m);err.status=res.status;throw err}
   return res;
 }
 let ghDefaultBranch='';
@@ -268,11 +268,21 @@ async function txStart(S,article){
   const vid=videoIdOf(article);
   if(!vid)throw new Error('This doesn\'t look like a YouTube video link.');
   if(!S.ghToken)throw new Error('Add a GitHub token in Settings → AI → Video transcripts first.');
-  if(!ghDefaultBranch){const r=await ghApi(S,'');ghDefaultBranch=(await r.json()).default_branch||'main'}
   const id=vid+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
   const model=WHISPER_MODELS.some(m=>m[0]===S.whisperModel)?S.whisperModel:'small';
-  await ghApi(S,'/actions/workflows/'+TX_WORKFLOW+'/dispatches',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ref:ghDefaultBranch,inputs:{url:'https://www.youtube.com/watch?v='+vid,model,request_id:id}})});
+  /* The workflow file has to exist on the repo's default branch for GitHub to
+     accept a dispatch, but the job runs from `main`, where the app and
+     scripts/transcribe.py live. Fall back to the default branch if `main`
+     is missing. */
+  const dispatch=ref=>ghApi(S,'/actions/workflows/'+TX_WORKFLOW+'/dispatches',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ref,inputs:{url:'https://www.youtube.com/watch?v='+vid,model,request_id:id}})});
+  try{await dispatch('main')}
+  catch(e){
+    if(e.status!==422)throw e;
+    if(!ghDefaultBranch){const r=await ghApi(S,'');ghDefaultBranch=(await r.json()).default_branch||'main'}
+    if(ghDefaultBranch==='main')throw e;
+    await dispatch(ghDefaultBranch);
+  }
   txStore.set(vid,{id,vid,model,articleId:article.id||null,title:article.title||'',startedAt:Date.now(),status:'queued',step:'Waiting for a GitHub runner…',runUrl:'',error:'',text:'',saved:false});
   return id;
 }
