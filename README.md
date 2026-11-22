@@ -41,7 +41,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway) and **Ask about this video** (Q&A answered from the video) — in English, Telugu, Hindi, Tamil, and more.
 - **Transcript** — under *Watch on YouTube* in the reader. The label previews the saved transcript; tap it for the transcript window:
   - A **paste box** saved with the video: Paste, Copy, Share, Clear. Edits save as you type.
-  - **Translate** with online AI (Gemini or OpenRouter, whichever has a key) into Telugu, Hindi and more — each language is saved and shown as a tab next to *Original*.
+  - **Translate** with online AI (Gemini or OpenRouter, whichever has a key). Telugu, Hindi and English are one tap; the app detects which of the three the transcript is in and offers the other two (more languages under *More languages*). Each translation is saved and shown as a tab next to *Original*.
   - **Get the transcript**: **Whisper on GitHub** (see *Video transcripts* below — fills the box when done, even if you left), **Gemini** (fills the box; keep the app open), the **Claude app**, or a website — **TurboScribe**, **NoteGPT**, **YouTubeToTranscript**, **Tactiq**: the link is copied and the site opens; copy the transcript there, come back, tap **Paste**.
 
 **Daily Brief**

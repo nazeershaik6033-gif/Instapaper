@@ -5029,6 +5029,16 @@ function transcriptChunks(text,max){
   return chunkParas(paras,max);
 }
 const wordCount=t=>(String(t||'').trim().match(/\S+/g)||[]).length;
+/* Main translation pair set — the languages used most. */
+const TX_MAIN_LANGS=['Telugu','Hindi','English'];
+/* Guess a transcript's language from its script (Telugu / Devanagari / Latin). */
+function scriptLang(t){
+  const s=String(t||'').slice(0,4000);
+  const te=(s.match(/[\u0C00-\u0C7F]/g)||[]).length,hi=(s.match(/[\u0900-\u097F]/g)||[]).length,la=(s.match(/[A-Za-z]/g)||[]).length;
+  const top=Math.max(te,hi,la);
+  if(!top)return'';
+  return top===te?'Telugu':top===hi?'Hindi':'English';
+}
 
 /* The transcript window, opened from the label under "Watch on YouTube".
    A paste box saved with the video, online-AI translations kept per
@@ -5043,6 +5053,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
   const [error,setError]=useState('');
   const [ghDraft,setGhDraft]=useState('');
   const [showLangs,setShowLangs]=useState(false);
+  const [moreLangs,setMoreLangs]=useState(false);
   const alive=useRef(true);
   useEffect(()=>()=>{alive.current=false},[]);
   // a Whisper job (or another device) filled the transcript while this was open
@@ -5103,7 +5114,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
       for(let i=0;i<chunks.length;i++){
         if(alive.current)setBusy('Translating into '+lang+(chunks.length>1?' — part '+(i+1)+' of '+chunks.length:'')+'…');
         out.push(await aiChat(eng,[
-          {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. It is a transcript of spoken words. Keep the same paragraphs and line breaks. Output ONLY the translation, no commentary.'},
+          {role:'system',content:'You are a professional translator. Translate the user text into '+lang+'. It is a transcript of spoken words, so use natural, everyday '+lang+' as people actually speak it'+(lang==='Telugu'||lang==='Hindi'?', in '+lang+' script; keep common English technical terms and names where speakers would':'')+'. Keep the same paragraphs and line breaks. Output ONLY the translation, no commentary.'},
           {role:'user',content:chunks[i]}],8000,m=>alive.current&&setBusy(m)));
         if(i<chunks.length-1)await sleep(1200); // stay under free-tier per-minute limits
       }
@@ -5141,9 +5152,19 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
       tool(Icons.share(20),'Share',()=>shareText(a.title+(tab?' — '+tab:'')+' — transcript',shown,a.url),!shown.trim()),
       tool(Icons.globe(20),'Translate',()=>setShowLangs(v=>!v),!has),
       tool(Icons.trash(20),'Clear',doClear,!has)),
-    showLangs?h('div',{style:{marginTop:12,padding:'12px 12px 6px',borderRadius:12,background:T.card}},
-      h('div',{style:{fontSize:12,color:T.sub,marginBottom:8,lineHeight:1.45}},'Translate the transcript with online AI ('+(translateEngine(S)?aiModelLabel(translateEngine(S)):'needs a Gemini or OpenRouter key')+'). Saved per language.'),
-      h('div',{style:{display:'flex',flexWrap:'wrap',gap:8,paddingBottom:6}},AI_LANGS.map(l=>chip(l+(trs[l]?' ✓':''),false,()=>doTranslate(l),l)))):null);
+    showLangs?(()=>{
+      const from=scriptLang(draft);
+      const eng=translateEngine(S);
+      const big=l=>h('button',{key:l,onClick:()=>doTranslate(l),className:'act95 trc',style:{flex:1,padding:'12px 0',borderRadius:11,fontSize:14.5,fontWeight:600,background:T.fg,color:T.bg}},(trs[l]?'✓ ':'')+l);
+      const main=TX_MAIN_LANGS.filter(l=>l!==from);
+      return h('div',{style:{marginTop:12,padding:'12px',borderRadius:12,background:T.card}},
+        h('div',{style:{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.45}},
+          (from?'Transcript is in '+from+'. ':'')+'Translate with online AI ('+(eng?aiModelLabel(eng):'needs a Gemini or OpenRouter key')+'); each language is saved as a tab.'),
+        h('div',{style:{display:'flex',gap:8}},main.map(big)),
+        h('button',{onClick:()=>setMoreLangs(v=>!v),style:{marginTop:10,fontSize:12.5,color:T.accent}},moreLangs?'Fewer languages':'More languages'),
+        moreLangs?h('div',{style:{display:'flex',flexWrap:'wrap',gap:8,marginTop:8}},
+          AI_LANGS.filter(l=>!TX_MAIN_LANGS.includes(l)&&l!==from).map(l=>chip(l+(trs[l]?' ✓':''),false,()=>doTranslate(l),l))):null);
+    })():null);
 
   let jobBox=null;
   if(jobOpen)jobBox=h('div',{style:{margin:'0 20px 6px',padding:'12px 14px',borderRadius:12,background:T.card,fontSize:13.5,lineHeight:1.5}},
