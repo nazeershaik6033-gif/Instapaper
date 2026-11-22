@@ -1,0 +1,6 @@
+# For scripts/transcribe.py (GitHub Action "Transcribe video").
+# The downloaders are left unpinned on purpose: YouTube changes often and only
+# their latest releases keep working.
+faster-whisper==1.2.1
+pytubefix
+yt-dlp

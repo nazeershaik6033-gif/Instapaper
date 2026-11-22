@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false,routineLayout:'stories'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -145,12 +145,23 @@ async function geminiChat(key,model,messages,maxTokens,onWait){
    Gemini can "watch" a YouTube video passed as a fileData part and return a
    transcript / summary / answer. Only Gemini supports this — text-only models
    (OpenRouter) cannot, so aiVideo requires the Gemini provider. */
+/* Streams the reply (streamGenerateContent + SSE) so bytes keep flowing while
+   Gemini watches the video. A plain request sits silent for minutes and iOS
+   Safari drops it — that surfaced as the bare "Load failed" error. Network
+   drops are retried once, then explained. */
 async function geminiVideo(key,model,prompt,url,maxTokens,onWait){
   const body={contents:[{role:'user',parts:[{fileData:{fileUri:url}},{text:prompt}]}],generationConfig:{maxOutputTokens:maxTokens||4096,temperature:0.3}};
-  let res;
+  const endpoint='https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':streamGenerateContent?alt=sse&key='+encodeURIComponent(key);
+  let res,netTries=0;
   for(let attempt=0;;attempt++){
-    res=await fetchWithTimeout('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(model)+':generateContent?key='+encodeURIComponent(key),
-      {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},180000);
+    try{
+      res=await fetchWithTimeout(endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},240000);
+    }catch(e){
+      if(netTries++<1){if(onWait)onWait('Connection dropped — retrying…');await sleep(1500);attempt--;continue}
+      throw new Error(e&&e.name==='AbortError'
+        ?'Gemini took too long on this video. Try "Whisper on GitHub" or a transcription website instead.'
+        :'The connection to Gemini dropped ('+((e&&e.message)||'network error')+'). Keep the app open while it works, or use "Whisper on GitHub", which keeps running when you leave.');
+    }
     if(res.status===429&&attempt<2){
       const wait=(attempt+1)*6;
       if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
@@ -161,18 +172,40 @@ async function geminiVideo(key,model,prompt,url,maxTokens,onWait){
   }
   if(!res.ok){
     let msg='Gemini video request failed ('+res.status+')';
-    try{const j=await res.json();if(j&&j.error&&j.error.message)msg=String(j.error.message)}catch(e){}
+    try{const j=await res.json();const e=Array.isArray(j)?j[0]&&j[0].error:j&&j.error;if(e&&e.message)msg=String(e.message)}catch(e){}
     if(res.status===400&&/api key/i.test(msg))msg='Invalid Gemini API key — check it in Settings → AI.';
     else if(res.status===400)msg='Gemini couldn\'t read this video. It may be private, age-restricted, or region-locked.';
     else if(res.status===403)msg='This Gemini API key isn\'t allowed to use '+model+'.';
     else if(res.status===429)msg='Gemini free-tier quota hit — wait a minute and try again, or use Gemini 2.5 Flash in Settings → AI.';
     throw new Error(msg);
   }
-  const j=await res.json();
-  const cand=j&&j.candidates&&j.candidates[0];
-  const out=cand&&cand.content&&cand.content.parts?cand.content.parts.map(p=>p.text||'').join(''):'';
+  let out='',finish='',raw='';
+  const eat=line=>{
+    if(!line.startsWith('data:'))return;
+    try{
+      const j=JSON.parse(line.slice(5).trim());
+      const c=j&&j.candidates&&j.candidates[0];
+      if(c&&c.content&&c.content.parts)out+=c.content.parts.map(p=>p.text||'').join('');
+      if(c&&c.finishReason)finish=c.finishReason;
+    }catch(e){}
+  };
+  try{
+    if(res.body&&res.body.getReader){
+      const rd=res.body.getReader(),dec=new TextDecoder();
+      for(;;){
+        const{done,value}=await rd.read();
+        if(done)break;
+        raw+=dec.decode(value,{stream:true});
+        let i;while((i=raw.indexOf('\n'))>=0){eat(raw.slice(0,i).replace(/\r$/,''));raw=raw.slice(i+1)}
+        if(onWait&&out)onWait('Writing… '+out.split(/\s+/).length+' words');
+      }
+      eat(raw);
+    }else (await res.text()).split('\n').forEach(eat);
+  }catch(e){
+    if(!out.trim())throw new Error('The connection to Gemini dropped while it was answering. Keep the app open and try again.');
+  }
   if(!out.trim()){
-    if(cand&&cand.finishReason==='SAFETY')throw new Error('Gemini blocked this video (safety filters).');
+    if(finish==='SAFETY')throw new Error('Gemini blocked this video (safety filters).');
     throw new Error('Empty response — the video may be too long for the free tier, or has no usable audio.');
   }
   return out.trim();
@@ -181,6 +214,152 @@ function aiVideo(S,prompt,url,maxTokens,onWait){
   if(S.aiProvider!=='gemini'||!S.geminiKey)
     return Promise.reject(new Error('Video AI is powered by Google Gemini. Open Settings → AI, switch to Gemini, and add a free key from aistudio.google.com/apikey.'));
   return geminiVideo(S.geminiKey,S.geminiModel||'gemini-2.5-flash',prompt,url,maxTokens,onWait);
+}
+
+/* ---------- Full transcript: Whisper on GitHub ----------
+   The app starts .github/workflows/transcribe.yml (scripts/transcribe.py:
+   pytubefix audio + faster-whisper, adapted from
+   bulk_transcribe_youtube_videos_from_playlist). The job publishes
+   t/<id>.json on the `transcripts-data` branch; the app polls the run and
+   reads that file. Jobs live in localStorage so they survive closing the
+   sheet or the app, and finished transcripts are saved to the library. */
+const WHISPER_MODELS=[['tiny','Tiny','fastest, rough'],['base','Base','fast'],['small','Small','good balance'],['medium','Medium','more accurate, ~3× slower'],['large-v3','Large v3','best, very slow on CPU']];
+const TRANSCRIBE_SITES=[
+  {id:'turboscribe',name:'TurboScribe',sub:'Whisper accuracy · 3 free files a day · paste the link',url:()=>'https://turboscribe.ai/'},
+  {id:'notegpt',name:'NoteGPT',sub:'Free · instant · transcript + summary · paste the link',url:()=>'https://notegpt.io/youtube-transcript-generator'},
+  {id:'yt2t',name:'YouTubeToTranscript',sub:'Free · opens straight to this video',url:id=>'https://youtubetotranscript.com/transcript?v='+encodeURIComponent(id),direct:true},
+  {id:'tactiq',name:'Tactiq',sub:'Free · instant · captions-based · paste the link',url:()=>'https://tactiq.io/tools/youtube-transcript'}
+];
+const TX_WORKFLOW='transcribe.yml';
+const TX_JOBS_KEY='insta_transcribe_jobs';
+function videoIdOf(a){
+  if(a&&a.videoId&&/^[A-Za-z0-9_-]{11}$/.test(a.videoId))return a.videoId;
+  const m=String((a&&a.url)||a||'').match(/(?:v=|youtu\.be\/|\/shorts\/|\/live\/|\/embed\/)([A-Za-z0-9_-]{11})/);
+  return m?m[1]:'';
+}
+const txStore={
+  jobs:(()=>{try{return JSON.parse(localStorage.getItem(TX_JOBS_KEY)||'{}')||{}}catch(e){return{}}})(),
+  subs:new Set(),
+  save(){try{localStorage.setItem(TX_JOBS_KEY,JSON.stringify(this.jobs))}catch(e){}this.subs.forEach(f=>{try{f()}catch(e){}})},
+  set(vid,patch){this.jobs={...this.jobs,[vid]:patch===null?undefined:{...(this.jobs[vid]||{}),...patch}};if(patch===null)delete this.jobs[vid];
+    const ids=Object.keys(this.jobs).sort((a,b)=>(this.jobs[b].startedAt||0)-(this.jobs[a].startedAt||0));
+    ids.slice(25).forEach(k=>delete this.jobs[k]); // keep the newest 25
+    this.save()}
+};
+function useTxJob(vid){
+  const [,force]=useState(0);
+  useEffect(()=>{const f=()=>force(x=>x+1);txStore.subs.add(f);return()=>txStore.subs.delete(f)},[]);
+  return vid?txStore.jobs[vid]||null:null;
+}
+async function ghApi(S,path,init){
+  const{owner,repo}=repoSlug();
+  let res;
+  try{
+    res=await fetchWithTimeout('https://api.github.com/repos/'+owner+'/'+repo+path,Object.assign({},init,{headers:Object.assign({Authorization:'Bearer '+S.ghToken,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},init&&init.headers)}),25000);
+  }catch(e){throw new Error('Couldn\'t reach GitHub — check your connection.')}
+  if(res.status===401)throw new Error('GitHub token is invalid or expired — update it in Settings → AI → Video transcripts.');
+  if(res.status===403)throw new Error('GitHub token can\'t run workflows here. It needs access to '+owner+'/'+repo+' with "Actions: Read and write".');
+  if(res.status===404)throw new Error('GitHub can\'t find the "Transcribe video" workflow in '+owner+'/'+repo+'. Make sure it is on the default branch and the token can see this repo.');
+  if(!res.ok){let m='GitHub error '+res.status;try{const j=await res.json();if(j.message)m+=': '+j.message}catch(e){}const err=new Error(m);err.status=res.status;throw err}
+  return res;
+}
+let ghDefaultBranch='';
+async function txStart(S,article){
+  const vid=videoIdOf(article);
+  if(!vid)throw new Error('This doesn\'t look like a YouTube video link.');
+  if(!S.ghToken)throw new Error('Add a GitHub token in Settings → AI → Video transcripts first.');
+  const id=vid+'-'+Date.now().toString(36)+Math.random().toString(36).slice(2,6);
+  const model=WHISPER_MODELS.some(m=>m[0]===S.whisperModel)?S.whisperModel:'small';
+  /* The workflow file has to exist on the repo's default branch for GitHub to
+     accept a dispatch, but the job runs from `main`, where the app and
+     scripts/transcribe.py live. Fall back to the default branch if `main`
+     is missing. */
+  const dispatch=ref=>ghApi(S,'/actions/workflows/'+TX_WORKFLOW+'/dispatches',{method:'POST',headers:{'Content-Type':'application/json'},
+    body:JSON.stringify({ref,inputs:{url:'https://www.youtube.com/watch?v='+vid,model,request_id:id}})});
+  try{await dispatch('main')}
+  catch(e){
+    if(e.status!==422)throw e;
+    if(!ghDefaultBranch){const r=await ghApi(S,'');ghDefaultBranch=(await r.json()).default_branch||'main'}
+    if(ghDefaultBranch==='main')throw e;
+    await dispatch(ghDefaultBranch);
+  }
+  txStore.set(vid,{id,vid,model,articleId:article.id||null,title:article.title||'',startedAt:Date.now(),status:'queued',step:'Waiting for a GitHub runner…',runUrl:'',error:'',text:'',saved:false});
+  return id;
+}
+const txStepLabel=name=>/download|transcrib/i.test(name)?'Downloading audio and transcribing…':/install|python|cache/i.test(name)?'Setting up Whisper…':/publish/i.test(name)?'Almost done — publishing…':'Starting…';
+async function txFetchResult(id,S){
+  const{owner,repo}=repoSlug();
+  try{
+    const r=await fetchWithTimeout('https://raw.githubusercontent.com/'+owner+'/'+repo+'/transcripts-data/t/'+id+'.json?t='+Date.now(),{cache:'no-store'},20000);
+    if(r.ok)return await r.json();
+  }catch(e){}
+  try{ // raw.githubusercontent can lag a minute behind a fresh push — ask the API too
+    const r=await fetchWithTimeout('https://api.github.com/repos/'+owner+'/'+repo+'/contents/t/'+id+'.json?ref=transcripts-data',
+      {headers:Object.assign({Accept:'application/vnd.github.raw'},S&&S.ghToken?{Authorization:'Bearer '+S.ghToken}:{}),cache:'no-store'},20000);
+    if(r.ok)return JSON.parse(await r.text());
+  }catch(e){}
+  return null;
+}
+/* One polling pass over every unfinished job. */
+async function txPoll(S){
+  const open=Object.values(txStore.jobs).filter(j=>j.status==='queued'||j.status==='running');
+  if(!open.length||!S.ghToken)return;
+  let runs=[];
+  try{const r=await ghApi(S,'/actions/workflows/'+TX_WORKFLOW+'/runs?event=workflow_dispatch&per_page=30');runs=(await r.json()).workflow_runs||[]}catch(e){}
+  for(const j of open){
+    const run=runs.find(r=>(r.display_title||r.name||'').indexOf(j.id)>=0);
+    if(run){
+      const patch={runUrl:run.html_url,status:run.status==='completed'?'running':(run.status==='queued'?'queued':'running')};
+      if(run.status==='in_progress'){
+        try{
+          const jr=await ghApi(S,'/actions/runs/'+run.id+'/jobs');
+          const steps=(((await jr.json()).jobs||[])[0]||{}).steps||[];
+          const cur=steps.find(s=>s.status==='in_progress');
+          if(cur)patch.step=txStepLabel(cur.name);
+        }catch(e){}
+      }
+      if(run.status==='completed'){
+        const out=await txFetchResult(j.id,S);
+        if(out&&out.status==='done'){txStore.set(j.vid,{status:'done',text:out.text||'',language:out.language||'',duration:out.duration||0,step:''});continue}
+        if(out&&out.status==='error'){txStore.set(j.vid,{status:'error',error:out.error||'Transcription failed.',step:''});continue}
+        if(run.conclusion&&run.conclusion!=='success'&&Date.now()-Date.parse(run.updated_at)>90000){
+          txStore.set(j.vid,{status:'error',error:'The GitHub job '+run.conclusion+' without a result — open the run log for details.',step:''});continue}
+        patch.step='Almost done — publishing…';
+      }
+      txStore.set(j.vid,patch);
+    }else if(Date.now()-j.startedAt>20*60000){
+      txStore.set(j.vid,{status:'error',error:'GitHub never started the job. Check the Actions tab of your repo.',step:''});
+    }
+  }
+}
+/* App-level poller: keeps checking while any job is open, saves finished
+   transcripts to the library and toasts, even if the AI sheet was closed. */
+function useTranscribePoller(S,onDone,toastFn){
+  const sRef=useRef(S);sRef.current=S;
+  const doneRef=useRef(onDone);doneRef.current=onDone;
+  useEffect(()=>{
+    const ids=()=>Object.values(txStore.jobs).map(j=>j.id).join();
+    let stop=false,timer=null,running=false,known=ids();
+    const tick=async()=>{
+      if(stop||running)return;
+      running=true;clearTimeout(timer);
+      const pending=Object.values(txStore.jobs).some(j=>j.status==='queued'||j.status==='running');
+      if(pending&&document.visibilityState==='visible'){try{await txPoll(sRef.current)}catch(e){}}
+      Object.values(txStore.jobs).forEach(j=>{
+        if(j.status==='done'&&!j.saved){txStore.set(j.vid,{saved:true});try{doneRef.current(j)}catch(e){}}
+        if(j.status==='error'&&!j.notified){txStore.set(j.vid,{notified:true});toastFn('Transcript failed — open ✦ AI on the video for details')}
+      });
+      running=false;
+      if(!stop)timer=setTimeout(tick,pending?12000:30000);
+    };
+    tick();
+    const vis=()=>{if(document.visibilityState==='visible')tick()};
+    document.addEventListener('visibilitychange',vis);
+    // a newly started job: first check soon, the run takes a few seconds to appear
+    const sub=()=>{const k=ids();if(k!==known){known=k;if(!running){clearTimeout(timer);timer=setTimeout(tick,5000)}}};
+    txStore.subs.add(sub);
+    return()=>{stop=true;clearTimeout(timer);document.removeEventListener('visibilitychange',vis);txStore.subs.delete(sub)};
+  },[]);
 }
 
 /* live model catalog from OpenRouter — only models that can actually chat */
@@ -4831,6 +5010,9 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
   const setLang=l=>update(d=>({...d,settings:{...d.settings,aiLang:l}}));
   const ctxText=ctx?((ctx.title||'')+'\n\n'+(ctx.text||'')).slice(0,15000):'';
   const isVid=!!(ctx&&ctx.isVideo); // videos are summarised/transcribed via Gemini's video understanding
+  const vid=isVid?videoIdOf(ctx):'';
+  const txJob=useTxJob(vid); // Whisper-on-GitHub job for this video, if any
+  const [ghDraft,setGhDraft]=useState('');
 
   /* Recent entries per My Routine source, newest first, capped per source so the
      picker stays scannable. isNew mirrors BriefView's current window so "what's
@@ -4878,12 +5060,28 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
         {role:'user',content:'Summarize the following article as 5–8 concise bullet points followed by one line starting with "Takeaway:". Respond entirely in '+outLang+'.\n\n'+ctxText}],1600,setBusy);
     setResult({kind:'Summary',text:out,lang:outLang});setView('result');
   })};
-  const doTranscript=()=>{
-    if(usingClaude)return handOff('Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary'+(outLang!=='English'?' — translated into '+outLang:'')+'.');
-    run('Transcribing…',async()=>{
-    const out=await aiVideo(S,'Transcribe everything spoken in this video into clean, readable text. Use natural paragraphs. Do NOT add timestamps, speaker labels, or any commentary — output only the spoken words'+(outLang!=='English'?', translated into '+outLang:'')+'.',ctx.url,8192,setBusy);
+  /* Full transcript opens a picker: Whisper on GitHub (the repo's code), Gemini,
+     the Claude app, or an outside transcription website. */
+  const doTranscript=()=>{setError('');setView('transcribe')};
+  const txPrompt='Transcribe everything spoken in this video into clean, readable text. Use natural paragraphs. Do NOT add timestamps, speaker labels, or any commentary — output only the spoken words'+(outLang!=='English'?', translated into '+outLang:'')+'.';
+  const doTranscriptGemini=()=>run('Transcribing with Gemini…',async()=>{
+    if(!S.geminiKey)throw new Error('Gemini needs a free API key — add one in Settings → AI → Google Gemini.');
+    const out=await geminiVideo(S.geminiKey,S.geminiModel||'gemini-2.5-flash',txPrompt,'https://www.youtube.com/watch?v='+vid,8192,setBusy);
     setResult({kind:'Transcript',text:out,lang:outLang,transcript:true});setView('result');
-  })};
+  });
+  const doTranscriptClaude=()=>{if(openInClaude('Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary'+(outLang!=='English'?' — translated into '+outLang:'')+'.'+claudeArticleBlock(),toastFn))onClose()};
+  const doTranscriptWhisper=async()=>{
+    setError('');setBusy('Starting Whisper on GitHub…');
+    try{await txStart(S,ctx);toastFn('Started — you can close this, it keeps running')}
+    catch(e){setError((e&&e.message)||'Couldn\'t start the GitHub job')}
+    setBusy('');
+  };
+  const doTranscriptSite=site=>{
+    const link='https://www.youtube.com/watch?v='+vid;
+    copyText(link);
+    toastFn(site.direct?'Opening '+site.name+'…':'Video link copied — paste it on '+site.name);
+    openExternalUrl(site.url(vid));
+  };
   const doTranslate=lang=>{
     if(usingClaude)return handOff('Translate this article into '+lang+'. Keep the same paragraphs. Output only the translation.');
     run('Translating…',async()=>{
@@ -5109,7 +5307,55 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
           h('button',{onClick:()=>{copyText(result.text);toastFn('Copied')},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.copy(20),'Copy'),
           h('button',{onClick:()=>shareText(ctx?ctx.title:'AI',result.text,ctx?ctx.url:''),className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.share(20),'Share'),
           ctx?h('button',{onClick:()=>{onSaveNote(ctx,result.kind,result.text);},className:'act95',style:{color:T.meta,display:'flex',flexDirection:'column',alignItems:'center',gap:4,fontSize:11.5}},Icons.note(20),'To Notes'):null),
+        result.saved?h('div',{style:{marginTop:14,fontSize:12.5,color:T.sub,textAlign:'center'}},'Already saved to your library'):
         (result.translation||result.rewrite||result.transcript)&&ctx?h(PrimaryBtn,{T,style:{margin:'16px 0 0',width:'100%'},label:'Save as new article',onClick:()=>onSaveCopy(ctx,result)}):null));
+  }else if(view==='transcribe'&&isVid){
+    const sec=t=>h('div',{style:{padding:'14px 20px 6px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},t);
+    const mins=txJob?Math.max(0,Math.round((Date.now()-txJob.startedAt)/60000)):0;
+    const modelName=(WHISPER_MODELS.find(m=>m[0]===S.whisperModel)||WHISPER_MODELS[2])[1];
+    const box=(children,color)=>h('div',{style:{margin:'0 20px 6px',padding:'13px 15px',borderRadius:12,background:T.card,fontSize:13.5,lineHeight:1.5,color:color||T.fg}},children);
+    let status=null;
+    if(txJob&&(txJob.status==='queued'||txJob.status==='running')){
+      status=box([
+        h('div',{key:'a',style:{display:'flex',alignItems:'center',gap:10}},h(Spinner,{T,size:16}),h('span',{style:{fontWeight:600}},txJob.step||'Working…')),
+        h('div',{key:'b',style:{fontSize:12.5,color:T.sub,marginTop:6}},'Whisper '+txJob.model+' on GitHub · started '+(mins?mins+' min ago':'just now')+'. You can close this — the transcript is saved to your library when it\'s ready.'),
+        h('div',{key:'c',style:{display:'flex',gap:16,marginTop:8}},
+          txJob.runUrl?h('button',{onClick:()=>openExternalUrl(txJob.runUrl),style:{fontSize:12.5,color:T.accent}},'View job on GitHub'):null,
+          h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Stop tracking'))]);
+    }else if(txJob&&txJob.status==='done'){
+      status=box([
+        h('div',{key:'a',style:{fontWeight:600}},'✓ Transcript ready'+(txJob.language?' · '+txJob.language.toUpperCase():'')),
+        h('div',{key:'b',style:{fontSize:12.5,color:T.sub,marginTop:4}},'Saved to your library as "'+(txJob.title||ctx.title)+' — Transcript".'),
+        h('button',{key:'c',onClick:()=>{setResult({kind:'Transcript · Whisper',text:txJob.text,lang:'',transcript:true,saved:true});setView('result')},style:{fontSize:13.5,color:T.accent,marginTop:8,fontWeight:600}},'Show transcript')]);
+    }else if(txJob&&txJob.status==='error'){
+      status=box([
+        h('div',{key:'a',style:{fontWeight:600}},'Whisper on GitHub failed'),
+        h('div',{key:'b',style:{fontSize:12.5,marginTop:4,wordBreak:'break-word'}},txJob.error),
+        h('div',{key:'c',style:{display:'flex',gap:16,marginTop:8}},
+          txJob.runUrl?h('button',{onClick:()=>openExternalUrl(txJob.runUrl),style:{fontSize:12.5,color:T.accent}},'Open job log'):null,
+          h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Dismiss'))],T.danger);
+    }
+    const jobOpen=txJob&&(txJob.status==='queued'||txJob.status==='running');
+    body=h('div',null,backBtn,
+      error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
+      status,
+      sec('Transcribe in the app'),
+      S.ghToken
+        ?h(ARow,{T,icon:Icons.headphones(20),label:jobOpen?'Whisper on GitHub — running':txJob&&txJob.status!=='error'?'Run Whisper again':'Whisper on GitHub',
+            sub:'Speech-to-text, model '+modelName+' · a few minutes · keeps going if you leave',onClick:jobOpen?()=>toastFn('Already transcribing this video'):doTranscriptWhisper})
+        :h('div',{style:{padding:'10px 20px 14px',borderBottom:'1px solid '+T.hair}},
+            h('div',{style:{display:'flex',alignItems:'center',gap:16}},h('span',{style:{color:T.meta,display:'flex'}},Icons.headphones(20)),
+              h('div',{style:{flex:1}},h('div',{style:{fontSize:16.5}},'Whisper on GitHub'),
+                h('div',{style:{fontSize:12.5,color:T.sub,marginTop:2,lineHeight:1.45}},'One-time setup: paste a GitHub token with "Actions: Read and write" for '+repoSlug().owner+'/'+repoSlug().repo+'. Details in Settings → AI.'))),
+            h('div',{style:{display:'flex',gap:8,marginTop:10}},
+              h('input',{value:ghDraft,onChange:e=>setGhDraft(e.target.value),placeholder:'github_pat_…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+                style:{flex:1,minWidth:0,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
+              h('button',{disabled:!ghDraft.trim(),onClick:()=>{update(d=>({...d,settings:{...d.settings,ghToken:ghDraft.trim()}}));setGhDraft('');toastFn('GitHub connected')},className:'act95',
+                style:{padding:'0 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:600,opacity:ghDraft.trim()?1:.4}},'Save'))),
+      h(ARow,{T,icon:Icons.ai(20),label:'Gemini',sub:S.geminiKey?'Fast · '+(outLang!=='English'?'translated into '+outLang:'in the spoken language')+' · keep the app open':'Needs a free Gemini key (Settings → AI)',onClick:doTranscriptGemini}),
+      h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Hand the video to Claude — no API key',onClick:doTranscriptClaude}),
+      sec('Transcribe on a website'),
+      TRANSCRIBE_SITES.map(site=>h(ARow,{key:site.id,T,icon:Icons.external(20),label:site.name,sub:site.sub,onClick:()=>doTranscriptSite(site)})));
   }else if(view==='langs'){
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px 4px',fontSize:14,color:T.meta}},'Translate this article into:'),
@@ -5170,7 +5416,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
       isVid?[
         h(ARow,{key:'sum',T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
-        h(ARow,{key:'tr',T,icon:Icons.headphones(20),label:'Full transcript',sub:'Speech-to-text · save & listen',onClick:doTranscript}),
+        h(ARow,{key:'tr',T,icon:Icons.headphones(20),label:'Full transcript',sub:txJob&&(txJob.status==='queued'||txJob.status==='running')?'Transcribing on GitHub — '+(txJob.step||'working…'):txJob&&txJob.status==='done'?'Ready — saved to your library':'Whisper · Gemini · TurboScribe & more',onClick:doTranscript,right:txJob&&(txJob.status==='queued'||txJob.status==='running')?h(Spinner,{T,size:14}):null}),
         h(ARow,{key:'ask',T,icon:Icons.ai(20),label:'Ask about this video',sub:'Any question, answered from the video',onClick:()=>setView('ask')}),
         h(ARow,{key:'cl',T,icon:Icons.send(20),label:'Open in Claude',sub:'Hand this video to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}})
       ]:[
@@ -5184,7 +5430,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
     body,
-    ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},
+    ready&&!busy&&view!=='transcribe'?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},
       usingClaude?'Opens in the Claude app — free, no API key. Change in Settings → AI.':'Model: '+aiModelLabel(S)+' — change in Settings'):null);
 }
 
@@ -6034,6 +6280,24 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
                 h('input',{value:S.aiModel,onChange:e=>set({aiModel:e.target.value.trim()}),placeholder:'model id, e.g. deepseek/deepseek-r1-0528:free',autoCapitalize:'none',spellCheck:false,
                   style:{width:'100%',marginTop:8,padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.meta,fontSize:12,fontFamily:'ui-monospace,monospace'}}));
             })())));
+    const{owner:ghO,repo:ghR}=repoSlug();
+    content=h(Fragment,null,content,
+      head('Video transcripts \u2014 Whisper on GitHub'),
+      h('div',{style:{padding:'0 20px 12px'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.55,marginBottom:10}},'\u201cFull transcript\u201d on a video can run OpenAI\u2019s Whisper speech-to-text for free on GitHub\u2019s servers (the Transcribe video workflow in ',h('strong',null,ghO+'/'+ghR),'). It takes a few minutes and keeps going if you close the app; the transcript is saved to your library.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.7,marginBottom:10}},
+          '1. ',h('a',{href:'https://github.com/settings/personal-access-tokens/new',target:'_blank',rel:'noopener',style:{color:T.accent}},'Create a fine-grained GitHub token'),h('br'),
+          '2. Repository access: only ',h('strong',null,ghO+'/'+ghR),h('br'),
+          '3. Permissions \u2192 Actions: ',h('strong',null,'Read and write'),h('br'),
+          '4. Generate, copy, and paste it here:'),
+        h('input',{type:'password',value:S.ghToken||'',onChange:e=>set({ghToken:e.target.value.trim()}),placeholder:'github_pat_\u2026',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',padding:'11px 13px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'14px 0 8px'}},'Whisper model'),
+        h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',paddingBottom:4}},
+          WHISPER_MODELS.map(([id,label])=>h('button',{key:id,onClick:()=>set({whisperModel:id}),className:'act95 trc',
+            style:{padding:'8px 14px',borderRadius:18,fontSize:13,fontWeight:600,flexShrink:0,background:(S.whisperModel||'small')===id?T.fg:T.card,color:(S.whisperModel||'small')===id?T.bg:T.fg}},label))),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:6,lineHeight:1.5}},
+          (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min. Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
   }else if(page==='sites'){
     content=h(Fragment,null,
       h('div',{style:{padding:'8px 20px 0'}},
@@ -6785,15 +7049,27 @@ function App(){
     patchArticle(id,Object.assign(title?{title}:{},{html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words)}));
     setSheet(null);toastFn('Content updated');
   };
-  const saveAiCopy=(orig,result)=>{
+  const buildAiCopy=(orig,result)=>{
     const paras=result.text.split(/\n{2,}/).map(p=>p.trim()).filter(Boolean);
     const title=(result.translation&&paras.length>1?paras.shift():orig.title+' — '+result.kind).replace(/^#+\s*/,'');
     const html=paras.map(p=>'<p>'+escapeHtml(p).replace(/\n/g,'<br/>')+'</p>').join('\n');
     const text=htmlToText(html);
     const words=countWords(text);
-    update(d=>({...d,articles:[{id:uid(),url:orig.url,title,source:orig.source,author:orig.author,image:orig.image||'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:orig.folderId||null,tags:[...new Set([...orig.tags,result.translation?'translated':result.transcript?'transcript':'rewritten'])],progress:0,opens:0,highlights:[],lang:LANG_CODES[result.lang]||''},...d.articles]}));
+    return{id:uid(),url:orig.url,title,source:orig.source,author:orig.author,image:orig.image||'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),isVideo:false,videoId:null,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:orig.folderId||null,tags:[...new Set([...(orig.tags||[]),result.translation?'translated':result.transcript?'transcript':'rewritten'])],progress:0,opens:0,highlights:[],lang:result.langCode||LANG_CODES[result.lang]||''};
+  };
+  const saveAiCopy=(orig,result)=>{
+    update(d=>({...d,articles:[buildAiCopy(orig,result),...d.articles]}));
     setAiOpen(null);toastFn('Saved as new article');
   };
+  /* Whisper-on-GitHub transcripts finish minutes later — save them to the
+     library automatically, wherever the user is in the app by then. */
+  useTranscribePoller(S,j=>{
+    update(d=>{
+      const orig=d.articles.find(a=>a.id===j.articleId)||{url:'https://www.youtube.com/watch?v='+j.vid,title:j.title||'YouTube video',source:'youtube.com',author:'',image:'https://i.ytimg.com/vi/'+j.vid+'/hqdefault.jpg',tags:[],folderId:null};
+      return{...d,articles:[buildAiCopy(orig,{kind:'Transcript',text:j.text,transcript:true,langCode:j.language||''}),...d.articles]};
+    });
+    toastFn('Transcript ready — saved to your library');
+  },toastFn);
   const saveAiNote=(orig,kind,text)=>{
     patchArticle(orig.id,a=>({highlights:[...a.highlights,{id:uid(),text:'✦ AI '+kind,note:text.slice(0,6000),createdAt:Date.now()}]}));
     toastFn('Saved to Notes');
