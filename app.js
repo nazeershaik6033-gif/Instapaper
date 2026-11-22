@@ -2380,6 +2380,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const scrollRef=useRef(null),contentRef=useRef(null);
   const [aaOpen,setAaOpen]=useState(false);
   const [txOpen,setTxOpen]=useState(false); // video transcript window
+  const [txFull,setTxFull]=useState(null); // {tab} — full-screen transcript
   const txJob=useTxJob(a.isVideo?videoIdOf(a):'');
   const [selbar,setSelbar]=useState(null);
   const [retrying,setRetrying]=useState(false);
@@ -2613,12 +2614,15 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
             const t=(a.transcript||'').trim();
             const running=txJob&&(txJob.status==='queued'||txJob.status==='running');
             const nTr=Object.keys(a.transcriptTr||{}).filter(k=>a.transcriptTr[k]).length;
-            return h('button',{onClick:()=>setTxOpen(true),className:'act98',style:{display:'block',width:'100%',textAlign:'left',marginTop:22,padding:'13px 15px',borderRadius:12,background:T.card,color:T.fg}},
+            const nHl=(a.highlights||[]).filter(x=>x.src==='transcript').length;
+            return h('div',{role:'button',tabIndex:0,onClick:()=>setTxOpen(true),className:'act98',style:{display:'block',width:'100%',textAlign:'left',marginTop:22,padding:'13px 15px',borderRadius:12,background:T.card,color:T.fg,cursor:'pointer'}},
               h('div',{style:{display:'flex',alignItems:'center',gap:8}},
                 h('span',{style:{display:'flex',color:T.meta}},Icons.notes(17)),
                 h('span',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,flex:1}},
-                  'Transcript'+(t?' · '+wordCount(t).toLocaleString()+' words':'')+(nTr?' · '+nTr+' translation'+(nTr>1?'s':''):'')),
-                running?h(Spinner,{T,size:13}):h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(15))),
+                  'Transcript'+(t?' · '+wordCount(t).toLocaleString()+' words':'')+(nTr?' · '+nTr+' translation'+(nTr>1?'s':''):'')+(nHl?' · '+nHl+' highlight'+(nHl>1?'s':''):'')),
+                running?h(Spinner,{T,size:13})
+                  :t?h('button',{onClick:e=>{e.stopPropagation();setTxFull({tab:''})},'aria-label':'Open transcript full screen',className:'act90',style:{display:'flex',color:T.meta,padding:4,margin:-4}},expandIcon(17))
+                  :h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(15))),
               t?h('div',{style:{marginTop:8,fontFamily:fontCss(S.font),fontSize:15,lineHeight:1.55,color:T.meta,display:'-webkit-box',WebkitLineClamp:4,WebkitBoxOrient:'vertical',overflow:'hidden',whiteSpace:'pre-line'}},t)
                :h('div',{style:{marginTop:6,fontSize:13.5,color:T.meta,lineHeight:1.45}},
                   running?'Transcribing on GitHub — '+(txJob.step||'working…'):'Get it with Gemini, Whisper, TurboScribe and more, or paste one. Copy and translate it here.'));
@@ -2660,7 +2664,8 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       (a.isVideo||a.text)?tb(Icons.ai(23),()=>onAction('ai')):null,
       tb(Icons.dots(23),()=>onAction('sheet'))),
     aaOpen?h(AaPopover,{T,S,update:onAction.update,onClose:()=>setAaOpen(false)}):null,
-    txOpen&&a.isVideo?h(TranscriptSheet,{T,S,a,patch,update:onAction.update,toastFn,onClose:()=>setTxOpen(false)}):null
+    txOpen&&a.isVideo?h(TranscriptSheet,{T,S,a,patch,update:onAction.update,toastFn,onClose:()=>setTxOpen(false),onMaximize:tab=>{setTxOpen(false);setTxFull({tab})}}):null,
+    txFull&&a.isVideo?h(TranscriptView,{T,S,a,patch,addHighlight,onHighlightTap,toastFn,initialTab:txFull.tab,onClose:()=>setTxFull(null)}):null
   );
 }
 
@@ -4930,7 +4935,7 @@ function NotesList({T,articles,onOpenArticle,onOpenHighlight}){
         hl.note?h('div',{style:{fontSize:14,color:T.meta,fontStyle:'italic',marginTop:8,display:'flex',gap:7,alignItems:'flex-start'}},
           h('span',{style:{display:'flex',marginTop:2,flexShrink:0}},Icons.note(15)),hl.note):null),
       h('div',{style:{display:'flex',alignItems:'center',marginTop:8}},
-        h('div',{onClick:()=>onOpenArticle(a.id),style:{flex:1,fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},a.title+(hl.createdAt?' · '+fmtDate(hl.createdAt):'')),
+        h('div',{onClick:()=>onOpenArticle(a.id),style:{flex:1,fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',cursor:'pointer'}},a.title+(hl.src==='transcript'?' · transcript'+(hl.lang?' ('+hl.lang+')':''):'')+(hl.createdAt?' · '+fmtDate(hl.createdAt):'')),
         h('button',{onClick:()=>onOpenHighlight(a.id,hl.id),className:'act90',style:{color:T.sub,padding:'4px 6px'}},Icons.dots(18))))));
 }
 
@@ -5044,7 +5049,7 @@ function scriptLang(t){
    A paste box saved with the video, online-AI translations kept per
    language, and every way to get a transcript: Whisper on GitHub, Gemini,
    the Claude app, or a transcription website. */
-function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
+function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize}){
   const vid=videoIdOf(a);
   const job=useTxJob(vid);
   const [draft,setDraft]=useState(a.transcript||'');
@@ -5147,6 +5152,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
       h('span',null,has?(wordCount(shown).toLocaleString()+' words'+(tab?' · '+tab+' translation':(a.transcriptSrc?' · '+a.transcriptSrc:''))):'Nothing saved yet'),
       has&&!tab?h('span',null,'Saved with this video'):null),
     h('div',{style:{display:'flex',justifyContent:'space-around',marginTop:12}},
+      tool(expandIcon(20),'Full screen',()=>{clearTimeout(saveTimer.current);if(draft!==(a.transcript||''))save(draft,'',true);onMaximize(tab)},!has),
       tool(Icons.download(20),'Paste',doPaste),
       tool(Icons.copy(20),'Copy',()=>{copyText(shown);toastFn('Copied')},!shown.trim()),
       tool(Icons.share(20),'Share',()=>shareText(a.title+(tab?' — '+tab:'')+' — transcript',shown,a.url),!shown.trim()),
@@ -5204,6 +5210,139 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose}){
     busy?h('div',{style:{margin:'0 20px 12px',padding:'12px 14px',borderRadius:10,background:T.card,display:'flex',alignItems:'center',gap:10,fontSize:13.5,color:T.meta}},h(Spinner,{T,size:16}),busy):null,
     box,
     options);
+}
+
+/* Expand icon for "full screen" (the shared Icons set has none). */
+const expandIcon=(sz=20)=>h('svg',{width:sz,height:sz,viewBox:'0 0 24 24',fill:'none',stroke:'currentColor',strokeWidth:1.8,strokeLinecap:'round',strokeLinejoin:'round'},
+  h('path',{d:'M15 3h6v6M9 21H3v-6M21 3l-7 7M3 21l7-7'}));
+const VIDEO_NOTES_KIND='videoNotes';
+
+/* Full-screen transcript: read at reader size, highlight or note any passage
+   (stored with the video's other highlights, so they also show on the Notes
+   page), view only the highlights, and keep free-form notes on the video. */
+function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose,initialTab}){
+  const trs=a.transcriptTr||{};
+  const langs=Object.keys(trs).filter(l=>trs[l]);
+  const [tab,setTab]=useState(initialTab&&trs[initialTab]?initialTab:'');
+  const [mode,setMode]=useState('text'); // text | highlights | notes
+  const [selbar,setSelbar]=useState(null);
+  const contentRef=useRef(null),scrollRef=useRef(null);
+  const jumpRef=useRef(null);
+  const text=tab?(trs[tab]||''):(a.transcript||'');
+  const html=useMemo(()=>String(text).split(/\n{2,}/).map(p=>p.trim()).filter(Boolean).map(p=>'<p>'+escapeHtml(p).replace(/\n/g,'<br/>')+'</p>').join(''),[text]);
+  const allHl=(a.highlights||[]).filter(x=>x.src==='transcript');
+  const tabHl=allHl.filter(x=>(x.lang||'')===tab);
+  const notesEntry=(a.highlights||[]).find(x=>x.kind===VIDEO_NOTES_KIND);
+  const [notes,setNotes]=useState(notesEntry?notesEntry.note:'');
+  const notesTimer=useRef(null);
+
+  useEffect(()=>{ // paint highlights onto the rendered transcript
+    const el=contentRef.current;
+    if(mode!=='text'||!el)return;
+    applyHighlights(el,tabHl);
+    if(jumpRef.current){
+      const m=el.querySelector('mark.hl[data-hid="'+jumpRef.current+'"]');
+      jumpRef.current=null;
+      if(m){m.scrollIntoView({block:'center'});m.style.transition='background .6s';m.style.background='#f5c542';setTimeout(()=>{m.style.background=''},900)}
+    }
+  },[html,mode,tab,JSON.stringify(tabHl.map(x=>[x.id,x.text,!!x.note]))]);
+
+  useEffect(()=>{ // selection toolbar
+    let t=null;
+    const onSel=()=>{clearTimeout(t);t=setTimeout(()=>{
+      const sel=window.getSelection();
+      if(sel&&!sel.isCollapsed&&sel.rangeCount&&contentRef.current&&contentRef.current.contains(sel.anchorNode)){
+        const txt=sel.toString().replace(/\s+/g,' ').trim();
+        if(txt.length>1){
+          const r=sel.getRangeAt(0).getBoundingClientRect();
+          setSelbar({top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,100,window.innerWidth-100),text:txt});
+          return;
+        }
+      }
+      setSelbar(null);
+    },220)};
+    document.addEventListener('selectionchange',onSel);
+    return()=>{document.removeEventListener('selectionchange',onSel);clearTimeout(t)};
+  },[]);
+  const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null)};
+  const selAct=k=>{
+    const txt=selbar&&selbar.text;if(!txt)return;
+    if(k==='copy'){copyText(txt);toastFn('Copied')}
+    else addHighlight(txt,k==='note',{src:'transcript',lang:tab});
+    clearSel();
+  };
+
+  const saveNotes=v=>{
+    const val=String(v||'');
+    patch(x=>{
+      const hs=(x.highlights||[]).filter(e=>e.kind!==VIDEO_NOTES_KIND);
+      const old=(x.highlights||[]).find(e=>e.kind===VIDEO_NOTES_KIND);
+      if(!val.trim())return{highlights:hs};
+      return{highlights:[...hs,{id:old?old.id:uid(),kind:VIDEO_NOTES_KIND,text:'📝 My notes',note:val,createdAt:old?old.createdAt:Date.now(),updatedAt:Date.now()}]};
+    });
+  };
+  const onNotes=v=>{setNotes(v);clearTimeout(notesTimer.current);notesTimer.current=setTimeout(()=>saveNotes(v),600)};
+  useEffect(()=>()=>clearTimeout(notesTimer.current),[]);
+  const closeAll=()=>{clearTimeout(notesTimer.current);if(notes!==(notesEntry?notesEntry.note:''))saveNotes(notes);onClose()};
+
+  const jumpTo=hl=>{jumpRef.current=hl.id;setTab(hl.lang||'');setMode('text')};
+  const copyHighlights=()=>{
+    const out=allHl.map(x=>'• '+x.text+(x.lang?' ['+x.lang+']':'')+(x.note?'\n  Note: '+x.note:'')).join('\n\n');
+    copyText(a.title+' — highlights\n\n'+out+(a.url?'\n\n'+a.url:''));toastFn('Highlights copied');
+  };
+
+  const seg=(id,label)=>h('button',{key:id,onClick:()=>{clearSel();setMode(id)},className:'act95 trc',style:{flex:1,padding:'8px 0',borderRadius:9,fontSize:13.5,fontWeight:600,background:mode===id?T.fg:'transparent',color:mode===id?T.bg:T.meta}},label);
+  const chip=(label,active,onClick,k)=>h('button',{key:k||label,onClick,className:'act95 trc',style:{padding:'6px 12px',borderRadius:15,fontSize:12.5,fontWeight:600,flexShrink:0,background:active?T.fg:T.card,color:active?T.bg:T.fg}},label);
+  const rcVars={'--accent':T.accent,'--hl':T.hl,'--hair':T.hair,'--card':T.card,'--meta':T.meta};
+
+  let body;
+  if(mode==='highlights'){
+    body=allHl.length
+      ?h('div',null,
+        h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}},
+          h('span',{style:{fontSize:12.5,color:T.sub}},allHl.length+' highlight'+(allHl.length>1?'s':'')+' · tap one to jump to it'),
+          h('button',{onClick:copyHighlights,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.accent,fontWeight:500}},Icons.copy(15),'Copy all')),
+        allHl.slice().sort((x,y)=>(x.createdAt||0)-(y.createdAt||0)).map(x=>h('div',{key:x.id,style:{marginBottom:14}},
+          h('div',{onClick:()=>jumpTo(x),className:'act98',style:{cursor:'pointer',fontFamily:fontCss(S.font),fontSize:Math.max(S.fontSize-2,15),lineHeight:1.55,padding:'10px 14px',borderLeft:'3px solid #e8c547',background:T.card,borderRadius:'0 10px 10px 0',color:T.fg}},x.text),
+          h('div',{style:{display:'flex',alignItems:'flex-start',gap:8,marginTop:6}},
+            h('div',{style:{flex:1,fontSize:13.5,color:x.note?T.meta:T.sub,fontStyle:x.note?'italic':'normal',lineHeight:1.45}},x.note||(x.lang?x.lang+' · ':'')+'No note'),
+            x.note&&x.lang?h('span',{style:{fontSize:11.5,color:T.sub}},x.lang):null,
+            h('button',{onClick:()=>onHighlightTap(x.id),className:'act95',style:{fontSize:12.5,color:T.accent,flexShrink:0}},x.note?'Edit note':'Add note')))))
+      :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14,lineHeight:1.6}},'No highlights yet.',h('br'),'In Transcript, select any text and tap Highlight or Note. Highlights also appear on your Notes page.');
+  }else if(mode==='notes'){
+    body=h('div',null,
+      h('textarea',{value:notes,onChange:e=>onNotes(e.target.value),onBlur:()=>{clearTimeout(notesTimer.current);saveNotes(notes)},autoFocus:!notes,
+        placeholder:'Write your notes on this video…\n\nKey ideas, questions, things to look up.',
+        style:{display:'block',width:'100%',height:'60vh',padding:'14px 16px',borderRadius:12,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:Math.max(S.fontSize-2,15),lineHeight:1.6,resize:'none',fontFamily:fontCss(S.font)}}),
+      h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginTop:8,fontSize:12,color:T.sub}},
+        h('span',null,notes.trim()?'Saved · also on your Notes page':'Saved automatically as you type'),
+        notes.trim()?h('button',{onClick:()=>{copyText(notes);toastFn('Notes copied')},style:{fontSize:13,color:T.accent}},'Copy'):null));
+  }else{
+    body=h(Fragment,null,
+      langs.length?h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',paddingBottom:14}},
+        chip('Original',tab==='',()=>{clearSel();setTab('')},'_o'),langs.map(l=>chip(l,tab===l,()=>{clearSel();setTab(l)}))):null,
+      text.trim()
+        ?h('div',{ref:contentRef,className:'rc',dangerouslySetInnerHTML:{__html:html},
+            onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
+            style:{fontFamily:fontCss(S.font),fontSize:S.fontSize,lineHeight:S.lineHeight,color:T.fg,userSelect:'text',WebkitUserSelect:'text',...rcVars}})
+        :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14}},'No transcript yet.'),
+      text.trim()?h('div',{style:{marginTop:24,fontSize:12,color:T.sub,textAlign:'center'}},wordCount(text).toLocaleString()+' words · select text to highlight or add a note'):null);
+  }
+
+  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:60,background:T.bg,color:T.fg,display:'flex',flexDirection:'column'}},
+    h('div',{style:{flexShrink:0,paddingTop:'calc(6px + '+SAFE_T+')',borderBottom:'1px solid '+T.hair,background:T.bg}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'4px 10px 6px'}},
+        h('button',{onClick:closeAll,'aria-label':'Close full screen',className:'act90',style:{display:'flex',color:T.fg,padding:8}},Icons.back(20)),
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{fontSize:11,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},'Transcript'),
+          h('div',{style:{fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.title)),
+        mode==='text'&&text.trim()?h('button',{onClick:()=>{copyText(text);toastFn('Transcript copied')},'aria-label':'Copy transcript',className:'act90',style:{display:'flex',color:T.meta,padding:8}},Icons.copy(19)):null),
+      h('div',{style:{display:'flex',gap:4,margin:'0 14px 10px',padding:3,borderRadius:11,background:T.card}},
+        seg('text','Transcript'),seg('highlights','Highlights'+(allHl.length?' ('+allHl.length+')':'')),seg('notes','Notes'+(notes.trim()?' ✓':'')))),
+    h('div',{ref:scrollRef,className:'sy',onScroll:()=>{if(selbar)setSelbar(null)},style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}},
+      h('div',{style:{maxWidth:660,margin:'0 auto',padding:'18px 22px calc(40px + '+SAFE_B+')'}},body)),
+    selbar?h('div',{className:'fdin',style:{position:'fixed',top:selbar.top,left:selbar.left,transform:'translateX(-50%)',zIndex:65,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
+      [['Highlight','hl'],['Note','note'],['Copy','copy']].map(([l,k],i)=>h('button',{key:k,onMouseDown:e=>e.preventDefault(),onClick:()=>selAct(k),style:{padding:'11px 15px',color:'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null);
 }
 
 /* ============================== AI assistant ============================== */
@@ -7228,9 +7367,9 @@ function App(){
   };
 
   /* ---------- highlights ---------- */
-  const addHighlight=(text,withNote)=>{
+  const addHighlight=(text,withNote,extra)=>{
     if(!readingId)return;
-    const hl={id:uid(),text:String(text).replace(/\s+/g,' ').trim(),note:'',createdAt:Date.now()};
+    const hl={id:uid(),text:String(text).replace(/\s+/g,' ').trim(),note:'',createdAt:Date.now(),...(extra||{})};
     if(!hl.text)return;
     patchArticle(readingId,a=>({highlights:[...a.highlights,hl]}));
     if(withNote)setSheet({type:'highlight',aid:readingId,hid:hl.id});
