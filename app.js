@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'brief',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -1684,6 +1684,9 @@ function loadStore(){
   if(!d||typeof d!=='object')d={};
   d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
+  // The app now opens on Home / Library. Move existing installs over once;
+  // Settings → Home page can still pick My Routine again afterwards.
+  if(!d.settings.homeDefaultV2){if(d.settings.homePage==='brief')d.settings.homePage='home';d.settings.homeDefaultV2=true}
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
@@ -4218,7 +4221,7 @@ function uniqueLetters(names){
   });
   return out;
 }
-function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
+function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const vis=items.filter(i=>!snoozedNow(i.id));
@@ -4663,8 +4666,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
       query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0}},Icons.x(17)):null)):null;
 
   /* ---- catch-up view --------------------------------------------------- */
+  // "Save to Home" — adds the update to the library without leaving the app.
+  const saveBtn=(e,sourceName)=>{
+    const on=!!(isSaved&&isSaved(e.url));
+    return onSaveEntry?h('button',{onClick:()=>{if(!on)onSaveEntry(e,sourceName)},className:'act90','aria-label':on?'Saved to Home':'Save to Home',title:on?'In Home':'Save to Home',
+      style:{display:'flex',color:on?T.accent:T.sub,padding:5,flexShrink:0}},on?Icons.check(16):Icons.plus(16)):null;
+  };
   const keptRow=(e,idx)=>h('div',{key:e.url||idx,style:{display:'flex',gap:6,alignItems:'flex-start',marginBottom:6}},
     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:e.kind,sourceName:e.sourceName,compact:true,onOpen:()=>openEntry(e)})),
+    saveBtn(e,e.sourceName),
     h('button',{onClick:()=>{const n=kept.filter(k=>k.url!==e.url);setKept(n);saveKept(n)},className:'act90','aria-label':'Unpin',style:{display:'flex',color:T.accent,padding:5,flexShrink:0}},Icons.pin(16,true)));
   /* One quiet status line on every tab: how current the list is, when the next
      routine window opens, and a Refresh that always goes live. Errors are the
@@ -4728,6 +4738,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude}){
                 h('div',{style:{display:'flex',flexDirection:'column',gap:6}},
                   shown.map(e=>h('div',{key:e.url||e.publishedMs,style:{display:'flex',gap:6,alignItems:'flex-start',opacity:seenMap[e.url]?.5:1,transition:'opacity 160ms'}},
                     h('div',{style:{flex:1,minWidth:0}},h(RoutineEntryCard,{T,entry:e,kind:it.kind,sourceName:it.name,compact:true,onOpen:()=>openEntry(e)})),
+                    saveBtn(e,it.name),
                     h('button',{onClick:()=>toggleKeep(e,it),className:'act90','aria-label':isKept(e.url)?'Unpin':'Pin',
                       style:{display:'flex',color:isKept(e.url)?T.accent:T.sub,padding:5,flexShrink:0}},Icons.pin(15,isKept(e.url))))),
                   all.length>HIST_SOURCE_CAP?h('button',{onClick:()=>toggleHist(hk),className:'act95',style:{alignSelf:'flex-start',fontSize:12,fontWeight:600,color:T.accent,padding:'5px 2px'}},isOpen?'Show less':'+'+(all.length-HIST_SOURCE_CAP)+' more'):null));
@@ -5226,6 +5237,7 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
   const [tab,setTab]=useState(initialTab&&trs[initialTab]?initialTab:'');
   const [mode,setMode]=useState('text'); // text | highlights | notes
   const [selbar,setSelbar]=useState(null);
+  const [markPop,setMarkPop]=useState(null); // {hid,top,left} — tapped a highlight
   const contentRef=useRef(null),scrollRef=useRef(null);
   const jumpRef=useRef(null);
   const text=tab?(trs[tab]||''):(a.transcript||'');
@@ -5255,7 +5267,10 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         const txt=sel.toString().replace(/\s+/g,' ').trim();
         if(txt.length>1){
           const r=sel.getRangeAt(0).getBoundingClientRect();
-          setSelbar({top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,100,window.innerWidth-100),text:txt});
+          const rg=sel.getRangeAt(0);
+          const hids=[...new Set([...contentRef.current.querySelectorAll('mark.hl')].filter(m=>{try{return rg.intersectsNode(m)}catch(e){return false}}).map(m=>m.getAttribute('data-hid')))];
+          setMarkPop(null);
+          setSelbar({top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,100,window.innerWidth-100),text:txt,hids});
           return;
         }
       }
@@ -5264,9 +5279,20 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
     document.addEventListener('selectionchange',onSel);
     return()=>{document.removeEventListener('selectionchange',onSel);clearTimeout(t)};
   },[]);
-  const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null)};
+  const clearSel=()=>{try{window.getSelection().removeAllRanges()}catch(e){}setSelbar(null);setMarkPop(null)};
+  const removeHl=ids=>{
+    const set=new Set(ids);
+    patch(x=>({highlights:(x.highlights||[]).filter(e=>!set.has(e.id))}));
+    toastFn(ids.length>1?ids.length+' highlights removed':'Highlight removed');
+  };
+  const clearAllHl=()=>{
+    if(!allHl.length)return;
+    if(!confirm('Remove all '+allHl.length+' highlight'+(allHl.length>1?'s':'')+' from this transcript? Their notes go too. Your video notes stay.'))return;
+    removeHl(allHl.map(x=>x.id));
+  };
   const selAct=k=>{
     const txt=selbar&&selbar.text;if(!txt)return;
+    if(k==='unhl'){removeHl(selbar.hids);clearSel();return}
     if(k==='copy'){copyText(txt);toastFn('Copied')}
     else addHighlight(txt,k==='note',{src:'transcript',lang:tab});
     clearSel();
@@ -5301,13 +5327,16 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
       ?h('div',null,
         h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:12}},
           h('span',{style:{fontSize:12.5,color:T.sub}},allHl.length+' highlight'+(allHl.length>1?'s':'')+' · tap one to jump to it'),
-          h('button',{onClick:copyHighlights,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.accent,fontWeight:500}},Icons.copy(15),'Copy all')),
+          h('div',{style:{display:'flex',gap:16}},
+            h('button',{onClick:copyHighlights,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.accent,fontWeight:500}},Icons.copy(15),'Copy all'),
+            h('button',{onClick:clearAllHl,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:13,color:T.danger,fontWeight:500}},Icons.trash(15),'Clear all'))),
         allHl.slice().sort((x,y)=>(x.createdAt||0)-(y.createdAt||0)).map(x=>h('div',{key:x.id,style:{marginBottom:14}},
           h('div',{onClick:()=>jumpTo(x),className:'act98',style:{cursor:'pointer',fontFamily:fontCss(S.font),fontSize:Math.max(S.fontSize-2,15),lineHeight:1.55,padding:'10px 14px',borderLeft:'3px solid #e8c547',background:T.card,borderRadius:'0 10px 10px 0',color:T.fg}},x.text),
           h('div',{style:{display:'flex',alignItems:'flex-start',gap:8,marginTop:6}},
             h('div',{style:{flex:1,fontSize:13.5,color:x.note?T.meta:T.sub,fontStyle:x.note?'italic':'normal',lineHeight:1.45}},x.note||(x.lang?x.lang+' · ':'')+'No note'),
             x.note&&x.lang?h('span',{style:{fontSize:11.5,color:T.sub}},x.lang):null,
-            h('button',{onClick:()=>onHighlightTap(x.id),className:'act95',style:{fontSize:12.5,color:T.accent,flexShrink:0}},x.note?'Edit note':'Add note')))))
+            h('button',{onClick:()=>onHighlightTap(x.id),className:'act95',style:{fontSize:12.5,color:T.accent,flexShrink:0}},x.note?'Edit note':'Add note'),
+            h('button',{onClick:()=>removeHl([x.id]),'aria-label':'Remove highlight',className:'act95',style:{display:'flex',alignItems:'center',gap:3,fontSize:12.5,color:T.danger,flexShrink:0,marginLeft:6}},Icons.trash(14),'Remove')))))
       :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14,lineHeight:1.6}},'No highlights yet.',h('br'),'In Transcript, select any text and tap Highlight or Note. Highlights also appear on your Notes page.');
   }else if(mode==='notes'){
     body=h('div',null,
@@ -5323,7 +5352,14 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         chip('Original',tab==='',()=>{clearSel();setTab('')},'_o'),langs.map(l=>chip(l,tab===l,()=>{clearSel();setTab(l)}))):null,
       text.trim()
         ?h('div',{ref:contentRef,className:'rc',dangerouslySetInnerHTML:{__html:html},
-            onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
+            onClick:e=>{
+              const m=e.target.closest?e.target.closest('mark.hl'):null;
+              if(!m){if(markPop)setMarkPop(null);return}
+              const sel=window.getSelection();if(sel&&!sel.isCollapsed)return; // selecting, not tapping
+              e.preventDefault();
+              const r=m.getBoundingClientRect();
+              setMarkPop({hid:m.getAttribute('data-hid'),top:Math.max(r.top-56,70),left:clamp(r.left+r.width/2,120,window.innerWidth-120)});
+            },
             style:{fontFamily:fontCss(S.font),fontSize:S.fontSize,lineHeight:S.lineHeight,color:T.fg,userSelect:'text',WebkitUserSelect:'text',...rcVars}})
         :h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub,fontSize:14}},'No transcript yet.'),
       text.trim()?h('div',{style:{marginTop:24,fontSize:12,color:T.sub,textAlign:'center'}},wordCount(text).toLocaleString()+' words · select text to highlight or add a note'):null);
@@ -5339,10 +5375,24 @@ function TranscriptView({T,S,a,patch,addHighlight,onHighlightTap,toastFn,onClose
         mode==='text'&&text.trim()?h('button',{onClick:()=>{copyText(text);toastFn('Transcript copied')},'aria-label':'Copy transcript',className:'act90',style:{display:'flex',color:T.meta,padding:8}},Icons.copy(19)):null),
       h('div',{style:{display:'flex',gap:4,margin:'0 14px 10px',padding:3,borderRadius:11,background:T.card}},
         seg('text','Transcript'),seg('highlights','Highlights'+(allHl.length?' ('+allHl.length+')':'')),seg('notes','Notes'+(notes.trim()?' ✓':'')))),
-    h('div',{ref:scrollRef,className:'sy',onScroll:()=>{if(selbar)setSelbar(null)},style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}},
+    h('div',{ref:scrollRef,className:'sy',onScroll:()=>{if(selbar)setSelbar(null);if(markPop)setMarkPop(null)},style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch'}},
       h('div',{style:{maxWidth:660,margin:'0 auto',padding:'18px 22px calc(40px + '+SAFE_B+')'}},body)),
     selbar?h('div',{className:'fdin',style:{position:'fixed',top:selbar.top,left:selbar.left,transform:'translateX(-50%)',zIndex:65,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
-      [['Highlight','hl'],['Note','note'],['Copy','copy']].map(([l,k],i)=>h('button',{key:k,onMouseDown:e=>e.preventDefault(),onClick:()=>selAct(k),style:{padding:'11px 15px',color:'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null);
+      (selbar.hids&&selbar.hids.length?[['Unhighlight','unhl'],['Note','note'],['Copy','copy']]:[['Highlight','hl'],['Note','note'],['Copy','copy']])
+        .map(([l,k],i)=>h('button',{key:k,onMouseDown:e=>e.preventDefault(),onClick:()=>selAct(k),style:{padding:'11px 15px',color:k==='unhl'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
+    markPop?(()=>{
+      const x=allHl.find(e=>e.id===markPop.hid);
+      if(!x)return null;
+      return h(Fragment,null,
+        h('div',{onClick:()=>setMarkPop(null),style:{position:'fixed',inset:0,zIndex:64}}),
+        h('div',{className:'fdin',style:{position:'fixed',top:markPop.top,left:markPop.left,transform:'translateX(-50%)',zIndex:65,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
+          [['Remove highlight','rm'],[x.note?'Edit note':'Note','note'],['Copy','copy']].map(([l,k],i)=>h('button',{key:k,onClick:()=>{
+            setMarkPop(null);
+            if(k==='rm')removeHl([x.id]);
+            else if(k==='note')onHighlightTap(x.id);
+            else{copyText(x.text+(x.note?'\n\nNote: '+x.note:''));toastFn('Copied')}
+          },style:{padding:'11px 14px',color:k==='rm'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none',whiteSpace:'nowrap'}},l))));
+    })():null);
 }
 
 /* ============================== AI assistant ============================== */
@@ -6422,7 +6472,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
       ['threads','Threads','Your saved threads',Icons.thread(20)],
       ['tags','Tags','Browse by tag',Icons.tag(20)]
     ];
-    const cur=S.homePage||'brief';
+    const cur=S.homePage||'home';
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 6px',fontSize:13,color:T.sub,lineHeight:1.55}},'Choose which screen opens when you launch the app. This is your own pick — change it any time.'),
       h('div',{style:{margin:'6px 16px 0',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
@@ -6995,7 +7045,7 @@ function App(){
   const [scope,setScope]=useState(()=>{
     const valid=['brief','headlines','home','photos','liked','archive','notes','threads','tags','blogs'];
     const hp=data.settings&&data.settings.homePage;
-    return{type:valid.includes(hp)?hp:'brief'};
+    return{type:valid.includes(hp)?hp:'home'};
   });
   const [query,setQuery]=useState('');
   const [searchScope,setSearchScope]=useState('all'); // all|title|source|tags
@@ -7246,6 +7296,31 @@ function App(){
     const vid=ytIdOf(url);
     update(d=>({...d,articles:[{id:uid(),url,title:domainOf(url)||url,source:domainOf(url),author:'',image:vid?('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'):'',html:'',text:'',excerpt:'',words:0,readMin:0,isVideo:!!vid,videoId:vid,publishedAt:0,addedAt:Date.now(),liked:false,archived:false,folderId:folderId||null,tags:[],progress:0,opens:0,highlights:[]},...d.articles]}));
     setAddS(null);toastFn('Link saved — download it later from the article');
+  };
+  /* Save a My Routine / Catch-up entry straight to Home. YouTube entries are
+     built from the feed data (title, thumbnail, channel) — instant, no page
+     fetch; other links go through the normal fetch, falling back to a stub. */
+  const savedKeys=useMemo(()=>{
+    const s=new Set();
+    data.articles.forEach(a=>{if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
+    return s;
+  },[data.articles]);
+  const isEntrySaved=url=>{if(!url)return false;const v=ytIdOf(url);return savedKeys.has(url)||(v?savedKeys.has('yt:'+v):false)};
+  const saveRoutineEntry=async(e,sourceName)=>{
+    const url=e&&e.url;if(!url)return;
+    if(isEntrySaved(url)){toastFn('Already in Home');return}
+    const vid=ytIdOf(url);
+    if(vid){
+      const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
+      const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
+        html:'',text:'',excerpt:sourceName?('Video by '+sourceName):'Saved video',words:0,readMin:0,isVideo:true,videoId:vid,publishedAt:e.publishedMs||0,
+        addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]};
+      update(d=>({...d,articles:[article,...d.articles]}));
+      toastFn('Saved to Home');
+      return;
+    }
+    toastFn('Saving to Home…');
+    try{await addByUrl(url)}catch(err){saveStub(url)}
   };
   const retryFetch=async id=>{
     const a=byId(id);if(!a||!a.url)return;
@@ -7540,7 +7615,8 @@ function App(){
   else if(scope.type==='brief')body=h(BriefView,{T,S,brief:data.brief,
     onBrief:b=>update(d=>({...d,brief:typeof b==='function'?b(d.brief):b})),toastFn,
     onSetting:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
-    onAskClaude:()=>setAiOpen({routine:true})});
+    onAskClaude:()=>setAiOpen({routine:true}),
+    isSaved:isEntrySaved,onSaveEntry:saveRoutineEntry});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     starred:S.briefStarred||[],muted:S.briefMuted||[],

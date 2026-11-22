@@ -42,7 +42,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Transcript** — under *Watch on YouTube* in the reader. The label previews the saved transcript; tap it for the transcript window:
   - A **paste box** saved with the video: Paste, Copy, Share, Clear. Edits save as you type.
   - **Translate** with online AI (Gemini or OpenRouter, whichever has a key). Telugu, Hindi and English are one tap; the app detects which of the three the transcript is in and offers the other two (more languages under *More languages*). Each translation is saved and shown as a tab next to *Original*.
-  - **Full screen** (also the ⤢ icon on the label): read the transcript at reader size and switch between *Original* and translations. Select any text and tap **Highlight** or **Note**. The **Highlights** tab lists only your highlights (tap one to jump to it, or **Copy all**), and **Notes** is a notepad for the video. Highlights and notes are also on your Notes page.
+  - **Full screen** (also the ⤢ icon on the label): read the transcript at reader size and switch between *Original* and translations. Select any text and tap **Highlight** or **Note**. The **Highlights** tab lists only your highlights (tap one to jump to it, **Remove** one, **Copy all** or **Clear all**). Tap a highlight in the text for **Remove highlight** / Note / Copy, or select over one and tap **Unhighlight**, and **Notes** is a notepad for the video. Highlights and notes are also on your Notes page.
   - **Get the transcript**: **Whisper on GitHub** (see *Video transcripts* below — fills the box when done, even if you left), **Gemini** (fills the box; keep the app open), the **Claude app**, or a website — **TurboScribe**, **NoteGPT**, **YouTubeToTranscript**, **Tactiq**: the link is copied and the site opens; copy the transcript there, come back, tap **Paste**.
 
 **Daily Brief**
@@ -59,7 +59,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🗂 **Groups are tabs down the left** — a sticky side rail lists every group as a flat row with a colour dot and a count (or a red number when something's new); the pane beside it shows just that group's channels and their new posts, so content starts at the top of the screen instead of below a stack of cards
 - ⏴ **Collapse the rail** — the small arrow above it shrinks the rail to a slim column of colour-ringed dots (still badged when something's new), freeing width for reading; tap a dot to switch groups without expanding back
 - 📋 **All** — the first rail entry keeps the full stacked sweep of every group, exactly as before
-- ⏪ **Catch-up** — pinned above everything else and badged with what you missed. Updates you didn't open before a routine window rolled over are grouped **by day first** (Today / Yesterday / Fri, 29 Aug), then by window, then by source. Opening an item marks it read and drops the badge; **Mark all read** clears a whole day at once
+- ⏪ **Catch-up** — pinned above everything else and badged with what you missed. Updates you didn't open before a routine window rolled over are grouped **by day first** (Today / Yesterday / Fri, 29 Aug), then by window, then by source. Opening an item marks it read and drops the badge; **＋ Save to Home** next to each update adds it to your library (videos instantly, with title, channel and thumbnail); **Mark all read** clears a whole day at once
 - 📌 **Pin to keep** — catch-up is swept after 14 days; pin anything you want to hold on to and it moves to a **Pinned** list that survives the sweep
 - 👉 **Swipe** left or right anywhere in the content pane to move to the next or previous group
 - 🕐 **One routine window at a time** — the screen follows the current window (Morning / Afternoon / Night); tap the window pill in the toolbar to look at another one or edit the times
@@ -82,7 +82,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
 **Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
-- 🏠 **Home page** — pick which screen opens on launch: **My Routine** (the default), Headlines, Home/Library, Photos, Blogs, Liked, Archive, Notes, Threads, or Tags.
+- 🏠 **Home page** — pick which screen opens on launch: My Routine, Headlines, **Home/Library** (the default), Photos, Blogs, Liked, Archive, Notes, Threads, or Tags.
 - 🔄 **Force reload to latest version** — drops the cached app shell and service worker and reloads so you get the newest deployed build immediately. Your saved articles, notes, photos and settings are untouched.
 
 **AI assistant (✦ icon in the header, on any page)**
