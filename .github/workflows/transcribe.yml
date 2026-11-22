@@ -1,0 +1,82 @@
+name: Transcribe video
+# Started by the app (AI assistant → Full transcript → Whisper on GitHub).
+# Downloads one YouTube video's audio and transcribes it with faster-whisper
+# (scripts/transcribe.py, adapted from bulk_transcribe_youtube_videos_from_playlist).
+# The result goes to the `transcripts-data` branch as t/<request_id>.json, which the
+# app reads back — main stays clean.
+run-name: Transcribe ${{ inputs.request_id }}
+on:
+  workflow_dispatch:
+    inputs:
+      url:
+        description: YouTube video link
+        required: true
+        type: string
+      model:
+        description: Whisper model
+        required: false
+        default: small
+        type: choice
+        options: [tiny, base, small, medium, large-v3]
+      request_id:
+        description: Id the app polls for (letters, digits, - and _)
+        required: true
+        type: string
+permissions:
+  contents: write
+concurrency:
+  group: transcribe-${{ inputs.request_id }}
+jobs:
+  transcribe:
+    runs-on: ubuntu-latest
+    timeout-minutes: 180
+    env:
+      VIDEO_URL: ${{ inputs.url }}
+      MODEL: ${{ inputs.model }}
+      REQ_ID: ${{ inputs.request_id }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+          cache: pip
+          cache-dependency-path: scripts/transcribe-requirements.txt
+      - name: Install
+        run: pip install -q -r scripts/transcribe-requirements.txt
+      - name: Cache Whisper model
+        uses: actions/cache@v4
+        with:
+          path: ~/.cache/huggingface
+          key: whisper-${{ inputs.model }}-v1
+      - name: Download audio and transcribe
+        run: python scripts/transcribe.py --url "$VIDEO_URL" --model "$MODEL" --id "$REQ_ID" --out "$RUNNER_TEMP/out.json"
+      - name: Publish to transcripts-data
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          [[ "$REQ_ID" =~ ^[A-Za-z0-9_-]{6,64}$ ]] || { echo "bad request id"; exit 1; }
+          OUT="$RUNNER_TEMP/out.json"
+          if [ ! -s "$OUT" ]; then
+            jq -n --arg id "$REQ_ID" --arg url "$VIDEO_URL" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+              '{id:$id,url:$url,status:"error",error:("The job stopped before transcribing (setup failed or it was cancelled). Log: "+$run)}' > "$OUT"
+          fi
+          mkdir -p "$RUNNER_TEMP/pub" && cd "$RUNNER_TEMP/pub"
+          git init -q
+          git config user.name "transcribe[bot]"
+          git config user.email "transcribe@users.noreply.github.com"
+          git remote add origin "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+          # several transcriptions can finish at once — fetch, add, push; retry on a race
+          for i in 1 2 3 4 5 6; do
+            if git fetch -q --depth 1 origin transcripts-data 2>/dev/null; then
+              git checkout -q -B transcripts-data FETCH_HEAD
+            else
+              git checkout -q --orphan transcripts-data
+            fi
+            mkdir -p t && cp "$OUT" "t/$REQ_ID.json"
+            git add -A t
+            git commit -q -m "transcript $REQ_ID" || true
+            if git push -q origin HEAD:transcripts-data; then echo "published t/$REQ_ID.json"; exit 0; fi
+            sleep $((i * 3 + RANDOM % 5))
+          done
+          echo "could not publish"; exit 1

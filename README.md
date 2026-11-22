@@ -39,7 +39,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Mark videos as watched** — right in the video player, or via long-press → Mark as watched.
 
 **AI for videos**
-- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript** (auto-fetched speech-to-text you can read, listen to, or save), and **Ask about this video** (Q&A answered from the transcript) — in English, Telugu, Hindi, Tamil, and more.
+- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript**, and **Ask about this video** (Q&A answered from the video) — in English, Telugu, Hindi, Tamil, and more.
+- **Full transcript** lets you pick how to transcribe:
+  - **Whisper on GitHub** — runs OpenAI's Whisper speech-to-text for free on GitHub's servers (see *Video transcripts* below). Takes a few minutes, keeps going if you close the app, and saves the transcript to your library.
+  - **Gemini** — fast, needs a free Gemini key; the reply now streams, so iOS no longer cuts it off with "Load failed".
+  - **Claude app** — hands the video to Claude, no key.
+  - **On a website** — TurboScribe, NoteGPT, YouTubeToTranscript, or Tactiq: the video link is copied and the site opens.
 =======
 >>>>>>> 97fe567 (Add automatic backup reminders)
 
@@ -141,6 +146,23 @@ If you deployed `worker/feed-proxy.js` on Cloudflare, its optional `scheduled` h
 (a fine-grained token for this repo with *Actions: Read and write*) and a Cron Trigger such as `45 * * * *`, and the
 worker starts the GitHub job on time. Instructions are at the bottom of the worker file.
 Note: GitHub pauses scheduled workflows in repos with no activity for 60 days — re-run the workflow if that happens.
+
+## Video transcripts (Whisper on GitHub)
+
+`.github/workflows/transcribe.yml` runs `scripts/transcribe.py`, adapted from
+[bulk_transcribe_youtube_videos_from_playlist](https://github.com/Dicklesworthstone/bulk_transcribe_youtube_videos_from_playlist):
+pytubefix downloads the audio (yt-dlp is the fallback), and faster-whisper transcribes it on the runner's CPU with
+voice-activity filtering. The result is published as `t/<id>.json` on the `transcripts-data` branch, so `main` stays clean.
+
+1. Create a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new): repository access *only this repo*,
+   permission **Actions: Read and write**.
+2. In the app: **Settings → AI → Video transcripts**, paste the token and pick a Whisper model
+   (Tiny / Base / Small / Medium / Large v3; Small is the default — Large v3 is very slow without a GPU).
+3. On a video: **✦ AI → Full transcript → Whisper on GitHub**. Progress shows in the sheet; when it finishes the transcript is
+   saved to your library as a new article (tag `transcript`).
+
+YouTube sometimes blocks downloads from cloud servers. If a job fails with a download error, use one of the transcription
+websites or Gemini for that video.
 
 ## Notes
 
