@@ -43,7 +43,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
   - A **paste box** saved with the video: Paste, Copy, Share, Clear. Edits save as you type.
   - **Translate** with online AI (Gemini or OpenRouter, whichever has a key). Telugu, Hindi and English are one tap; the app detects which of the three the transcript is in and offers the other two (more languages under *More languages*). Each translation is saved and shown as a tab next to *Original*.
   - **Full screen** (also the ⤢ icon on the label): read the transcript at reader size and switch between *Original* and translations. Select any text and tap **Highlight** or **Note**. The **Highlights** tab lists only your highlights (tap one to jump to it, **Remove** one, **Copy all** or **Clear all**). Tap a highlight in the text for **Remove highlight** / Note / Copy, or select over one and tap **Unhighlight**, and **Notes** is a notepad for the video. A bar under the tabs shows **words read of the total and % read**; the app remembers where you stopped (per language) and reopens there, and the reader's label shows the % too. **✎ Edit** lets you tap any paragraph — long pasted walls of text are split into sentence-sized parts — and fix just that part (Save / Cancel / Delete). Highlights and notes are also on your Notes page.
-  - **Get the transcript**: **Whisper on GitHub** (see *Video transcripts* below — fills the box when done, even if you left), **Gemini** (fills the box; keep the app open), the **Claude app**, or a website — **TurboScribe**, **NoteGPT**, **YouTubeToTranscript**, **Tactiq**: the link is copied and the site opens; copy the transcript there, come back, tap **Paste**.
+  - **Get the transcript**: **Whisper on my Mac** (free, any length — see *Video transcripts* below; fills the box when done, even if you left), **Gemini** (fills the box; keep the app open), the **Claude app**, or a website — **TurboScribe**, **NoteGPT**, **YouTubeToTranscript**, **Tactiq**: the link is copied and the site opens; copy the transcript there, come back, tap **Paste**.
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
@@ -144,22 +144,41 @@ If you deployed `worker/feed-proxy.js` on Cloudflare, its optional `scheduled` h
 worker starts the GitHub job on time. Instructions are at the bottom of the worker file.
 Note: GitHub pauses scheduled workflows in repos with no activity for 60 days — re-run the workflow if that happens.
 
-## Video transcripts (Whisper on GitHub)
+## Video transcripts (Whisper on your Mac)
 
 `.github/workflows/transcribe.yml` runs `scripts/transcribe.py`, adapted from
 [bulk_transcribe_youtube_videos_from_playlist](https://github.com/Dicklesworthstone/bulk_transcribe_youtube_videos_from_playlist):
-pytubefix downloads the audio (yt-dlp is the fallback), and faster-whisper transcribes it on the runner's CPU with
-voice-activity filtering. The result is published as `t/<id>.json` on the `transcripts-data` branch, so `main` stays clean.
+pytubefix downloads the audio (yt-dlp is the fallback) and the free, open-source **faster-whisper** turns it into text with
+voice-activity filtering. Nothing is paid — only OpenAI's hosted Whisper API costs money, and this doesn't use it.
+The result is published as `t/<id>.json` on the `transcripts-data` branch and the app fills the video's transcript with it.
+
+YouTube refuses downloads from GitHub's servers ("confirm you're not a bot"), so run the job **on your own Mac**: it becomes a
+*self-hosted runner* (GitHub's free, official agent) and picks up the job when you tap **Transcript → Whisper on my Mac** on your
+iPhone. Home internet isn't blocked, and there's no length limit.
+
+**One-time setup on the Mac**
+
+1. Install the tools (with [Homebrew](https://brew.sh)): `brew install python@3.12 deno`
+   (`deno` lets yt-dlp read YouTube; add `node` too if you like — pytubefix uses it).
+2. On GitHub open this repo → **Settings → Actions → Runners → New self-hosted runner** → **macOS** (ARM64 for Apple silicon).
+   Run the *Download* and *Configure* commands it shows in Terminal. When `config.sh` asks for **additional labels**, type `whisper`.
+3. Start it: `./run.sh` (stays in that Terminal window), or run it in the background at login:
+   `./svc.sh install && ./svc.sh start`.
+4. **Safety** — this repo is public, so on GitHub go to **Settings → Actions → General → Fork pull request workflows from outside
+   collaborators** and pick **Require approval for all outside collaborators**. Then nobody else's pull request can run code on your Mac.
+   The transcription job itself can only be started by someone with write access (you, through the app).
+
+**On the iPhone**
 
 1. Create a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new): repository access *only this repo*,
    permission **Actions: Read and write**.
-2. In the app: **Settings → AI → Video transcripts**, paste the token and pick a Whisper model
-   (Tiny / Base / Small / Medium / Large v3; Small is the default — Large v3 is very slow without a GPU).
-3. On a video: tap **Transcript** under *Watch on YouTube* → **Whisper on GitHub**. Progress shows on the label; when it
-   finishes the transcript fills the video's transcript box.
+2. In the app: **Settings → AI → Video transcripts**: *Run Whisper on* **My Mac**, paste the token, pick a model
+   (Small is the default; on an Apple-silicon Mac a 1-hour video takes roughly 8 minutes with Small).
+3. On a video: tap **Transcript** under *Watch on YouTube* → **Whisper on my Mac**. You can close the app; progress shows on the label,
+   and the transcript fills in when it's done. If the Mac is asleep the job waits until the runner is back.
 
-YouTube sometimes blocks downloads from cloud servers. If a job fails with a download error, use one of the transcription
-websites or Gemini for that video.
+The workflow file must also be on the repo's **default branch** for GitHub to accept the app's request (the job itself runs the
+copy on `main`).
 
 ## Notes
 

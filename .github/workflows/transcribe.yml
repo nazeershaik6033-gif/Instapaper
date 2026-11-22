@@ -1,5 +1,8 @@
 name: Transcribe video
-# Started by the app (AI assistant → Full transcript → Whisper on GitHub).
+# Started by the app (video reader → Transcript → Whisper on my Mac / on GitHub).
+# runner=mac runs on your own Mac as a self-hosted runner labelled `whisper`
+# (home internet, which YouTube doesn't block; see README → Video transcripts).
+# runner=github uses GitHub's servers, which YouTube currently refuses.
 # Downloads one YouTube video's audio and transcribes it with faster-whisper
 # (scripts/transcribe.py, adapted from bulk_transcribe_youtube_videos_from_playlist).
 # The result goes to the `transcripts-data` branch as t/<request_id>.json, which the
@@ -22,13 +25,19 @@ on:
         description: Id the app polls for (letters, digits, - and _)
         required: true
         type: string
+      runner:
+        description: Where to run Whisper
+        required: false
+        default: github
+        type: choice
+        options: [github, mac]
 permissions:
   contents: write
 concurrency:
   group: transcribe-${{ inputs.request_id }}
 jobs:
   transcribe:
-    runs-on: ubuntu-latest
+    runs-on: ${{ inputs.runner == 'mac' && fromJSON('["self-hosted","macOS","whisper"]') || 'ubuntu-latest' }}
     timeout-minutes: 180
     env:
       VIDEO_URL: ${{ inputs.url }}
@@ -58,10 +67,9 @@ jobs:
           [[ "$REQ_ID" =~ ^[A-Za-z0-9_-]{6,64}$ ]] || { echo "bad request id"; exit 1; }
           OUT="$RUNNER_TEMP/out.json"
           if [ ! -s "$OUT" ]; then
-            jq -n --arg id "$REQ_ID" --arg url "$VIDEO_URL" --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-              '{id:$id,url:$url,status:"error",error:("The job stopped before transcribing (setup failed or it was cancelled). Log: "+$run)}' > "$OUT"
+            RUN_URL="$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" python3 -c 'import json,os;print(json.dumps({"id":os.environ["REQ_ID"],"url":os.environ["VIDEO_URL"],"status":"error","error":"The job stopped before transcribing (setup failed or it was cancelled). Log: "+os.environ["RUN_URL"]}))' > "$OUT"
           fi
-          mkdir -p "$RUNNER_TEMP/pub" && cd "$RUNNER_TEMP/pub"
+          rm -rf "$RUNNER_TEMP/pub" && mkdir -p "$RUNNER_TEMP/pub" && cd "$RUNNER_TEMP/pub"
           git init -q
           git config user.name "transcribe[bot]"
           git config user.email "transcribe@users.noreply.github.com"

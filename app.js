@@ -35,7 +35,7 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small',whisperRunner:'mac'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -159,8 +159,8 @@ async function geminiVideo(key,model,prompt,url,maxTokens,onWait){
     }catch(e){
       if(netTries++<1){if(onWait)onWait('Connection dropped — retrying…');await sleep(1500);attempt--;continue}
       throw new Error(e&&e.name==='AbortError'
-        ?'Gemini took too long on this video. Try "Whisper on GitHub" or a transcription website instead.'
-        :'The connection to Gemini dropped ('+((e&&e.message)||'network error')+'). Keep the app open while it works, or use "Whisper on GitHub", which keeps running when you leave.');
+        ?'Gemini took too long on this video. Try Whisper (Transcript → Whisper on my Mac) or a transcription website instead.'
+        :'The connection to Gemini dropped ('+((e&&e.message)||'network error')+'). Keep the app open while it works, or use Whisper on your Mac, which keeps running when you leave.');
     }
     if(res.status===429&&attempt<2){
       const wait=(attempt+1)*6;
@@ -231,6 +231,10 @@ const TRANSCRIBE_SITES=[
   {id:'tactiq',name:'Tactiq',sub:'Free · instant · captions-based · paste the link',url:()=>'https://tactiq.io/tools/youtube-transcript'}
 ];
 const TX_WORKFLOW='transcribe.yml';
+/* Where the Whisper job runs: your own Mac as a self-hosted runner (home
+   internet, which YouTube doesn't block) or GitHub's servers (blocked). */
+const txOnMac=S=>(S.whisperRunner||'mac')!=='github';
+const whisperLabel=S=>txOnMac(S)?'Whisper on my Mac':'Whisper on GitHub';
 const TX_JOBS_KEY='insta_transcribe_jobs';
 function videoIdOf(a){
   if(a&&a.videoId&&/^[A-Za-z0-9_-]{11}$/.test(a.videoId))return a.videoId;
@@ -275,7 +279,7 @@ async function txStart(S,article){
      scripts/transcribe.py live. Fall back to the default branch if `main`
      is missing. */
   const dispatch=ref=>ghApi(S,'/actions/workflows/'+TX_WORKFLOW+'/dispatches',{method:'POST',headers:{'Content-Type':'application/json'},
-    body:JSON.stringify({ref,inputs:{url:'https://www.youtube.com/watch?v='+vid,model,request_id:id}})});
+    body:JSON.stringify({ref,inputs:{url:'https://www.youtube.com/watch?v='+vid,model,request_id:id,runner:txOnMac(S)?'mac':'github'}})});
   try{await dispatch('main')}
   catch(e){
     if(e.status!==422)throw e;
@@ -283,7 +287,7 @@ async function txStart(S,article){
     if(ghDefaultBranch==='main')throw e;
     await dispatch(ghDefaultBranch);
   }
-  txStore.set(vid,{id,vid,model,articleId:article.id||null,title:article.title||'',startedAt:Date.now(),status:'queued',step:'Waiting for a GitHub runner…',runUrl:'',error:'',text:'',saved:false});
+  txStore.set(vid,{id,vid,model,articleId:article.id||null,title:article.title||'',startedAt:Date.now(),status:'queued',where:txOnMac(S)?'mac':'github',step:txOnMac(S)?'Waiting for your Mac to pick it up…':'Waiting for a GitHub runner…',runUrl:'',error:'',text:'',saved:false});
   return id;
 }
 const txStepLabel=name=>/download|transcrib/i.test(name)?'Downloading audio and transcribing…':/install|python|cache/i.test(name)?'Setting up Whisper…':/publish/i.test(name)?'Almost done — publishing…':'Starting…';
@@ -310,6 +314,7 @@ async function txPoll(S){
     const run=runs.find(r=>(r.display_title||r.name||'').indexOf(j.id)>=0);
     if(run){
       const patch={runUrl:run.html_url,status:run.status==='completed'?'running':(run.status==='queued'?'queued':'running')};
+      if(run.status==='queued'&&j.where==='mac'&&Date.now()-j.startedAt>3*60000)patch.step='Still waiting for your Mac — is it awake with the runner running?';
       if(run.status==='in_progress'){
         try{
           const jr=await ghApi(S,'/actions/runs/'+run.id+'/jobs');
@@ -328,7 +333,7 @@ async function txPoll(S){
       }
       txStore.set(j.vid,patch);
     }else if(Date.now()-j.startedAt>20*60000){
-      txStore.set(j.vid,{status:'error',error:'GitHub never started the job. Check the Actions tab of your repo.',step:''});
+      txStore.set(j.vid,{status:'error',error:'GitHub never started the job. Check the Actions tab of your repo'+(j.where==='mac'?' and that the runner on your Mac is running':'')+'.',step:''});
     }
   }
 }
@@ -2629,7 +2634,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
                   :h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(15))),
               t?h('div',{style:{marginTop:8,fontFamily:fontCss(S.font),fontSize:15,lineHeight:1.55,color:T.meta,display:'-webkit-box',WebkitLineClamp:4,WebkitBoxOrient:'vertical',overflow:'hidden',whiteSpace:'pre-line'}},t)
                :h('div',{style:{marginTop:6,fontSize:13.5,color:T.meta,lineHeight:1.45}},
-                  running?'Transcribing on GitHub — '+(txJob.step||'working…'):'Get it with Gemini, Whisper, TurboScribe and more, or paste one. Copy and translate it here.'));
+                  running?'Transcribing'+(txJob.where==='mac'?' on your Mac':' on GitHub')+' — '+(txJob.step||'working…'):'Get it with Gemini, Whisper, TurboScribe and more, or paste one. Copy and translate it here.'));
           })()
         ):null,
         !a.isVideo&&!heroDupe&&a.image?h('img',{src:a.image,alt:'',style:{width:'100%',borderRadius:8,marginBottom:22,display:'block'},onError:e=>{e.target.style.display='none'}}):null,
@@ -5108,7 +5113,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize}){
   };
   const doClaude=()=>{if(openInClaude('Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary.\n\n'+(a.title||'')+'\nSource: '+link,toastFn))onClose()};
   const doWhisper=async()=>{
-    setError('');setBusy('Starting Whisper on GitHub…');
+    setError('');setBusy('Starting '+whisperLabel(S)+'…');
     try{await txStart(S,a);toastFn('Started — it keeps running if you leave')}
     catch(e){setError((e&&e.message)||'Couldn\'t start the GitHub job')}
     setBusy('');
@@ -5187,12 +5192,12 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize}){
   let jobBox=null;
   if(jobOpen)jobBox=h('div',{style:{margin:'0 20px 6px',padding:'12px 14px',borderRadius:12,background:T.card,fontSize:13.5,lineHeight:1.5}},
     h('div',{style:{display:'flex',alignItems:'center',gap:10}},h(Spinner,{T,size:15}),h('span',{style:{fontWeight:600}},job.step||'Working…')),
-    h('div',{style:{fontSize:12.5,color:T.sub,marginTop:5}},'Whisper '+job.model+' on GitHub · started '+(mins?mins+' min ago':'just now')+'. You can close this; the transcript fills in here when it\'s ready.'),
+    h('div',{style:{fontSize:12.5,color:T.sub,marginTop:5}},'Whisper '+job.model+(job.where==='mac'?' on your Mac':' on GitHub')+' · started '+(mins?mins+' min ago':'just now')+'. You can close this; the transcript fills in here when it\'s ready.'),
     h('div',{style:{display:'flex',gap:16,marginTop:6}},
       job.runUrl?h('button',{onClick:()=>openExternalUrl(job.runUrl),style:{fontSize:12.5,color:T.accent}},'View job on GitHub'):null,
       h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Stop tracking')));
   else if(job&&job.status==='error')jobBox=h('div',{style:{margin:'0 20px 6px',padding:'12px 14px',borderRadius:12,background:T.card,fontSize:12.5,lineHeight:1.5,color:T.danger,wordBreak:'break-word'}},
-    h('div',{style:{fontWeight:600,fontSize:13.5}},'Whisper on GitHub failed'),job.error,
+    h('div',{style:{fontWeight:600,fontSize:13.5}},(job.where==='mac'?'Whisper on your Mac':'Whisper on GitHub')+' failed'),job.error,
     h('div',{style:{display:'flex',gap:16,marginTop:6}},
       job.runUrl?h('button',{onClick:()=>openExternalUrl(job.runUrl),style:{fontSize:12.5,color:T.accent}},'Open job log'):null,
       h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Dismiss')));
@@ -5201,11 +5206,11 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize}){
     sec(has?'Get it again':'Get the transcript'),
     jobBox,
     S.ghToken
-      ?h(ARow,{T,icon:Icons.headphones(20),label:jobOpen?'Whisper on GitHub — running':'Whisper on GitHub',sub:'Model '+modelName+' · a few minutes · keeps going if you leave',onClick:jobOpen?()=>toastFn('Already transcribing this video'):doWhisper})
+      ?h(ARow,{T,icon:Icons.headphones(20),label:jobOpen?whisperLabel(S)+' — running':whisperLabel(S),sub:'Model '+modelName+(txOnMac(S)?' · free, any length · keeps going if you leave':' · YouTube often blocks GitHub\'s servers'),onClick:jobOpen?()=>toastFn('Already transcribing this video'):doWhisper})
       :h('div',{style:{padding:'10px 20px 14px',borderBottom:'1px solid '+T.hair}},
           h('div',{style:{display:'flex',alignItems:'center',gap:16}},h('span',{style:{color:T.meta,display:'flex'}},Icons.headphones(20)),
-            h('div',{style:{flex:1}},h('div',{style:{fontSize:16.5}},'Whisper on GitHub'),
-              h('div',{style:{fontSize:12.5,color:T.sub,marginTop:2,lineHeight:1.45}},'One-time setup: paste a GitHub token with "Actions: Read and write". Details in Settings → AI.'))),
+            h('div',{style:{flex:1}},h('div',{style:{fontSize:16.5}},whisperLabel(S)),
+              h('div',{style:{fontSize:12.5,color:T.sub,marginTop:2,lineHeight:1.45}},(txOnMac(S)?'One-time setup: your Mac as a runner + a GitHub token with "Actions: Read and write". Steps in Settings → AI.':'One-time setup: paste a GitHub token with "Actions: Read and write". Details in Settings → AI.')))),
           h('div',{style:{display:'flex',gap:8,marginTop:10}},
             h('input',{value:ghDraft,onChange:e=>setGhDraft(e.target.value),placeholder:'github_pat_…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
               style:{flex:1,minWidth:0,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:13.5,fontFamily:'ui-monospace,monospace'}}),
@@ -6709,9 +6714,20 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
             })())));
     const{owner:ghO,repo:ghR}=repoSlug();
     content=h(Fragment,null,content,
-      head('Video transcripts \u2014 Whisper on GitHub'),
+      head('Video transcripts \u2014 Whisper'),
       h('div',{style:{padding:'0 20px 12px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.55,marginBottom:10}},'\u201cFull transcript\u201d on a video can run OpenAI\u2019s Whisper speech-to-text for free on GitHub\u2019s servers (the Transcribe video workflow in ',h('strong',null,ghO+'/'+ghR),'). It takes a few minutes and keeps going if you close the app; the transcript is saved to your library.'),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'0 0 8px'}},'Run Whisper on'),
+        h('div',{style:{display:'flex',gap:8,marginBottom:10}},
+          [['mac','My Mac','Free \u00b7 any length'],['github','GitHub\u2019s servers','YouTube blocks these']].map(([id,label,sub])=>{const on=(S.whisperRunner||'mac')===id;
+            return h('button',{key:id,onClick:()=>set({whisperRunner:id}),className:'act95 trc',style:{flex:1,padding:'9px 8px',borderRadius:11,textAlign:'center',background:on?T.fg:T.card,color:on?T.bg:T.fg}},
+              h('div',{style:{fontSize:13.5,fontWeight:600}},label),h('div',{style:{fontSize:11,opacity:.7,marginTop:2}},sub))})),
+        txOnMac(S)?h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.65,marginBottom:12,padding:'10px 12px',borderRadius:10,background:T.card}},
+          h('strong',{style:{color:T.fg}},'Set up your Mac once'),h('br'),
+          '1. On the Mac, in Terminal: ',h('code',null,'brew install python@3.12 deno'),h('br'),
+          '2. GitHub \u2192 ',h('strong',null,ghO+'/'+ghR),' \u2192 Settings \u2192 Actions \u2192 Runners \u2192 ',h('strong',null,'New self-hosted runner'),' \u2192 macOS. Run the commands it shows; when asked for labels, type ',h('code',null,'whisper'),'.',h('br'),
+          '3. Start it with ',h('code',null,'./run.sh'),' (or ',h('code',null,'./svc.sh install && ./svc.sh start'),' to run in the background).',h('br'),
+          '4. Paste the GitHub token below. Full guide: ',h('a',{href:'https://github.com/'+ghO+'/'+ghR+'#video-transcripts-whisper-on-your-mac',target:'_blank',rel:'noopener',style:{color:T.accent}},'README'),'.'):null,
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.55,marginBottom:10}},'\u201cTranscript\u201d on a video can run the free, open-source Whisper speech-to-text '+(txOnMac(S)?'on your Mac':'on GitHub\u2019s servers')+' (the Transcribe video workflow in ',h('strong',null,ghO+'/'+ghR),'). It takes a few minutes and keeps going if you close the app; the transcript is saved to your library.'),
         h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.7,marginBottom:10}},
           '1. ',h('a',{href:'https://github.com/settings/personal-access-tokens/new',target:'_blank',rel:'noopener',style:{color:T.accent}},'Create a fine-grained GitHub token'),h('br'),
           '2. Repository access: only ',h('strong',null,ghO+'/'+ghR),h('br'),
@@ -6724,7 +6740,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
           WHISPER_MODELS.map(([id,label])=>h('button',{key:id,onClick:()=>set({whisperModel:id}),className:'act95 trc',
             style:{padding:'8px 14px',borderRadius:18,fontSize:13,fontWeight:600,flexShrink:0,background:(S.whisperModel||'small')===id?T.fg:T.card,color:(S.whisperModel||'small')===id?T.bg:T.fg}},label))),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:6,lineHeight:1.5}},
-          (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min. Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
+          (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+(txOnMac(S)?'Rough time on an Apple-silicon Mac for a 1-hour video: Tiny ~2 min \u00b7 Small ~8 min \u00b7 Medium ~20 min \u00b7 Large v3 ~45 min.':'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min.')+' Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
   }else if(page==='sites'){
     content=h(Fragment,null,
       h('div',{style:{padding:'8px 20px 0'}},
