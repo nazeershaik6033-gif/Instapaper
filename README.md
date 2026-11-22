@@ -19,7 +19,6 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 📁 Folders, tags, and sorting by date / length / popularity
 - 🎨 Fonts, text size, line spacing, and four themes (Light, Sepia, Dark, Black) — one-tap theme cycling from the header
 - 💾 Full backup export / import — with **automatic backup reminders**: pick a schedule (off / 3 days / weekly / 2 weeks / monthly) in **Settings → Syncing & Backup** and the home screen nudges you to export a fresh backup with one tap when one is due
-<<<<<<< HEAD
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
@@ -39,14 +38,11 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - **Mark videos as watched** — right in the video player, or via long-press → Mark as watched.
 
 **AI for videos**
-- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway), **Full transcript**, and **Ask about this video** (Q&A answered from the video) — in English, Telugu, Hindi, Tamil, and more.
-- **Full transcript** lets you pick how to transcribe:
-  - **Whisper on GitHub** — runs OpenAI's Whisper speech-to-text for free on GitHub's servers (see *Video transcripts* below). Takes a few minutes, keeps going if you close the app, and saves the transcript to your library.
-  - **Gemini** — fast, needs a free Gemini key; the reply now streams, so iOS no longer cuts it off with "Load failed".
-  - **Claude app** — hands the video to Claude, no key.
-  - **On a website** — TurboScribe, NoteGPT, YouTubeToTranscript, or Tactiq: the video link is copied and the site opens.
-=======
->>>>>>> 97fe567 (Add automatic backup reminders)
+- Open the **✦ AI assistant** on any saved video for **Summarize** (key points + takeaway) and **Ask about this video** (Q&A answered from the video) — in English, Telugu, Hindi, Tamil, and more.
+- **Transcript** — under *Watch on YouTube* in the reader. The label previews the saved transcript; tap it for the transcript window:
+  - A **paste box** saved with the video: Paste, Copy, Share, Clear. Edits save as you type.
+  - **Translate** with online AI (Gemini or OpenRouter, whichever has a key) into Telugu, Hindi and more — each language is saved and shown as a tab next to *Original*.
+  - **Get the transcript**: **Whisper on GitHub** (see *Video transcripts* below — fills the box when done, even if you left), **Gemini** (fills the box; keep the app open), the **Claude app**, or a website — **TurboScribe**, **NoteGPT**, **YouTubeToTranscript**, **Tactiq**: the link is copied and the site opens; copy the transcript there, come back, tap **Paste**.
 
 **Daily Brief**
 - 📰 A built-in news digest in the sidebar — fresh headlines pulled from Google News
@@ -158,8 +154,8 @@ voice-activity filtering. The result is published as `t/<id>.json` on the `trans
    permission **Actions: Read and write**.
 2. In the app: **Settings → AI → Video transcripts**, paste the token and pick a Whisper model
    (Tiny / Base / Small / Medium / Large v3; Small is the default — Large v3 is very slow without a GPU).
-3. On a video: **✦ AI → Full transcript → Whisper on GitHub**. Progress shows in the sheet; when it finishes the transcript is
-   saved to your library as a new article (tag `transcript`).
+3. On a video: tap **Transcript** under *Watch on YouTube* → **Whisper on GitHub**. Progress shows on the label; when it
+   finishes the transcript fills the video's transcript box.
 
 YouTube sometimes blocks downloads from cloud servers. If a job fails with a download error, use one of the transcription
 websites or Gemini for that video.
