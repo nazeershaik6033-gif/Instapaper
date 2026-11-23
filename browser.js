@@ -15,7 +15,7 @@
 const {Fragment,useState,useEffect,useRef,useCallback,useMemo}=React;
 
 /* ============================== config ============================== */
-const AGENT_DEFAULTS={maxSteps:25,maxActions:4,maxFailures:3,thinking:true,flash:false,highlight:true,depth:2,engine:'duckduckgo',allowed:'',instructions:'',jsRender:true};
+const AGENT_DEFAULTS={maxSteps:25,maxActions:5,maxFailures:3,thinking:false,flash:false,highlight:true,depth:3,engine:'duckduckgo',allowed:'',instructions:'',jsRender:true};
 const PROVIDERS={
   gemini:{label:'Gemini',keyField:'geminiKey',keyUrl:'https://aistudio.google.com/apikey',keyHint:'AIza…',
     models:[['gemini-2.5-flash','Gemini 2.5 Flash (free tier)'],['gemini-2.5-pro','Gemini 2.5 Pro'],['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite']],def:'gemini-2.5-flash'},
@@ -183,6 +183,29 @@ function readerShell(title,html,url){
 function textShell(text,url){
   return'<html><head><title>'+escapeHtml(domainOf(url))+'</title></head><body style="margin:0;padding:14px;background:#fff"><pre style="white-space:pre-wrap;word-break:break-word;font:13px/1.5 ui-monospace,Menlo,monospace;color:#222">'+escapeHtml(String(text).slice(0,400000))+'</pre></body></html>';
 }
+/* The proxy pool fetches the raw page; the remote renderer (a real headless browser) joins the race
+   after 2.5s, or at once if the raw page is an empty JavaScript shell. The first full page wins. */
+function raceLoad(url,o){
+  return new Promise(resolve=>{
+    let done=false,pPrep=null,pDone=false,jStarted=false,jDone=false,jPrep=null,err=null,timer=0;
+    const fin=r=>{if(done)return;done=true;clearTimeout(timer);resolve(Object.assign({err},r))};
+    const check=()=>{
+      if(done)return;
+      if(pPrep&&pPrep.text!=null)return fin({text:pPrep.text});
+      if(pPrep&&!pPrep.thin)return fin({prep:pPrep,via:'proxy'});
+      if(jPrep&&!jPrep.thin)return fin({prep:jPrep,via:'rendered'});
+      if(!pDone)return;
+      if(!jStarted&&(o.jsRender!==false||!pPrep)){startJ();return}
+      if(jStarted&&!jDone)return;
+      const best=[pPrep&&{prep:pPrep,via:'proxy'},jPrep&&{prep:jPrep,via:'rendered'}].filter(Boolean).sort((a,b)=>b.prep.textLen-a.prep.textLen)[0];
+      fin(best||{});
+    };
+    const startJ=()=>{if(jStarted||done)return;jStarted=true;
+      fetchRendered(url).then(t=>{jPrep=preparePage(t,url)}).catch(e=>{if(!err)err=e}).then(()=>{jDone=true;check()})};
+    fetchRawHtml(url).then(raw=>{pPrep=looksLikeHtml(raw)?preparePage(raw,url):{text:raw}}).catch(e=>{err=e}).then(()=>{pDone=true;check()});
+    timer=setTimeout(startJ,2500);
+  });
+}
 async function fetchSmartPage(req,o){
   const url=req.url;
   if(/\.pdf(\?|#|$)/i.test(url)){
@@ -190,21 +213,16 @@ async function fetchSmartPage(req,o){
     const p=preparePage(readerShell(rd.title,rd.html,url),url);
     return{url,title:rd.title||domainOf(url),srcdoc:p.srcdoc,via:'reader'};
   }
-  let raw=null,err=null,via='proxy';
-  try{raw=req.method==='POST'?await proxyPost(url,req.body||''):await fetchRawHtml(url)}catch(e){err=e}
-  let prep=null;
-  if(raw!=null){
-    if(!looksLikeHtml(raw))return{url,title:domainOf(url),srcdoc:preparePage(textShell(raw,url),url).srcdoc,via:'text'};
-    prep=preparePage(raw,url);
-    if(prep.refresh&&prep.thin&&prep.refresh!==url&&!req._hop){
-      return fetchSmartPage({url:prep.refresh,_hop:1},o).then(r=>r);
-    }
-  }
-  if(req.method!=='POST'&&(!prep||(o.jsRender!==false&&prep.thin&&prep.hadScripts))){
-    try{
-      const p2=preparePage(await fetchRendered(url),url);
-      if(!prep||p2.textLen>prep.textLen){prep=p2;via='rendered'}
-    }catch(e){if(!err)err=e}
+  let err=null,via='proxy',prep=null;
+  if(req.method==='POST'){
+    try{const raw=await proxyPost(url,req.body||'');prep=looksLikeHtml(raw)?preparePage(raw,url):null;
+      if(!prep)return{url,title:domainOf(url),srcdoc:preparePage(textShell(raw,url),url).srcdoc,via:'text'}}catch(e){err=e}
+  }else{
+    const r=await raceLoad(url,o);
+    err=r.err;
+    if(r.text!=null)return{url,title:domainOf(url),srcdoc:preparePage(textShell(r.text,url),url).srcdoc,via:'text'};
+    if(r.prep){prep=r.prep;via=r.via}
+    if(prep&&via==='proxy'&&prep.refresh&&prep.thin&&prep.refresh!==url&&!req._hop)return fetchSmartPage({url:prep.refresh,_hop:1},o);
   }
   if(!prep&&req.method!=='POST'){
     try{const rd=await fetchViaJina(url);prep=preparePage(readerShell(rd.title,rd.html,url),url);via='reader'}catch(e){}
@@ -263,18 +281,22 @@ function parseResults(raw,engine){
   }
   return out.slice(0,20);
 }
-async function webSearch(query,engine){
+function webSearch(query,engine){
   const order=[engine||'duckduckgo','duckduckgo','bing','google'].filter((e,i,a)=>ENGINES[e]&&a.indexOf(e)===i);
-  let lastErr=null;
-  for(const e of order){
-    try{
-      const raw=await fetchRawHtml(ENGINES[e].url(query));
-      const res=parseResults(raw,e);
-      if(res.length)return{engine:e,results:res};
-      lastErr=new Error(ENGINES[e].label+' returned no results');
-    }catch(err){lastErr=err}
-  }
-  throw lastErr||new Error('search failed');
+  const fetchOk=(u,ok)=>typeof fetchRawAcross==='function'?fetchRawAcross(u,ok,15000):fetchRawHtml(u);
+  return new Promise((resolve,reject)=>{
+    let done=false,left=order.length,lastErr=null;const timers=[];
+    order.forEach((e,i)=>timers.push(setTimeout(async()=>{
+      if(done){left--;return}
+      try{
+        const raw=await fetchOk(ENGINES[e].url(query),t=>parseResults(t,e).length>0);
+        const res=parseResults(raw,e);
+        if(res.length&&!done){done=true;timers.forEach(clearTimeout);resolve({engine:e,results:res});return}
+        lastErr=new Error(ENGINES[e].label+' returned no results');
+      }catch(err){lastErr=err}
+      if(--left===0&&!done)reject(lastErr||new Error('search failed'));
+    },i*1800)));
+  });
 }
 function searchPageHtml(query,engine,results){
   const items=results.map(r=>'<div class="r"><a href="'+escapeHtml(r.url)+'"><span class="t">'+escapeHtml(r.title)+'</span></a><div class="u">'+escapeHtml(domainOf(r.url))+'</div>'+(r.snippet?'<p>'+escapeHtml(trunc(r.snippet,260))+'</p>':'')+'</div>').join('');
@@ -524,6 +546,7 @@ async function llmCall(cfg,messages,o){
   if(cfg.provider==='gemini'){
     const body={contents:conv.map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]})),generationConfig:{maxOutputTokens:Math.max(maxT,8192),temperature:0.2}};
     if(json)body.generationConfig.responseMimeType='application/json';
+    if(/^gemini-2\.5-flash/.test(cfg.model))body.generationConfig.thinkingConfig={thinkingBudget:0}; // hidden reasoning roughly triples latency
     if(sys)body.systemInstruction={parts:[{text:sys}]};
     const j=await httpJSON('https://generativelanguage.googleapis.com/v1beta/models/'+encodeURIComponent(cfg.model)+':generateContent?key='+encodeURIComponent(cfg.key),
       {method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(body)},150000,o.onWait,'Gemini');
@@ -540,6 +563,7 @@ async function llmCall(cfg,messages,o){
   }else if(cfg.provider==='openai'){
     const body={model:cfg.model,messages:(sys?[{role:'system',content:sys}]:[]).concat(conv),max_completion_tokens:Math.max(maxT,6000)};
     if(json)body.response_format={type:'json_object'};
+    if(/^gpt-5/.test(cfg.model))body.reasoning_effort='minimal';
     const j=await httpJSON('https://api.openai.com/v1/chat/completions',{method:'POST',headers:{'Authorization':'Bearer '+cfg.key,'Content-Type':'application/json'},body:JSON.stringify(body)},150000,o.onWait,'OpenAI');
     const m=j.choices&&j.choices[0]&&j.choices[0].message;text=m&&m.content||'';
   }else{
@@ -602,6 +626,7 @@ const ACTIONS={
   save_to_library:{d:'Save a web page to the user’s Instapaper reading list for offline reading (defaults to the current page). Use only when the user asks to save, bookmark or keep pages.',p:'{"url"?: string}'},
   done:{d:'Finish and report to the user. text = the complete final answer in markdown (include the key facts and source links — it is the ONLY thing the user sees). success=true only if the whole request was completed. files_to_display = file names to attach.',p:'{"text": string, "success": boolean, "files_to_display"?: string[]}'}
 };
+const INDEX_ACTIONS=new Set(['click','input_text','send_keys','get_dropdown_options','select_dropdown_option']);
 const ALIASES={search_google:'search',web_search:'search',google_search:'search',navigate:'go_to_url',open_url:'go_to_url',goto:'go_to_url',go_to:'go_to_url',open_tab:'go_to_url',back:'go_back',forward:'go_forward',reload:'refresh',
   click_element_by_index:'click',click_element:'click',input:'input_text',type:'input_text',type_text:'input_text',fill:'input_text',keys:'send_keys',press:'send_keys',
   extract_structured_data:'extract',extract_content:'extract',extract_page_content:'extract',find_text:'scroll_to_text',dropdown_options:'get_dropdown_options',select_dropdown:'select_dropdown_option',
@@ -686,10 +711,11 @@ function systemPrompt(o,opts){
   '- You cannot log in or pay. Never invent credentials.\n</environment>\n\n'+
   '<input>\nEach step you receive:\n1. <agent_history>: your previous steps and the results of their actions.\n2. <agent_state>: <user_request>, <file_system>, <todo_contents>, <step_info>.\n3. <browser_state>: current URL, open tabs, and the content of the visible part of the page with numbered interactive elements.\n4. <read_state>: shown only right after extract or read_file — this content is shown ONCE, so save what matters.\n</input>\n\n'+
   '<browser_state>\nInteractive elements look like [index]<tag attributes>text</tag>. Only elements with a numeric [index] can be used, and only indexes from the CURRENT browser_state are valid. Lines without an index are page text. Elements starting with *[ are new since the previous step. "... pixels below" means more content — scroll, or use extract to read everything at once.\n</browser_state>\n\n'+
-  '<browser_rules>\n- If research is needed, use search, or open sources in new tabs.\n- If the page changes after an action, the rest of that step’s actions are skipped and you get the new state.\n- When filling a form, type into each field, then click the submit button (or send_keys Enter).\n- If an action fails twice, try a different approach (another element, URL, site or search query).\n- Follow the user’s instructions about specific sites, filters and formats exactly.\n- Use extract for long pages instead of scrolling many times.\n</browser_rules>\n\n'+
+  '<browser_rules>\n- If research is needed, use search, or open sources in new tabs.\n- If the page changes after an action, later index-based actions in that step are skipped and you get the new state next step.\n- When filling a form, type into each field, then click the submit button (or send_keys Enter).\n- If an action fails twice, try a different approach (another element, URL, site or search query).\n- Follow the user’s instructions about specific sites, filters and formats exactly.\n- Use extract for long pages instead of scrolling many times.\n</browser_rules>\n\n'+
   '<file_system>\nYou have a small persistent file system. todo.md starts empty: for tasks with several parts, write a checklist there first and tick items with replace_file_str as you finish them. For long research tasks, accumulate findings in results.md. Never claim file contents you have not written or read.\n</file_system>\n\n'+
   '<task_completion_rules>\nCall done when: the request is fully completed; OR you reach the last allowed step; OR it is truly impossible to continue.\n- done must be the only action in its step.\n- success=true only if every part of the request is completed and verified; otherwise false.\n- Put everything the user needs in done.text — clear markdown, specific facts, numbers and source links. Do not just say "see file".\n- Only report information you actually saw on pages. Never make things up.\n</task_completion_rules>\n\n'+
-  '<action_rules>\nYou may chain up to '+opts.maxActions+' actions per step; they run in order. Chain only actions whose outcome you can predict (e.g. several input_text then click submit). Never chain past an action that loads a new page.\n</action_rules>\n\n'+
+  '<action_rules>\nYou may chain up to '+opts.maxActions+' actions per step; they run in order. After an action loads a new page, later actions that use element indexes (click, input_text, send_keys, dropdowns) are skipped — but actions without indexes (go_to_url, search, extract, scroll_to_text, files, save_to_library, done) still run. So chain freely, e.g. [go_to_url, extract], or several input_text then click.\n</action_rules>\n\n'+
+  '<speed_rules>\nThe user is waiting on a phone — finish in as FEW steps as possible.\n- Information tasks: search → open the best result with go_to_url and extract in the SAME step → done. Search result snippets may already answer simple questions; if so, call done right away.\n- If you already know the right site, go_to_url directly (or its search URL) instead of searching.\n- Prefer extract over scrolling through long pages.\n- Skip todo.md for simple tasks.\n</speed_rules>\n\n'+
   (think?'<reasoning_rules>\nIn "thinking": review the history and the current state, judge whether the previous step worked, track progress against the request and todo.md, notice loops (repeating the same action without progress) and change approach, and decide the next action(s).\n</reasoning_rules>\n\n':'')+
   '<available_actions>\n'+acts+'\n</available_actions>\n\n'+
   '<output>\nRespond with ONE valid JSON object and nothing else — no markdown fences, no text outside JSON. Format:\n'+shape+'\nThe action list must never be empty. Example action list: [{"input_text": {"index": 3, "text": "iphone 17"}}, {"click": {"index": 4}}]\n</output>';
@@ -786,7 +812,12 @@ class AgentRunner{
         this.emit();
         if(r.done){this.finish(r.success,r.text,null);return}
         if(!r.error)anyOk=true;
-        if(r.changed&&i<acts.length-1){step.results.push({name:'note',label:'page changed',text:'Page changed — the remaining '+(acts.length-1-i)+' action(s) were skipped.'});this.emit();break}
+        if(r.changed&&i<acts.length-1){
+          /* actions using element indexes are stale after a navigation; the rest (extract, files, done…) still run */
+          const rest=acts.slice(i+1);const keep=rest.filter(x=>!INDEX_ACTIONS.has(x.name)&&!(x.name==='scroll'&&x.params&&x.params.index!=null));
+          if(keep.length<rest.length){step.results.push({name:'note',label:'page changed',text:'Page changed — '+(rest.length-keep.length)+' action(s) using old element indexes were skipped.'});this.emit()}
+          acts=acts.slice(0,i+1).concat(keep);
+        }
       }
       failures=anyOk?0:failures+1;
       if(failures>=o.maxFailures){this.finish(false,null,'Stopped after '+failures+' failed steps in a row.');return}
@@ -817,7 +848,8 @@ class AgentRunner{
         const rs=(s.results||[]).filter(r=>r.name!=='note'||r.text);
         if(rs.length){
           hist+='Action Results:\n';
-          rs.forEach((r,i)=>{hist+='Action '+(i+1)+'/'+rs.length+': '+(r.error?'ERROR — '+trunc(r.error,400):trunc(r.memory||r.text||'ok',500))+'\n'});
+          const nA=rs.filter(r=>r.name!=='note').length;let k=0;
+          rs.forEach(r=>{hist+=(r.name==='note'?'Note: ':'Action '+(++k)+'/'+nA+': ')+(r.error?'ERROR — '+trunc(r.error,400):trunc(r.memory||r.text||'ok',500))+'\n'});
         }
       }
       hist+='</step_'+s.n+'>\n';
@@ -871,7 +903,7 @@ class AgentRunner{
       case'refresh':{await ctl.reload(ctl.activeId());return{text:'Reloaded the page',changed:true}}
       case'wait':{const s=Math.min(10,Math.max(0,num(p.seconds,3)));await sleep(s*1000);return{text:'Waited '+s+'s'}}
       case'click':{
-        const el=elAt();flashEl(el);await sleep(250);
+        const el=elAt();flashEl(el);await sleep(80);
         const r=await ctl.clickEl(ctl.activeId(),el,{newTab:!!p.new_tab,allowed:o.allowed});
         return r;
       }
@@ -926,7 +958,7 @@ class AgentRunner{
         }
         const before=win.scrollY;
         win.scrollBy(0,dir*pages*win.innerHeight);
-        await sleep(300);
+        await sleep(120);
         if(Math.abs(win.scrollY-before)<2)return{text:dir>0?'Already at the bottom of the page':'Already at the top of the page'};
         return{text:'Scrolled '+(dir>0?'down':'up')+' '+pages+' page'+(pages===1?'':'s')};
       }
@@ -1647,7 +1679,7 @@ function BUBrowser(props){
       if(t&&t.url&&!t.loading&&(t.mode==='live'||t.stale||(!t.srcdoc&&!t.error))){const e=t.hist[t.hi];await loadSmart(t.id,(e&&e.req&&!e.req.search?e.req:{url:t.url}),{push:false});}
       for(let i=0;i<120&&(t=getTab(activeRef.current))&&t.loading;i++)await sleep(250);
       t=getTab(activeRef.current);
-      await sleep(120);
+      await sleep(40);
       const tabsText='Current tab: '+(t?t.n:'?')+'\nAvailable tabs:\n'+tabsRef.current.map(x=>'Tab '+x.n+': '+(x.url||'about:blank')+(x.title?' - '+trunc(x.title,60):'')).join('\n');
       if(!t||!t.url)return{url:'',title:'',tabsText,dom:'Empty tab — nothing loaded yet. Use search or go_to_url to begin.',els:[],sigs:null};
       if(t.error)return{url:t.url,title:t.title,tabsText,dom:'This page failed to load: '+t.error+'\nTry another URL, go_back, or search.',els:[],sigs:null};
