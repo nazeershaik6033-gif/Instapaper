@@ -41,6 +41,7 @@ const EXAMPLES=[
 /* Shields (shields.js): Cromite-style blocking, URL hygiene and per-site settings */
 const SXm=()=>window.InstaShields||null;
 const navClean=u=>{const X=SXm();return X?X.navUrl(u):u};
+const socialOn=u=>{const S2=window.InstaSocial;return!!(S2&&S2.handles(u))};
 const siteJs=u=>{const X=SXm();return X?X.siteCfg(u).js:''};
 function liveSandbox(u){
   const X=SXm();if(!X)return LIVE_SANDBOX;
@@ -1542,13 +1543,13 @@ function AgentPanel(props){
 function newTabObj(n,url,mode){return{id:uid(),n,url:url||'',title:url?domainOf(url):'',mode:mode||'live',srcdoc:'',loading:false,error:'',hist:url?[{url}]:[],hi:url?0:-1,via:'',liveKey:0,stale:!!url}}
 function restoreTabs(saved,initialUrl,S){
   let tabs=[];let n=0;
-  if(saved&&Array.isArray(saved.tabs))tabs=saved.tabs.filter(t=>t&&t.id).slice(0,12).map(t=>{n=Math.max(n,t.n||0);return Object.assign(newTabObj(t.n||++n,safeUrl(t.url),t.mode==='smart'?'smart':'live'),{id:t.id,title:t.title||domainOf(t.url)})});
+  if(saved&&Array.isArray(saved.tabs))tabs=saved.tabs.filter(t=>t&&t.id).slice(0,12).map(t=>{n=Math.max(n,t.n||0);return Object.assign(newTabObj(t.n||++n,safeUrl(t.url),t.mode==='smart'||t.mode==='app'?t.mode:'live'),{id:t.id,title:t.title||domainOf(t.url)})});
   let active=saved&&tabs.find(t=>t.id===saved.active)?saved.active:(tabs[0]&&tabs[0].id);
   const iu=safeUrl(initialUrl);
   if(iu){
     const ex=tabs.find(t=>t.url===iu);
     if(ex)active=ex.id;
-    else{const t=newTabObj(n+1,iu,S.browserView==='smart'?'smart':'live');tabs.push(t);active=t.id}
+    else{const t=newTabObj(n+1,iu,socialOn(iu)?'app':S.browserView==='smart'?'smart':'live');tabs.push(t);active=t.id}
   }else if(initialUrl===''&&saved){ /* opened from the menu: land on a fresh start page */
     const blank=tabs.find(t=>!t.url);
     if(blank)active=blank.id;else{const t=newTabObj(n+1,'');tabs.push(t);active=t.id}
@@ -1624,6 +1625,7 @@ function BUBrowser(props){
   async function loadSmart(id,req,lo){
     lo=lo||{};
     if(req.url&&!req.cached&&!req.search&&req.method!=='POST'){const nu=navClean(req.url);if(nu!==req.url)req=Object.assign({},req,{url:nu})}
+    if(lo.user&&req.url&&!req.cached&&!req.search&&req.method!=='POST'&&socialOn(req.url)){navSocial(id,req.url,lo.push);return getTab(id)}
     if(lo.user&&req.url&&!req.cached&&!req.search&&req.method!=='POST'&&siteJs(req.url)==='live'){navLive(id,req.url);return getTab(id)}
     const seq=(seqs.current[id]=(seqs.current[id]||0)+1);
     saveScroll(id);
@@ -1695,12 +1697,25 @@ function BUBrowser(props){
     if(!blank&&page.url)markSmartBlocked(page.url,false);
     patchTab(id,{loading:false,note:'',blank});
   }
+  /* YouTube / Instagram / X open in the in-app viewer (social.js): their sites refuse to load in frames */
+  function navSocial(id,url,push){
+    url=navClean(url);
+    if(push!==false&&SXm()){const tt=getTab(id);if(tt&&!tt.priv)SXm().recordVisit(update,url,window.InstaSocial.titleFor(url))}
+    patchTab(id,t=>{
+      let hist=t.hist.slice(),hi=t.hi;
+      if(push!==false){hist=hist.slice(0,hi+1).concat([{url,req:{url},app:true}]);hi=hist.length-1}
+      else if(hi>=0)hist[hi]=Object.assign({},hist[hi],{url,req:{url},app:true,page:null});
+      else{hist=[{url,req:{url},app:true}];hi=0}
+      return{url,mode:'app',title:window.InstaSocial.titleFor(url),error:'',loading:false,stale:false,srcdoc:'',shield:null,liveWhy:'',note:'',blank:false,hist,hi};
+    });
+  }
   function navLive(id,url,push){
+    if(socialOn(url)){navSocial(id,url,push);return}
     url=navClean(url);
     if(push!==false&&SXm()){const tt=getTab(id);if(tt&&!tt.priv)SXm().recordVisit(update,url,domainOf(url))}
     patchTab(id,t=>{
       let hist=t.hist.slice(),hi=t.hi;
-      if(push!==false){hist=hist.slice(0,hi+1).concat([{url,req:{url}}]);hi=hist.length-1}
+      if(push!==false){hist=hist.slice(0,hi+1).concat([{url,req:{url},live:true}]);hi=hist.length-1}
       return{url,mode:'live',title:domainOf(url),liveKey:(t.liveKey||0)+1,error:'',loading:false,stale:false,srcdoc:'',shield:null,liveWhy:'',hist,hi};
     });
   }
@@ -1785,7 +1800,8 @@ function BUBrowser(props){
       const e=t.hist[t.hi-1];
       saveScroll(id);
       patchTab(id,{hi:t.hi-1});
-      if(t.mode==='live'&&!e.page){patchTab(id,x=>({url:e.url,liveKey:(x.liveKey||0)+1,title:domainOf(e.url)}));return true}
+      if(e.app){navSocial(id,e.url,false);return true}
+      if((t.mode==='live'||t.mode==='app'||e.live)&&!e.page){navLive(id,e.url,false);return true}
       if(e.page)await loadSmart(id,{url:e.url,cached:e.page},{push:false,scrollY:e.scrollY});
       else await loadSmart(id,e.req||{url:e.url},{push:false,scrollY:e.scrollY});
       return true;
@@ -1795,14 +1811,15 @@ function BUBrowser(props){
       const e=t.hist[t.hi+1];
       saveScroll(id);
       patchTab(id,{hi:t.hi+1});
-      if(t.mode==='live'&&!e.page){patchTab(id,x=>({url:e.url,liveKey:(x.liveKey||0)+1,title:domainOf(e.url)}));return true}
+      if(e.app){navSocial(id,e.url,false);return true}
+      if((t.mode==='live'||t.mode==='app'||e.live)&&!e.page){navLive(id,e.url,false);return true}
       if(e.page)await loadSmart(id,{url:e.url,cached:e.page},{push:false,scrollY:e.scrollY});
       else await loadSmart(id,e.req||{url:e.url},{push:false});
       return true;
     },
     async reload(id){
       const t=getTab(id);if(!t||!t.url)return;
-      if(t.mode==='live'){patchTab(id,x=>({liveKey:(x.liveKey||0)+1}));return}
+      if(t.mode==='live'||t.mode==='app'){patchTab(id,x=>({liveKey:(x.liveKey||0)+1}));return}
       const e=t.hist[t.hi];
       await loadSmart(id,(e&&e.req)||{url:t.url},{push:false});
     },
@@ -1866,7 +1883,7 @@ function BUBrowser(props){
     },
     async agentState(ao,prevSigs,prevUrl){
       let t=getTab(activeRef.current);
-      if(t&&t.url&&!t.loading&&(t.mode==='live'||t.stale||(!t.srcdoc&&!t.error))){const e=t.hist[t.hi];await loadSmart(t.id,(e&&e.req&&!e.req.search?e.req:{url:t.url}),{push:false});}
+      if(t&&t.url&&!t.loading&&(t.mode==='live'||t.mode==='app'||t.stale||(!t.srcdoc&&!t.error))){const e=t.hist[t.hi];await loadSmart(t.id,(e&&e.req&&!e.req.search?e.req:{url:t.url}),{push:false});}
       for(let i=0;i<240&&(t=getTab(activeRef.current))&&t.loading;i++)await sleep(250);
       t=getTab(activeRef.current);
       await sleep(40);
@@ -1959,10 +1976,10 @@ function BUBrowser(props){
     setView('page');
     try{document.activeElement&&document.activeElement.blur()}catch(e){}
   };
-  const openSite=url=>{const tab=getTab(activeRef.current);const mode=siteJs(url)||(S.browserView==='smart'?'smart':'live');if(mode==='live')navLive(tab.id,url);else if(isSmartBlocked(url))toLiveBlocked(tab.id,url);else loadSmart(tab.id,{url},{user:true})};
+  const openSite=url=>{const tab=getTab(activeRef.current);if(socialOn(url)){navSocial(tab.id,url);return}const mode=siteJs(url)||(S.browserView==='smart'?'smart':'live');if(mode==='live')navLive(tab.id,url);else if(isSmartBlocked(url))toLiveBlocked(tab.id,url);else loadSmart(tab.id,{url},{user:true})};
   const switchView=()=>{
     const t=getTab(activeRef.current);if(!t||!t.url)return;
-    if(t.mode==='live'){markSmartBlocked(t.url,false);loadSmart(t.id,{url:t.url},{push:false})} // an explicit switch tries Smart again and shows the error if it still fails
+    if(t.mode==='live'||t.mode==='app'){markSmartBlocked(t.url,false);loadSmart(t.id,{url:t.url},{push:false})} // an explicit switch tries Smart again and shows the error if it still fails
     else navLive(t.id,t.url,false);
   };
   const openLink=href=>{if(/^https?:/.test(href))ctl.newTab(href,{mode:S.browserView==='smart'?'smart':'live'})};
@@ -2082,6 +2099,9 @@ function BUBrowser(props){
       const isA=t.id===activeId;
       let body=null;
       if(!t.url)body=isA?startPage:null;
+      else if(t.mode==='app'&&window.InstaSocial)body=isA?h(window.InstaSocial.View,{key:'app'+(t.liveKey||0)+t.url,T,url:t.url,onSaveUrl,toastFn,
+        onTitle:title=>patchTab(t.id,{title}),
+        onNav:u=>{if(socialOn(u))navSocial(t.id,u);else if(siteJs(u)==='live'||isSmartBlocked(u))navLive(t.id,u);else loadSmart(t.id,{url:u},{user:true})}}):null;
       else if(t.mode==='live')body=h('iframe',{key:'live'+t.liveKey,src:t.url,sandbox:liveSandbox(t.url),allow:'fullscreen; clipboard-write; geolocation',referrerPolicy:SXm()&&SXm().cfg().referrer?'no-referrer':'no-referrer-when-downgrade',title:t.title||'page',
         style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0,background:'#fff'}});
       else body=h('iframe',{srcDoc:t.srcdoc||'',sandbox:'allow-same-origin',title:t.title||'page',ref:el=>{if(el)frames.current[t.id]=el},onLoad:()=>onFrameLoad(t.id),
@@ -2125,7 +2145,7 @@ function BUBrowser(props){
       h('button',{onClick:tryClose,'aria-label':'Close browser',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.x(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:7,background:T.search,borderRadius:11,padding:'0 6px 0 8px',minWidth:0,height:40}},
         active&&active.priv&&!addrFocus?h('span',{title:'Private tab',style:{color:T.fg,display:'flex',flexShrink:0}},SXm().icons.mask(17)):null,
-        active&&active.url&&!addrFocus?h('button',{onClick:switchView,className:'act95',title:'Switch view',style:{flexShrink:0,fontSize:10.5,fontWeight:700,letterSpacing:'.03em',padding:'3px 6px',borderRadius:6,background:active.mode==='smart'?T.fg:T.bg,color:active.mode==='smart'?T.bg:T.fg,border:'1px solid '+T.hair}},active.mode==='smart'?'SMART':'LIVE'):h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
+        active&&active.url&&!addrFocus?h('button',{onClick:switchView,className:'act95',title:'Switch view',style:{flexShrink:0,fontSize:10.5,fontWeight:700,letterSpacing:'.03em',padding:'3px 6px',borderRadius:6,background:active.mode==='smart'?T.fg:T.bg,color:active.mode==='smart'?T.bg:T.fg,border:'1px solid '+T.hair}},active.mode==='smart'?'SMART':active.mode==='app'?'APP':'LIVE'):h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:addrFocus?addr:(active&&active.url?(domainOf(active.url)||active.url):''),onChange:e=>setAddr(e.target.value),placeholder:'Search or enter address',inputMode:'url',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           onKeyDown:e=>{if(e.key==='Enter')goAddr(addr)},
           onFocus:e=>{setAddrFocus(true);setAddr(active&&active.url||'');const el=e.target;setTimeout(()=>{try{el.select()}catch(err){}},30)},
@@ -2161,7 +2181,7 @@ function BUBrowser(props){
       active&&active.url?h(Fragment,null,
         h('div',{style:{padding:'6px 20px 10px',fontSize:13,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},active.title||active.url),
         h(ARow,{T,icon:Icons.download(21),label:'Save page to Instapaper',sub:'Download it for offline reading',onClick:async()=>{setSheet(null);const m=await onSaveUrl(active.url);if(m)toastFn(m)}}),
-        h(ARow,{T,icon:Icons.globe(21),label:active.mode==='smart'?'Switch to Live view':'Switch to Smart view',sub:active.mode==='smart'?'The real site with scripts and your logins':'Always loads; works with the agent',onClick:()=>{setSheet(null);switchView()}}),
+        h(ARow,{T,icon:Icons.globe(21),label:active.mode==='smart'?'Switch to Live view':active.mode==='app'?'Try the full site in Smart view':'Switch to Smart view',sub:active.mode==='smart'?'The real site with scripts and your logins':active.mode==='app'?'Usually mostly blank for this site':'Always loads; works with the agent',onClick:()=>{setSheet(null);switchView()}}),
         active.mode==='smart'?h(ARow,{T,icon:BI.find(21),label:'Find on page',onClick:()=>setSheet('find')}):null,
         SXm()?h(ARow,{T,icon:SXm().icons.shield(21),label:'Shields for this site',sub:scActive&&scActive.shields?(active.mode==='smart'&&active.shield?(active.shield.blocked||0)+' blocked · '+(active.shield.hidden||0)+' removed':'Up'):'Down on this site',onClick:()=>setSheet('shield')}):null,
         SXm()&&active.mode==='smart'?h(ARow,{T,icon:SXm().icons.pick(21),label:'Hide an element',sub:'Tap a banner or box to remove it for good',onClick:startPick}):null,
@@ -2219,7 +2239,7 @@ function TabsGrid({T,tabs,activeId,onPick,onClose,onNew,onNewPrivate,onDone,onCl
   const [confirm,setConfirm]=useState(false);
   const X=SXm();
   const badge=t=>h('div',{style:{display:'flex',gap:6}},
-    h('span',{style:{padding:'2px 6px',borderRadius:5,background:T.card,color:T.fg,fontWeight:700,fontSize:9.5,letterSpacing:'.03em'}},t.url?(t.mode==='smart'?'SMART':'LIVE'):'NEW'),
+    h('span',{style:{padding:'2px 6px',borderRadius:5,background:T.card,color:T.fg,fontWeight:700,fontSize:9.5,letterSpacing:'.03em'}},t.url?(t.mode==='smart'?'SMART':t.mode==='app'?'APP':'LIVE'):'NEW'),
     t.priv?h('span',{style:{padding:'2px 6px',borderRadius:5,background:'#3b2f5c',color:'#fff',fontWeight:700,fontSize:9.5,letterSpacing:'.03em'}},'PRIVATE'):null,
     h('span',{style:{padding:'2px 6px',borderRadius:5,background:T.card,fontSize:9.5,fontWeight:700}},'TAB '+t.n));
   const fav=t=>t.url?h('img',{src:faviconUrl(t.url),alt:'',style:{width:15,height:15,borderRadius:3,flexShrink:0},onError:e=>{e.target.style.display='none'}}):h('span',{style:{color:T.sub,display:'flex'}},t.priv&&X?X.icons.mask(14):Icons.home(14));
@@ -2237,7 +2257,7 @@ function TabsGrid({T,tabs,activeId,onPick,onClose,onNew,onNewPrivate,onDone,onCl
       fav(t),
       h('div',{style:{flex:1,minWidth:0}},
         h('div',{style:{fontSize:14,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',color:T.fg}},(t.priv?'🕶 ':'')+(t.title||(t.url?domainOf(t.url):'Start page'))),
-        h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(t.url?(t.mode==='smart'?'Smart · ':'Live · ')+t.url:'New tab'))),
+        h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(t.url?(t.mode==='smart'?'Smart · ':t.mode==='app'?'App · ':'Live · ')+t.url:'New tab'))),
       h('button',{onClick:e=>{e.stopPropagation();onClose(t.id)},'aria-label':'Close tab',className:'act90',style:{color:T.sub,display:'flex',padding:6}},Icons.x(16)))));
   return h('div',{className:'fdin',style:{position:'absolute',inset:0,zIndex:20,background:isDarkTheme(T.id)?'#0d0d0f':'#e9e9ee',display:'flex',flexDirection:'column'}},
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'8px 14px 0'}},

@@ -89,6 +89,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - Smart view and the agent don't use your logins, and pages go through public proxies — don't use them for anything private
 - 🇮🇳 **India mode** (Agent settings → India, on by default): Indian search results, and the agent knows you're in India. Many Indian sites (e.g. Eenadu e-paper) refuse servers abroad, which is where the free page fetchers run, so they open in Live view automatically. To open them in Smart view and with the agent, add a **Jina API key** (pages are then fetched and rendered through an Indian connection), and/or deploy `worker/feed-proxy.js` with a `KEY` secret and set the Feed proxy to `https://<worker>.workers.dev/?key=<KEY>&url=` — the worker runs in the Cloudflare data centre nearest you
 
+**YouTube, Instagram & X inside the app** (their full sites refuse to load inside other apps, so they get their own viewer)
+- ▶️ **YouTube** — any video, short or playlist link plays right in the app in YouTube’s privacy-enhanced player, with title, channel, description and **Up next**; **search YouTube**, open **channels** (latest videos) and see **Recently watched**. Save / Share / Copy link / Safari / YouTube app buttons on every video
+- 📷 **Instagram** — posts and reels open in Instagram’s own embed (with captions); public profiles show Instagram’s profile preview; paste any link with one tap
+- 𝕏 **X** — posts open in X’s embed; public profiles show recent posts; type an @username or paste a link
+- Works from the default Browse screen and the in-app browser (an **APP** badge shows in the address bar). Feeds, stories, comments and messages need your account, so they still need the real app. Turn it off in Privacy & Shields → *YouTube, Instagram & X inside the app*
+
 **Shields — privacy & ad blocking** (inspired by [Cromite](https://github.com/uazo/cromite); shield icon in the address bar, or ⋯ → Privacy & Shields)
 - 🛡 **Built-in ad & tracker blocker** for Smart view: ad, tracker and tracking-pixel requests are removed before the page draws, and ad boxes, empty ad slots and cookie banners are cleaned out. A green shield with a count shows what was blocked; tap it for the numbers and the list of blocked servers
 - 📜 **Filter lists** — a built-in list is always on; **EasyList** and **EasyPrivacy** download automatically, and **Peter Lowe’s list**, **Fanboy Annoyances** (cookie walls, newsletter pop-ups, “open in app” bars) and **Fanboy Social** are one tap away. Lists update weekly, survive app updates, and **My filters** takes your own Adblock Plus rules (`||ads.example.com^`, `example.com##.promo`, `@@||site.com^`)
@@ -214,6 +220,7 @@ copy on `main`).
 | `app.js` | The entire application |
 | `browser.js` | In-app browser and Browser Agent |
 | `adblock-*.mobileconfig` | iOS ad-blocking DNS profiles (AdGuard, Mullvad) offered on the Browse screen |
+| `social.js` | In-app viewer for YouTube, Instagram and X |
 | `shields.js` | Shields — ad & tracker blocking, filter lists, per-site settings, tracking protection |
 | `sw.js` | Service worker — offline caching |
 | `manifest.json` | PWA manifest (icons, share target) |

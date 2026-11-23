@@ -6198,6 +6198,10 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
     let u=browserTarget(t);if(!u)return;
     if(SXa)u=SXa.navUrl(u); // no utm/fbclid, no redirect wrappers or AMP, https
     setInput(u);
+    if(window.InstaSocial&&window.InstaSocial.handles(u)){ // YouTube / Instagram / X play inside the app
+      if(onHistory&&!priv)onHistory(list=>recordBrowserVisit(list,u,name));
+      setInApp({url:u});return;
+    }
     if(onHistory&&!priv&&!(SXa&&SXa.cfg().hist==='off'))onHistory(list=>SXa?SXa.trimHistory(recordBrowserVisit(list,u,name)):recordBrowserVisit(list,u,name));
     markBrowserReturn();
     openExternalUrl(u);
@@ -7243,7 +7247,7 @@ function App(){
     const within=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]); // never hang on a stuck step
     /* 1. download every app file fresh, past the phone's web cache (it keeps files ~10 min),
           so the reload below can't pick up an old copy */
-    const files=['./','./index.html','./app.js','./shields.js','./browser.js','./sw.js','./manifest.json','./newspaper.html','./newspaper.js'];
+    const files=['./','./index.html','./app.js','./shields.js','./social.js','./browser.js','./sw.js','./manifest.json','./newspaper.html','./newspaper.js'];
     await within(Promise.all(files.map(f=>fetch(f,{cache:'reload'}).catch(()=>{}))),8000);
     /* 2. drop the service worker and the cached app shell (downloaded ad-block lists stay) */
     try{
