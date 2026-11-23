@@ -123,7 +123,7 @@ async function fetchRendered(url){
   if(!t||t.length<150)throw new Error('empty render');
   return t;
 }
-const BOT_RX=/just a moment|attention required|access denied|are you a robot|verify you are (a )?human|checking your browser|enable javascript and cookies|pardon our interruption|request blocked|unusual traffic|captcha/i;
+const BOT_RX=/^(403|401)\b|403 forbidden|error 403|401 unauthorized|^forbidden\b|just a moment|attention required|access denied|are you a robot|verify you are (a )?human|checking your browser|enable javascript and cookies|pardon our interruption|request blocked|unusual traffic|captcha/i;
 const STRIP_SEL='script,iframe,frame,frameset,object,embed,applet,base,portal,meta[http-equiv],link[rel~="preload"],link[rel~="modulepreload"],link[rel~="prefetch"],link[rel~="prerender"],link[rel~="manifest"],link[rel~="serviceworker"]';
 function preparePage(raw,url){
   const doc=new DOMParser().parseFromString(raw,'text/html');
@@ -181,6 +181,18 @@ function preparePage(raw,url){
   }
   const title=squish(doc.title||'');
   return{srcdoc:'<!DOCTYPE html>'+doc.documentElement.outerHTML,title,textLen,thin:textLen<250||blocked,blocked,hadScripts,refresh};
+}
+/* hosts that refuse the proxies (e.g. Indian e-papers answer 403 to servers abroad) open straight in Live view next time */
+const BLOCK_KEY='insta_smart_blocked';
+const blockedHosts=()=>{try{return JSON.parse(localStorage.getItem(BLOCK_KEY)||'{}')||{}}catch(e){return{}}};
+function isSmartBlocked(url){const hst=hostOf(url);const t=blockedHosts()[hst];return!!t&&Date.now()-t<7*86400000}
+function markSmartBlocked(url,on){try{const m=blockedHosts();const hst=hostOf(url);if(!hst)return;if(on)m[hst]=Date.now();else delete m[hst];localStorage.setItem(BLOCK_KEY,JSON.stringify(m))}catch(e){}}
+function friendlyLoadError(e,url){
+  const m=String(e&&e.message||e||'');
+  const host=domainOf(url)||'This site';
+  if(/load failed|failed to fetch|networkerror|proxy|403|401|forbidden|all proxies|aborted|timed? ?out|renderer|empty/i.test(m)||!m)
+    return host+' blocks the servers Smart view fetches pages through, so it can only open on your own connection (Live view or Safari).';
+  return m;
 }
 function revealPage(doc,win){
   try{
@@ -1530,7 +1542,7 @@ function BUBrowser(props){
   useEffect(()=>{
     const t=active;
     if(t&&t.stale&&t.url&&!t.loading){
-      if(t.mode==='smart')loadSmart(t.id,{url:t.url},{push:false});
+      if(t.mode==='smart'){if(isSmartBlocked(t.url))toLiveBlocked(t.id,t.url);else loadSmart(t.id,{url:t.url},{push:false,user:true})}
       else patchTab(t.id,{stale:false});
     }
   },[activeId,active&&active.stale]);
@@ -1556,7 +1568,9 @@ function BUBrowser(props){
       else page=await fetchSmartPage(req,oRef.current);
     }catch(e){
       if(seqs.current[id]!==seq)return getTab(id);
-      patchTab(id,{loading:false,error:String(e&&e.message||e),srcdoc:''});
+      const target=req.url||((getTab(id)||{}).url);
+      if(lo.user&&target&&!req.search&&req.method!=='POST'){markSmartBlocked(target,true);toLiveBlocked(id,target);return getTab(id)}
+      patchTab(id,{loading:false,error:friendlyLoadError(e,target),srcdoc:''});
       return getTab(id);
     }
     if(seqs.current[id]!==seq||!getTab(id))return getTab(id);
@@ -1573,11 +1587,18 @@ function BUBrowser(props){
       return{srcdoc:page.srcdoc,title:page.title,url:page.url,via:page.via,loading:false,error:'',blank:false,note:'',hist,hi};
     });
     await loaded;
-    if(!req.search&&req.method!=='POST'&&!req.cached)await rescueBlank(id,seq,page);
+    if(!req.search&&req.method!=='POST'&&!req.cached)await rescueBlank(id,seq,page,lo);
     const t=getTab(id);
     return Object.assign({},t,{count:page.count,engine:page.engine});
   }
-  async function rescueBlank(id,seq,page){
+  function toLiveBlocked(id,url){
+    patchTab(id,t=>{
+      let hist=t.hist.slice(),hi=t.hi;
+      if(!(hi>=0&&hist[hi]&&hist[hi].url===url)){hist=hist.slice(0,hi+1).concat([{url,req:{url}}]);hi=hist.length-1}
+      return{url,mode:'live',title:domainOf(url),liveKey:(t.liveKey||0)+1,error:'',loading:false,stale:false,srcdoc:'',note:'',blank:false,liveWhy:'blocked',hist,hi};
+    });
+  }
+  async function rescueBlank(id,seq,page,lo){
     const chain=[];
     if(page.via!=='rendered'&&page.via!=='reader'&&page.via!=='text'&&oRef.current.jsRender!==false)chain.push('rendered');
     if(page.via!=='reader'&&page.via!=='text')chain.push('reader');
@@ -1599,13 +1620,16 @@ function BUBrowser(props){
     }
     if(seqs.current[id]!==seq)return;
     const f=frameDoc();
-    patchTab(id,{loading:false,note:'',blank:!!(f&&looksBlank(f.doc,f.win))});
+    const blank=!!(f&&looksBlank(f.doc,f.win));
+    if(blank&&lo&&lo.user){markSmartBlocked(page.url,true);toLiveBlocked(id,page.url);return}
+    if(!blank&&page.url)markSmartBlocked(page.url,false);
+    patchTab(id,{loading:false,note:'',blank});
   }
   function navLive(id,url,push){
     patchTab(id,t=>{
       let hist=t.hist.slice(),hi=t.hi;
       if(push!==false){hist=hist.slice(0,hi+1).concat([{url,req:{url}}]);hi=hist.length-1}
-      return{url,mode:'live',title:domainOf(url),liveKey:(t.liveKey||0)+1,error:'',loading:false,stale:false,srcdoc:'',hist,hi};
+      return{url,mode:'live',title:domainOf(url),liveKey:(t.liveKey||0)+1,error:'',loading:false,stale:false,srcdoc:'',liveWhy:'',hist,hi};
     });
   }
   function onFrameLoad(id){
@@ -1622,7 +1646,7 @@ function BUBrowser(props){
         const raw=a.getAttribute('href')||'';
         if(raw.startsWith('#')){const t=doc.getElementById(decodeURIComponent(raw.slice(1)))||doc.getElementsByName(raw.slice(1))[0];if(t)t.scrollIntoView({behavior:'smooth'});return}
         const tab=getTab(id);const href=absUrl(raw,tab&&tab.url);
-        if(/^https?:/.test(href)){if(a.getAttribute('target')==='_blank')ctl.newTab(href,{mode:'smart'});else ctl.navigate(id,{url:href},{mode:'smart'})}
+        if(/^https?:/.test(href)){if(a.getAttribute('target')==='_blank')ctl.newTab(href,{mode:'smart',user:true});else if(isSmartBlocked(href))toLiveBlocked(id,href);else loadSmart(id,{url:href},{user:true})}
         else if(/^(mailto|tel|sms|maps):/i.test(href))openExternalUrl(href);
         return;
       }
@@ -1664,7 +1688,8 @@ function BUBrowser(props){
       setTabs(ts=>ts.concat([t]));setActive(t.id);setView('page');
       if(url){
         if((no.mode||'smart')==='live'){navLive(t.id,url);if(no.title)patchTab(t.id,{title:no.title})}
-        else await loadSmart(t.id,{url},{});
+        else if(no.user&&isSmartBlocked(url))toLiveBlocked(t.id,url);
+        else await loadSmart(t.id,{url},{user:!!no.user});
       }
       return t.id;
     },
@@ -1771,7 +1796,7 @@ function BUBrowser(props){
       await sleep(40);
       const tabsText='Current tab: '+(t?t.n:'?')+'\nAvailable tabs:\n'+tabsRef.current.map(x=>'Tab '+x.n+': '+(x.url||'about:blank')+(x.title?' - '+trunc(x.title,60):'')).join('\n');
       if(!t||!t.url)return{url:'',title:'',tabsText,dom:'Empty tab — nothing loaded yet. Use search or go_to_url to begin.',els:[],sigs:null};
-      if(t.error)return{url:t.url,title:t.title,tabsText,dom:'This page failed to load: '+t.error+'\nTry another URL, go_back, or search.',els:[],sigs:null};
+      if(t.error)return{url:t.url,title:t.title,tabsText,blank:true,dom:'⚠ This page could not be loaded: '+t.error+'\nThis site refuses automated access — do NOT retry it. go_back, use another search result, or a different site.',els:[],sigs:null};
       const fr=frames.current[t.id];let doc=null,win=null;
       try{doc=fr&&fr.contentDocument;win=fr&&fr.contentWindow}catch(e){}
       if(!doc||!doc.body)return{url:t.url,title:t.title,tabsText,dom:'(page is still loading — wait or refresh)',els:[],sigs:null};
@@ -1846,15 +1871,15 @@ function BUBrowser(props){
     const isUrl=!/\s/.test(t0)&&t0.includes('.')&&normalizeUrl(t0);
     const mode=tab.url?tab.mode:(S.browserView==='smart'?'smart':'live');
     if(mode==='live')navLive(tab.id,isUrl?normalizeUrl(t0):browserTarget(t0));
-    else if(isUrl)loadSmart(tab.id,{url:normalizeUrl(t0)},{});
+    else if(isUrl){const u=normalizeUrl(t0);if(isSmartBlocked(u))toLiveBlocked(tab.id,u);else loadSmart(tab.id,{url:u},{user:true})}
     else loadSmart(tab.id,{search:t0,engine:o.engine},{});
     setView('page');
     try{document.activeElement&&document.activeElement.blur()}catch(e){}
   };
-  const openSite=url=>{const tab=getTab(activeRef.current);const mode=S.browserView==='smart'?'smart':'live';if(mode==='live')navLive(tab.id,url);else loadSmart(tab.id,{url},{})};
+  const openSite=url=>{const tab=getTab(activeRef.current);const mode=S.browserView==='smart'?'smart':'live';if(mode==='live')navLive(tab.id,url);else if(isSmartBlocked(url))toLiveBlocked(tab.id,url);else loadSmart(tab.id,{url},{user:true})};
   const switchView=()=>{
     const t=getTab(activeRef.current);if(!t||!t.url)return;
-    if(t.mode==='live')loadSmart(t.id,{url:t.url},{push:false});
+    if(t.mode==='live'){markSmartBlocked(t.url,false);loadSmart(t.id,{url:t.url},{push:false})} // an explicit switch tries Smart again and shows the error if it still fails
     else navLive(t.id,t.url,false);
   };
   const openLink=href=>{if(/^https?:/.test(href))ctl.newTab(href,{mode:S.browserView==='smart'?'smart':'live'})};
@@ -1940,8 +1965,8 @@ function BUBrowser(props){
       h('button',{onClick:()=>setSheet('vault'),'aria-label':'Passwords',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.key(19))),
     pageArea,
     showHint&&view==='page'?h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'6px 12px',borderTop:'1px solid '+T.hair,background:T.bg}},
-      h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.35}},'Blank page? This site may block apps.'),
-      h('button',{onClick:switchView,style:{color:T.accent,fontWeight:600,fontSize:12.5}},'Smart view'),
+      h('span',{style:{flex:1,fontSize:11.5,color:T.sub,lineHeight:1.35}},active.liveWhy==='blocked'?domainOf(active.url)+' blocks Smart view, so this is the live site. Still blank? Open it in Safari.':'Blank page? This site may block apps.'),
+      active.liveWhy==='blocked'?null:h('button',{onClick:switchView,style:{color:T.accent,fontWeight:600,fontSize:12.5}},'Smart view'),
       h('button',{onClick:()=>openExternalUrl(active.url),style:{color:T.accent,fontWeight:600,fontSize:12.5}},'Safari ↗'),
       h('button',{onClick:()=>setHideHint(x=>({...x,[active.id]:1})),style:{color:T.sub,display:'flex',padding:2}},Icons.x(14))):null,
     /* toolbar */
