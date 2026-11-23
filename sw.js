@@ -1,7 +1,7 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
 /* redeploy trigger: retry Pages deploy after a transient GitHub Pages failure */
-const CACHE = 'instapaper-shell-v128';
-const SHELL = ['./', './index.html', './app.js', './browser.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
+const CACHE = 'instapaper-shell-v129';
+const SHELL = ['./', './index.html', './app.js', './shields.js', './browser.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   './newspaper.html', './newspaper.js', './newspaper.manifest.json',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
@@ -18,9 +18,10 @@ self.addEventListener('install', e => {
 });
 
 self.addEventListener('activate', e => {
+  /* old app shells go; downloaded ad-block lists (insta-filters-*) outlive app updates */
   e.waitUntil(
     caches.keys()
-      .then(keys => Promise.all(keys.filter(k => k !== CACHE).map(k => caches.delete(k))))
+      .then(keys => Promise.all(keys.filter(k => k !== CACHE && !k.startsWith('insta-filters')).map(k => caches.delete(k))))
       .then(() => self.clients.claim())
   );
 });

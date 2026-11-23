@@ -89,6 +89,18 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - Smart view and the agent don't use your logins, and pages go through public proxies — don't use them for anything private
 - 🇮🇳 **India mode** (Agent settings → India, on by default): Indian search results, and the agent knows you're in India. Many Indian sites (e.g. Eenadu e-paper) refuse servers abroad, which is where the free page fetchers run, so they open in Live view automatically. To open them in Smart view and with the agent, add a **Jina API key** (pages are then fetched and rendered through an Indian connection), and/or deploy `worker/feed-proxy.js` with a `KEY` secret and set the Feed proxy to `https://<worker>.workers.dev/?key=<KEY>&url=` — the worker runs in the Cloudflare data centre nearest you
 
+**Shields — privacy & ad blocking** (inspired by [Cromite](https://github.com/uazo/cromite); shield icon in the address bar, or ⋯ → Privacy & Shields)
+- 🛡 **Built-in ad & tracker blocker** for Smart view: ad, tracker and tracking-pixel requests are removed before the page draws, and ad boxes, empty ad slots and cookie banners are cleaned out. A green shield with a count shows what was blocked; tap it for the numbers and the list of blocked servers
+- 📜 **Filter lists** — a built-in list is always on; **EasyList** and **EasyPrivacy** download automatically, and **Peter Lowe’s list**, **Fanboy Annoyances** (cookie walls, newsletter pop-ups, “open in app” bars) and **Fanboy Social** are one tap away. Lists update weekly, survive app updates, and **My filters** takes your own Adblock Plus rules (`||ads.example.com^`, `example.com##.promo`, `@@||site.com^`)
+- ⚙️ **Per-site settings** (like Cromite’s site settings): shields, ad-box removal, images, force dark, autoplay, pop-ups, **JavaScript** (On = always open in Live view, Off = always Smart), page zoom and custom CSS
+- ✂️ **Hide an element** — tap any banner, box or bar on a page (“Select bigger” to grow the selection) and it stays hidden on that site; undo from the shield
+- 🧹 **Tracking protection** — strips `utm_*`, `fbclid`, `gclid`, `igshid`, Google’s `rlz`/`ved`… from every link, skips redirect wrappers (google.com/url, l.facebook.com, out.reddit.com…), skips Google AMP, upgrades http to https, sends no referrer; **Copy link** and **Share** always send the clean link. Optional pop-up blocking for Live view
+- 🕶 **Private tabs** (⋯ → New private tab, or the mask in the tab switcher) are never saved and leave no history; **Always open private tabs** makes it the default
+- 🕘 **History** with search, per-entry remove and a **keep history for** setting (off / 1 / 7 / 30 / 90 days / forever); **Clear browsing data** by time range (history, tabs, agent runs, site settings, Smart-view memory, filter lists)
+- 🔎 **Address-bar suggestions** from open tabs, your sites and history; extra search engines for the address bar — **DuckDuckGo Lite**, Startpage, Brave Search, Mojeek, Ecosia, Google (English, no tracking parameters)
+- 📖 **Reader view**, **View page source**, **Add to your sites**, **Bookmark all tabs**, **Use as home page** (new tabs open it), **import/export bookmarks** as HTML (works with Chrome, Safari and Firefox exports), a **list view** for the tab switcher, and a confirmation before **Close all**
+- Live view runs the real site, so blocking can’t reach inside it — use Smart view for ad-free pages. Cromite’s engine-level protections (fingerprinting, WebRTC, JIT…) need a real browser build and aren’t possible in a web app
+
 **Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
 - 🏠 **Home page** — pick which screen opens on launch: My Routine, Headlines, **Home/Library** (the default), Photos, Blogs, Liked, Archive, Notes, Threads, or Tags.
 - 🔄 **Force reload to latest version** — drops the cached app shell and service worker and reloads so you get the newest deployed build immediately. Your saved articles, notes, photos and settings are untouched.
@@ -199,6 +211,8 @@ copy on `main`).
 |---|---|
 | `index.html` | App shell, styles, fonts |
 | `app.js` | The entire application |
+| `browser.js` | In-app browser and Browser Agent |
+| `shields.js` | Shields — ad & tracker blocking, filter lists, per-site settings, tracking protection |
 | `sw.js` | Service worker — offline caching |
 | `manifest.json` | PWA manifest (icons, share target) |
 | `icon-*.png` | App icons |
