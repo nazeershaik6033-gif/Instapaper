@@ -55,6 +55,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
+**Article page — magazine layout** (Aa → Layout: Magazine / Classic)
+- 📄 Every article opens with a centred header like the Dribbble *Blog page*: a pill with the source (or tag), a big bold title, the article's summary, and an author line with the site icon, date and minutes to read; then a large rounded hero image
+- Magazine typography: bold sans section headings, a dark-bar pull quote style, rounded images, roomier paragraphs — your chosen font, size and spacing still apply to the text
+- 🔗 **Read More** at the end: more posts from the same blog (with their pictures), then more from the same source and what's waiting in Home — tap one to open it; plus *View original* and *Share article*
+- **Classic** in Aa brings back the original plain layout
+
 **Blogs — magazine view** (Latest / Manage switch at the top)
 - 📰 **Latest** is a magazine of every post from the blogs you follow: a big headline with how many are new, **category pills** (All posts, New, and one per group), the newest post as a large **featured card** with excerpt, then a two-column grid of image cards (blog, bold title, date, author, red dot for new). *Read more posts* loads more; *Mark all as read* clears the new dots
 - 🖼 Post pictures come from the feeds themselves (media images, enclosures or the first picture in the post); blogs without pictures get a tasteful colour cover with their icon and name

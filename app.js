@@ -2398,6 +2398,8 @@ function AaPopover({T,S,update,onClose}){
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize-1,15,26)}),className:'act95',style:{flex:1,padding:'11px 0',borderRadius:10,background:T.card,color:T.menuFg,fontSize:14,fontFamily:'Georgia,serif'}},'A'),
         h('div',{style:{fontSize:13,color:T.sub,minWidth:42,textAlign:'center'}},S.fontSize+'px'),
         h('button',{onClick:()=>set({fontSize:clamp(S.fontSize+1,15,26)}),className:'act95',style:{flex:1,padding:'8px 0',borderRadius:10,background:T.card,color:T.menuFg,fontSize:21,fontFamily:'Georgia,serif'}},'A')),
+      h('div',{style:{display:'flex',gap:6,marginBottom:14,background:T.card,borderRadius:11,padding:3}},
+        [['magazine','Magazine'],['classic','Classic']].map(([k,l])=>{const on=(S.readerLayout||'magazine')===k;return h('button',{key:k,onClick:()=>set({readerLayout:k}),className:'act95',style:{flex:1,padding:'8px 0',borderRadius:9,fontSize:13.5,fontWeight:650,background:on?T.menuBg:'transparent',color:on?T.menuFg:T.sub,boxShadow:on?'0 1px 4px rgba(0,0,0,.15)':'none'}},l)})),
       h('div',{style:{display:'flex',gap:8,marginBottom:14}},spacingBtn(1.45,'tight'),spacingBtn(1.62,'normal'),spacingBtn(1.85,'loose')),
       h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginBottom:16,paddingBottom:2}},
         FONTS.map(f=>h('button',{key:f.id,onClick:()=>set({font:f.id}),className:'act95 trc',style:{padding:'9px 15px',borderRadius:10,background:S.font===f.id?T.card:'transparent',border:'1px solid '+(S.font===f.id?T.sub:T.menuHair),color:T.menuFg,fontSize:14.5,fontFamily:f.css,flexShrink:0,whiteSpace:'nowrap'}},f.label))),
@@ -2407,7 +2409,7 @@ function AaPopover({T,S,update,onClose}){
 }
 
 /* ============================== reader ============================== */
-function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetry,findReq}){
+function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetry,findReq,more,onOpenMore}){
   useEffect(()=>{ // Home insights: time spent reading / watching
     const iv=setInterval(()=>{if(window.InstaStats)window.InstaStats.tick(!!a.isVideo,15)},15000);
     return()=>clearInterval(iv);
@@ -2620,6 +2622,36 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const tb=(icon,onClick,opts)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:(opts&&opts.color)||T.fg})},icon);
   const heroDupe=a.image&&a.html&&a.html.indexOf(escapeHtml(a.image))>-1;
   const metaBits=[a.source,a.author?'by '+a.author:'',a.publishedAt?'on '+fmtDate(a.publishedAt):''].filter(Boolean).join(' · ');
+  /* Magazine layout (modelled on the Dribbble "Blog page" article): a centred header with a source
+     pill, a big bold title, the summary and an author line, a rounded hero, magazine typography and
+     a "Read More" row at the end. Classic keeps the original plain header (Aa → Layout). */
+  const mag=(S.readerLayout||'magazine')!=='classic';
+  const SANS="'Inter',-apple-system,BlinkMacSystemFont,system-ui,sans-serif";
+  const kicker=a.isEdition?'Edition':a.isVideo?(a.author||'YouTube'):(a.tags&&a.tags[0]&&a.tags[0]!=='edition'?'#'+a.tags[0]:a.source||domainOf(a.url)||'Article');
+  const readMins=a.isVideo?0:(a.readMin||Math.max(1,Math.round((a.words||0)/230)));
+  const dek=!a.isVideo&&a.excerpt&&a.html&&!/^Saved (video|link)/.test(a.excerpt)&&a.html.replace(/<[^>]+>/g,' ').indexOf(a.excerpt.slice(0,60))<0?a.excerpt:'';
+  const magHeader=h('header',{style:{textAlign:'center',padding:'6px 0 4px'}},
+    h('span',{style:{display:'inline-block',padding:'6px 14px',borderRadius:999,border:'1px solid '+T.hair,fontFamily:SANS,fontSize:12,fontWeight:600,color:T.meta,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},kicker),
+    h('h1',{style:{fontFamily:SANS,fontSize:Math.min(S.fontSize+12,34),fontWeight:800,letterSpacing:'-.025em',lineHeight:1.14,margin:'16px 0 0',color:T.fg,userSelect:'text',WebkitUserSelect:'text'}},a.title),
+    dek?h('p',{style:{fontFamily:SANS,fontSize:15,lineHeight:1.55,color:T.meta,margin:'12px auto 0',maxWidth:520,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},dek):null,
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:10,margin:'18px 0 22px',fontFamily:SANS,fontSize:13,color:T.meta,flexWrap:'wrap'}},
+      a.url?h('img',{src:faviconUrl(a.url),alt:'',style:{width:28,height:28,borderRadius:14,background:T.card,padding:4,objectFit:'contain'},onError:e=>{e.target.style.display='none'}}):null,
+      h('span',{style:{fontWeight:650,color:T.fg}},a.author||a.source||domainOf(a.url)||''),
+      a.publishedAt||a.addedAt?h('span',null,'· '+fmtDate(a.publishedAt||a.addedAt)):null,
+      readMins?h('span',null,'· '+readMins+' min read'):null));
+  const moreList=Array.isArray(more)?more:[];
+  const readMore=mag&&moreList.length?h('section',{style:{margin:'46px 0 0',paddingTop:30,borderTop:'1px solid '+T.hair}},
+    h('div',{style:{textAlign:'center',marginBottom:18}},
+      h('div',{style:{fontFamily:SANS,fontSize:24,fontWeight:800,letterSpacing:'-.02em',color:T.fg}},'Read More'),
+      h('div',{style:{fontFamily:SANS,fontSize:13,color:T.meta,marginTop:6}},(moreList[0].kind==='blog'?'More from '+moreList[0].label+' and your library':'More from your library'))),
+    h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',margin:'0 -22px',padding:'0 22px 6px'}},
+      moreList.map((m,i)=>h('button',{key:m.url+i,onClick:()=>onOpenMore&&onOpenMore(m),className:'act98',style:{flexShrink:0,width:'min(64vw,230px)',textAlign:'left',color:T.fg,fontFamily:SANS}},
+        h('div',{style:{position:'relative',width:'100%',paddingTop:'72%',borderRadius:16,overflow:'hidden',background:T.card}},
+          m.image?h('img',{src:m.image,alt:'',loading:'lazy',referrerPolicy:'no-referrer',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'},onError:e=>{e.target.style.display='none'}}):
+            h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'flex-end',padding:12,background:'linear-gradient(145deg,'+T.card+','+T.hair+')',fontWeight:750,fontSize:15,color:T.meta}},m.label)),
+        h('div',{style:{fontSize:11.5,color:T.sub,marginTop:9,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},m.label),
+        h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,letterSpacing:'-.01em',marginTop:3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},m.title),
+        m.date?h('div',{style:{fontSize:11.5,color:T.sub,marginTop:5}},fmtDate(m.date)):null)))):null;
 
   return h('div',{style:{position:'fixed',inset:0,zIndex:40,background:T.bg,color:T.fg,display:'flex',flexDirection:'column'},className:'fdin'},
     h('div',{style:{position:'absolute',top:0,left:0,right:0,height:'calc(2px + '+SAFE_T+')',zIndex:5,background:T.bg}},
@@ -2637,8 +2669,8 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       onClick:e=>{const m=e.target.closest?e.target.closest('mark.hl'):null;if(m){e.preventDefault();onHighlightTap(m.getAttribute('data-hid'))}},
       style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingTop:'calc(26px + '+SAFE_T+')',paddingBottom:'calc(76px + '+SAFE_B+')'}},
       h('div',{style:{maxWidth:660,margin:'0 auto',padding:'0 22px'}},
-        h('h1',{style:{fontFamily:fontCss(S.font),fontSize:Math.min(S.fontSize+8,30),fontWeight:700,lineHeight:1.25,margin:'0 0 10px',color:T.fg,userSelect:'text',WebkitUserSelect:'text'}},a.title),
-        metaBits?h('div',{style:{fontSize:13,color:T.meta,marginBottom:22,lineHeight:1.5}},metaBits):h('div',{style:{height:10}}),
+        mag?magHeader:h('h1',{style:{fontFamily:fontCss(S.font),fontSize:Math.min(S.fontSize+8,30),fontWeight:700,lineHeight:1.25,margin:'0 0 10px',color:T.fg,userSelect:'text',WebkitUserSelect:'text'}},a.title),
+        mag?null:metaBits?h('div',{style:{fontSize:13,color:T.meta,marginBottom:22,lineHeight:1.5}},metaBits):h('div',{style:{height:10}}),
         a.isVideo?h('div',null,
           h('div',{style:{position:'relative',paddingTop:'56.25%',borderRadius:10,overflow:'hidden',background:'#000',marginBottom:18}},
             h('iframe',{src:'https://www.youtube-nocookie.com/embed/'+a.videoId+'?playsinline=1',allow:'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',allowFullScreen:true,style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0}})),
@@ -2664,8 +2696,8 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
                   running?'Transcribing'+(txJob.where==='mac'?' on your Mac':' on GitHub')+' — '+(txJob.step||'working…'):'Get it with Gemini, Whisper, TurboScribe and more, or paste one. Copy and translate it here.'));
           })()
         ):null,
-        !a.isVideo&&!heroDupe&&a.image?h('img',{src:a.image,alt:'',style:{width:'100%',borderRadius:8,marginBottom:22,display:'block'},onError:e=>{e.target.style.display='none'}}):null,
-        !a.isVideo&&a.html?h('div',{ref:contentRef,className:'rc',
+        !a.isVideo&&!heroDupe&&a.image?h('img',{src:a.image,alt:'',style:mag?{width:'calc(100% + 12px)',margin:'0 -6px 28px',aspectRatio:'16 / 10',objectFit:'cover',borderRadius:20,display:'block',boxShadow:'0 10px 30px rgba(0,0,0,.10)'}:{width:'100%',borderRadius:8,marginBottom:22,display:'block'},onError:e=>{e.target.style.display='none'}}):null,
+        !a.isVideo&&a.html?h('div',{ref:contentRef,className:'rc'+(mag?' mag':''),
           onTouchStart:startBlockPress,onTouchMove:moveBlockPress,onTouchEnd:clearBlockPress,
           onMouseDown:startBlockPress,onMouseUp:clearBlockPress,onMouseLeave:clearBlockPress,
           style:{fontFamily:fontCss(S.font),fontSize:S.fontSize,lineHeight:S.lineHeight,color:T.fg,
@@ -2678,8 +2710,12 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
           h('button',{onClick:doRetry,disabled:retrying,className:'act95',style:{padding:'12px 26px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600,display:'inline-flex',alignItems:'center',gap:8}},retrying?h(Spinner,{T,size:15}):null,retrying?'Downloading…':'Download article'),
           a.url?h('div',{style:{marginTop:14}},h('a',{href:a.url,target:'_blank',rel:'noopener',style:{color:T.accent,fontSize:14}},'Open original page')):null
         ):null,
-        a.url&&a.html&&!a.isVideo?h('div',{style:{margin:'34px 0 0',paddingTop:18,borderTop:'1px solid '+T.hair}},
-          h('a',{href:a.url,target:'_blank',rel:'noopener',style:{color:T.accent,fontSize:14}},'View original · '+(a.source||a.url))):null
+        a.url&&a.html&&!a.isVideo?h('div',{style:mag?{margin:'36px 0 0',display:'flex',justifyContent:'center',gap:10,flexWrap:'wrap',fontFamily:SANS}:{margin:'34px 0 0',paddingTop:18,borderTop:'1px solid '+T.hair}},
+          mag?h(Fragment,null,
+            h('a',{href:a.url,target:'_blank',rel:'noopener',style:{padding:'10px 18px',borderRadius:999,border:'1px solid '+T.hair,color:T.fg,fontSize:13.5,fontWeight:600,textDecoration:'none'}},'View original ↗'),
+            h('button',{onClick:()=>shareText(a.title,'',a.url),className:'act95',style:{padding:'10px 18px',borderRadius:999,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:600}},'Share article'))
+          :h('a',{href:a.url,target:'_blank',rel:'noopener',style:{color:T.accent,fontSize:14}},'View original · '+(a.source||a.url))):null,
+        readMore
       )),
     selbar?h('div',{className:'fdin',style:{position:'fixed',top:selbar.top,left:selbar.left,transform:'translateX(-50%)',zIndex:66,display:'flex',background:'#26262a',borderRadius:11,overflow:'hidden',boxShadow:'0 6px 24px rgba(0,0,0,.35)'}},
       [['Highlight','hl'],['Note','note'],['Copy','copy'],['Share','share']].concat(selbar.blockEl?[['Remove','remove']]:[]).map(([l,k],i)=>h('button',{key:k,onClick:()=>selAct(k),style:{padding:'11px 14px',color:k==='remove'?'#ff6b5c':'#f2f2f3',fontSize:13.5,fontWeight:500,borderLeft:i?'1px solid #3a3a3f':'none'}},l))):null,
@@ -8176,6 +8212,20 @@ function App(){
   };
 
   const reading=readingId?data.articles.find(a=>a.id===readingId):null;
+  /* "Read More" under an article: more posts from the same blog, then the same source, then what's waiting in Home */
+  const readMore=useMemo(()=>{
+    if(!reading||reading.isVideo)return[];
+    const out=[];const seen=new Set([reading.url]);
+    const push=x=>{if(!x.url||seen.has(x.url)||out.length>=6)return;seen.add(x.url);out.push(x)};
+    const dom=domainOf(reading.url);
+    const f=(data.feeds||[]).find(x=>x.feedUrl&&(x.name===reading.source||(x.site&&domainOf(x.site)===dom)));
+    const bf=f&&(data.blogFeeds||{})[f.id];
+    if(bf&&bf.entries)bf.entries.slice().sort((p,q)=>(q.publishedMs||0)-(p.publishedMs||0)).forEach(e=>push({kind:'blog',url:e.url,title:e.title,image:e.thumb||'',label:f.name,date:e.publishedMs}));
+    const lib=x=>({kind:'lib',id:x.id,url:x.url,title:x.title,image:x.image||(x.videoId?'https://i.ytimg.com/vi/'+x.videoId+'/mqdefault.jpg':''),label:x.source||domainOf(x.url),date:x.addedAt});
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&x.source&&x.source===reading.source).forEach(x=>push(lib(x)));
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&(x.progress||0)<0.97).sort((p,q)=>(q.addedAt||0)-(p.addedAt||0)).forEach(x=>push(lib(x)));
+    return out;
+  },[reading&&reading.id,data.articles,data.blogFeeds,data.feeds]);
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
@@ -8364,7 +8414,8 @@ function App(){
       onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
       onExit:()=>setScope({type:'home'})}):null,
 
-    reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,
+    reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,more:readMore,
+      onOpenMore:m=>{if(m.kind==='lib')openArticle(m.id);else addBriefItem({title:m.title,url:m.url,source:m.label,publishedAt:m.date})},
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
       onRetry:()=>retryFetch(reading.id),findReq}):null,
 
