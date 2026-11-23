@@ -395,7 +395,7 @@ function webSearch(query,engine,region,strict){
         lastErr=new Error(ENGINES[e].label+' returned no results');
       }catch(err){lastErr=err}
       if(--left===0&&!done)reject(lastErr||new Error('search failed'));
-    },i*1800)));
+    },i<2?0:1500))); // your engine and the next race at once; the third joins if both are slow
   });
 }
 function searchPageHtml(query,engine,results,wanted){
