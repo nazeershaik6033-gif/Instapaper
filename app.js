@@ -1875,6 +1875,8 @@ const Icons={
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
 const SAFE_T='env(safe-area-inset-top)';
 const SAFE_B='env(safe-area-inset-bottom)';
+/* for fixed elements anchored to the bottom: corrects for iOS's too-short page (see index.html) */
+const SAFE_BF='(env(safe-area-inset-bottom) - var(--vgap, 0px))';
 
 function useLongPress(cb){
   const ref=useRef({t:null,x:0,y:0,fired:false});
@@ -1931,7 +1933,7 @@ function PrimaryBtn({T,label,onClick,danger,disabled,style}){
 
 function Toast({T,toast}){
   if(!toast)return null;
-  return h('div',{className:'fdin',style:{position:'fixed',left:0,right:0,bottom:'calc(34px + '+SAFE_B+')',display:'flex',justifyContent:'center',zIndex:120,pointerEvents:'none'}},
+  return h('div',{className:'fdin',style:{position:'fixed',left:0,right:0,bottom:'calc(34px + '+SAFE_BF+')',display:'flex',justifyContent:'center',zIndex:120,pointerEvents:'none'}},
     h('div',{style:{background:isDarkTheme(T.id)?'#3a3a3f':'#26262a',color:'#f2f2f3',padding:'11px 20px',borderRadius:24,fontSize:14.5,fontWeight:500,maxWidth:'82%',boxShadow:'0 6px 24px rgba(0,0,0,.3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},toast));
 }
 
@@ -2065,7 +2067,7 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
 const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['browse','Browse',s=>Icons.globe(s)],['more','More',s=>Icons.menu(s)]];
 function FloatingNav({T,active,hidden,onTab,overVideo}){
   const dark=overVideo||(typeof isDarkTheme==='function'&&isDarkTheme(T.id));
-  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(10px + '+SAFE_B+')',zIndex:35,display:'flex',justifyContent:'center',pointerEvents:'none',
+  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(10px + '+SAFE_BF+')',zIndex:35,display:'flex',justifyContent:'center',pointerEvents:'none',
       transform:hidden?'translateY(calc(100% + 30px))':'none',transition:'transform 320ms cubic-bezier(.2,.9,.2,1)'}},
     h('div',{style:{pointerEvents:'auto',display:'flex',alignItems:'center',gap:2,padding:5,borderRadius:30,background:dark?'rgba(38,38,42,.72)':'rgba(250,250,252,.78)',
         backdropFilter:'saturate(180%) blur(24px)',WebkitBackdropFilter:'saturate(180%) blur(24px)',border:'0.5px solid '+(dark?'rgba(255,255,255,.12)':'rgba(0,0,0,.08)'),boxShadow:'0 8px 30px rgba(0,0,0,'+(dark?.45:.16)+')'}},
@@ -2785,7 +2787,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
 const RATES=[0.8,0.9,1,1.1,1.25,1.5,1.75,2];
 
 function MiniPlayer({T,ui,title,onToggle,onNextArticle,onStop,onOpen,lift}){
-  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?72:12)+'px + '+SAFE_B+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
+  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?72:12)+'px + '+SAFE_BF+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
     h('button',{onClick:onToggle,className:'act90',style:Object.assign({},iconBtnS,{color:'#fff'})},ui.playing?Icons.pause(22):Icons.play(22,true)),
     h('div',{onClick:onOpen,style:{flex:1,minWidth:0,cursor:'pointer'}},
       h('div',{style:{fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
@@ -7195,7 +7197,8 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
       card([sw('Bold text','Heavier letters everywhere in the app',!!S.boldText,'boldText'),sw('Higher contrast','Darker secondary text and labels',!!S.contrast,'contrast')]),
       lbl('Motion'),
       h('div',{style:{display:'flex',gap:6,padding:'0 16px'}},[['rich','Rich','Springs & effects'],['subtle','Subtle','Gentle fades'],['off','Off','No animation']].map(([k,l,sub])=>pick(motion===k,l,()=>set({motion:k}),null,sub))),
-      h('div',{style:{padding:'10px 20px 16px',fontSize:12,color:T.sub,lineHeight:1.55}},'Rich adds spring sheets, page transitions, cards that press in, a springy tab bar and a little celebration when a routine is done. If your iPhone has Reduce Motion on, the app follows it until you pick here.'));
+      h('div',{style:{padding:'10px 20px 4px',fontSize:11.5,color:T.sub,lineHeight:1.5}},(()=>{const f=window.__screenFit||{};return'Screen fit: page '+(f.inner||window.innerHeight)+' pt of '+(f.screen||screen.height)+' pt'+(f.gap?' · stretched by '+f.gap+' pt to fill the bottom':' · fills the screen')+(f.standalone?'':' · (opened in Safari, not from the home screen)')})()),
+      h('div',{style:{padding:'4px 20px 16px',fontSize:12,color:T.sub,lineHeight:1.55}},'Rich adds spring sheets, page transitions, cards that press in, a springy tab bar and a little celebration when a routine is done. If your iPhone has Reduce Motion on, the app follows it until you pick here.'));
   }else if(page==='appearance'){
     content=h(Fragment,null,
       h('div',{style:{padding:'14px 20px 0',fontSize:14.5,fontWeight:600}},'Theme'),
@@ -8523,7 +8526,7 @@ function App(){
     window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
 
   return h('div',{className:'appframe'},
-    h('div',{style:{height:'100dvh',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
+    h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
       header,
       isArticleScope&&!selecting?h('div',{style:{padding:chromeHidden?'0 16px':'0 16px 8px',flexShrink:0,maxHeight:chromeHidden?0:240,overflow:chromeHidden?'hidden':'visible',opacity:chromeHidden?0:1,transition:'max-height 260ms cubic-bezier(.2,.8,.2,1), padding 260ms, opacity 200ms'}},
 
@@ -8594,7 +8597,7 @@ function App(){
       onRetry:()=>retryFetch(reading.id),findReq}):null,
 
     !showTabs&&!selecting&&!reading&&scope.type!=='turn'&&scope.type!=='brief'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
-      style:{position:'fixed',right:18,bottom:'calc('+((ttsUI?94:24)+(showTabs?62:0))+'px + '+SAFE_B+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
+      style:{position:'fixed',right:18,bottom:'calc('+((ttsUI?94:24)+(showTabs?62:0))+'px + '+SAFE_BF+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
 
     showTabs?h(FloatingNav,{T,active:['home','brief'].includes(scope.type)?scope.type:'more',hidden:chromeHidden&&scope.type!=='brief',overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
       onTab:k=>{if(k==='plus'){setSheet({type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}

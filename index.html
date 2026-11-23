@@ -26,6 +26,29 @@ try{
 }catch(e){}
 </script>
 <script>
+/* iPhone home-screen apps with a see-through status bar: iOS can size the page as if the screen were
+   shorter by the top inset, leaving an empty strip at the bottom. Measure the real height and stretch
+   the app (and every full-screen layer) to the true bottom edge. --vgap is 0 where the bug is absent. */
+(function(){
+  function fit(){
+    try{
+      var r=document.documentElement,g=0;
+      var standalone=window.navigator.standalone===true||(window.matchMedia&&matchMedia('(display-mode: standalone)').matches);
+      if(standalone&&/iPhone|iPod/.test(navigator.userAgent)&&window.self===window.top){
+        var land=window.innerWidth>window.innerHeight;
+        var full=land?Math.min(screen.width,screen.height):Math.max(screen.width,screen.height);
+        g=Math.round(full-window.innerHeight);if(g<0||g>110)g=0;
+      }
+      r.style.setProperty('--vgap',g+'px');r.style.setProperty('--app-h',window.innerHeight+'px');
+      if(g>0)r.classList.add('vgap');else r.classList.remove('vgap');
+      window.__screenFit={inner:window.innerHeight,screen:screen.height,gap:g,standalone:standalone};
+    }catch(e){}
+  }
+  fit();window.addEventListener('resize',fit);window.addEventListener('orientationchange',function(){setTimeout(fit,300)});
+  document.addEventListener('visibilitychange',function(){if(document.visibilityState==='visible')setTimeout(fit,100)});
+})();
+</script>
+<script>
 /* paint the saved theme before anything renders to avoid a flash */
 try{
   var _s=JSON.parse(localStorage.getItem('instapaper_v1')||'{}').settings;
@@ -56,6 +79,9 @@ try{
 <style>
 *{-webkit-tap-highlight-color:transparent;box-sizing:border-box}
 html{height:-webkit-fill-available;height:100dvh}
+html.vgap,html.vgap body{height:calc(var(--app-h,100dvh) + var(--vgap,0px));min-height:calc(var(--app-h,100dvh) + var(--vgap,0px))}
+/* full-screen layers (position:fixed; inset:0) reach the real bottom edge too */
+html.vgap [style*="position: fixed"][style*="inset: 0px"]{bottom:calc(-1 * var(--vgap,0px))!important}
 body{font-family:var(--uif);min-height:-webkit-fill-available;min-height:100dvh;margin:0;padding:0;background:#fff;overflow:hidden;overscroll-behavior-y:none;-webkit-font-smoothing:antialiased;-webkit-touch-callout:none}
 #root{height:100dvh;margin:0;padding:0;overflow:hidden}
 div,span,button,h1,h2,h3,h4,h5,h6,p,label{-webkit-user-select:none;user-select:none}
@@ -73,6 +99,7 @@ a{-webkit-touch-callout:default}
 .sx{overscroll-behavior-x:contain;-webkit-overflow-scrolling:touch}
 /* centered phone frame so the mobile layout doesn't stretch on wide screens */
 .appframe{position:relative;width:100%;height:100dvh}
+html.vgap .appframe{height:calc(var(--app-h,100dvh) + var(--vgap,0px))}
 @media(min-width:520px){
   body{display:flex;justify-content:center;background:#0a0a0a!important}
   .appframe{max-width:440px;transform:translateZ(0);box-shadow:0 0 0 1px rgba(255,255,255,.06),0 24px 70px rgba(0,0,0,.6)}
