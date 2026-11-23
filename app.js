@@ -4340,6 +4340,82 @@ function uniqueLetters(names){
   });
   return out;
 }
+/* ============================== My Routine — Shorts ==============================
+   A group's updates as a YouTube-Shorts-style vertical swipe feed. Videos play only when tapped;
+   swiping just moves on — an update is checked off only with the Done button (and when every new
+   update of a channel is done, the channel is ticked for this routine window). Opens inline
+   ("minimised") or full screen ("maximised"); which one it opens in is your choice. */
+const SHORTS_MAX_KEY='insta_shorts_max';
+const shortsMaxDefault=()=>{try{return localStorage.getItem(SHORTS_MAX_KEY)!=='0'}catch(e){return true}};
+const SIc={
+  max:s=>Svg({size:s},P('M4 9V4h5M20 9V4h-5M4 15v5h5M20 15v5h-5')),
+  min:s=>Svg({size:s},P('M9 4v5H4M15 4v5h5M9 20v-5H4M15 20v-5h5'))
+};
+function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDone,isSaved,onSave,onOpen,toastFn}){
+  const ref=useRef(null);
+  const [idx,setIdx]=useState(0);
+  const [playing,setPlaying]=useState('');
+  const [defMax,setDefMax]=useState(shortsMaxDefault);
+  useEffect(()=>{const p=posts[idx];if(playing&&(!p||p.e.url!==playing))setPlaying('')},[idx]);
+  const onScroll=()=>{const el=ref.current;if(!el)return;const i=Math.round(el.scrollTop/Math.max(1,el.clientHeight));if(i!==idx)setIdx(i)};
+  const setDefault=()=>{try{localStorage.setItem(SHORTS_MAX_KEY,max?'1':'0')}catch(e){}setDefMax(max);toastFn&&toastFn('Shorts will open '+(max?'full screen':'inline')+' by default')};
+  const railBtn=(icon,label,onClick,on,onColor)=>h('button',{onClick,className:'act90','aria-label':label,style:{display:'flex',flexDirection:'column',alignItems:'center',gap:4,color:'#fff'}},
+    h('span',{style:{width:46,height:46,borderRadius:23,display:'flex',alignItems:'center',justifyContent:'center',background:on?(onColor||'#fff'):'rgba(255,255,255,.16)',color:on&&!onColor?'#000':'#fff',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},icon),
+    h('span',{style:{fontSize:11,fontWeight:600,textShadow:'0 1px 3px rgba(0,0,0,.6)'}},label));
+  const slide=(p,i)=>{
+    const e=p.e,it=p.it;
+    const vid=it.kind==='youtube'||ytIdOf(e.url);
+    const vidId=ytIdOf(e.url)||(e.id&&/^[\w-]{11}$/.test(e.id)?e.id:'');
+    const isShort=/\/shorts\//.test(e.url||'');
+    const thumb=entryThumb(e);
+    const ttl=cleanEntryTitle(e.title,it.name)||'Update';
+    const done=isDone(p);const saved=isSaved(e);
+    const near=Math.abs(i-idx)<=2;
+    const play=vidId&&playing===e.url;
+    let media;
+    if(play)media=h('iframe',{key:'v'+vidId,src:'https://www.youtube-nocookie.com/embed/'+vidId+'?autoplay=1&playsinline=1&rel=0&modestbranding=1',allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
+      style:{width:'100%',height:isShort?'100%':'auto',aspectRatio:isShort?'auto':'16 / 9',border:0,display:'block'}});
+    else if(thumb&&near)media=h('button',{onClick:()=>vidId?setPlaying(e.url):onOpen(p),'aria-label':vidId?'Play':'Open',style:{position:'relative',width:'100%',display:'block'}},
+      h('img',{src:thumb,alt:'',style:{width:'100%',aspectRatio:isShort?'9 / 16':(vid?'16 / 9':'4 / 3'),maxHeight:'70%',objectFit:'cover',display:'block',borderRadius:vid&&!isShort?0:14}}),
+      vidId?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
+        h('span',{style:{width:64,height:64,borderRadius:32,background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true))):null);
+    else media=!thumb?h('div',{style:{padding:'0 28px',fontSize:25,fontWeight:750,lineHeight:1.25,letterSpacing:'-.02em',color:'#fff',textAlign:'left'}},ttl):null;
+    return h('div',{key:(e.url||'')+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000',display:'flex',alignItems:'center',justifyContent:'center'}},
+      thumb&&near&&!play?h('div',{style:{position:'absolute',inset:-30,backgroundImage:'url("'+thumb+'")',backgroundSize:'cover',backgroundPosition:'center',filter:'blur(28px) brightness(.45)'}}):
+        !thumb?h('div',{style:{position:'absolute',inset:0,background:'linear-gradient(160deg,'+(color||'#334')+' 0%,#0b0b10 85%)'}}):null,
+      h('div',{style:{position:'relative',width:'100%',maxHeight:'100%',display:'flex',alignItems:'center',justifyContent:'center',marginTop:-40}},media),
+      /* bottom: source + title */
+      h('div',{style:{position:'absolute',left:0,right:70,bottom:0,padding:'60px 16px 18px',background:'linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0))',color:'#fff',pointerEvents:'none'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:7}},
+          h('span',{style:{width:28,height:28,borderRadius:14,background:color||'#556',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700}},(it.name||'?')[0].toUpperCase()),
+          h('span',{style:{fontSize:14,fontWeight:700}},it.name),
+          p.isNew?h('span',{style:{fontSize:10.5,fontWeight:800,background:'#ff3b30',borderRadius:6,padding:'2px 6px'}},'NEW'):null,
+          done?h('span',{style:{fontSize:10.5,fontWeight:800,background:'#2f9e44',borderRadius:6,padding:'2px 6px'}},'DONE'):null),
+        thumb||vidId?h('div',{style:{fontSize:15,fontWeight:600,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl):null,
+        e.excerpt?h('div',{style:{fontSize:12.5,opacity:.8,lineHeight:1.4,marginTop:4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null,
+        h('div',{style:{fontSize:11.5,opacity:.7,marginTop:5}},fmtAgo(e.publishedMs))),
+      /* right rail */
+      h('div',{style:{position:'absolute',right:10,bottom:max?24:84,display:'flex',flexDirection:'column',gap:max?16:12}},
+        railBtn(Icons.check(22),done?'Done':'Done',()=>onDone(p),done,'#2f9e44'),
+        railBtn(Icons.download(21),saved?'Saved':'Save',()=>{if(!saved)onSave(p)},saved),
+        railBtn(Icons.share(21),'Share',()=>shareText(ttl,'',e.url)),
+        railBtn(Icons.external(20),'Open',()=>onOpen(p))));
+  };
+  const top=h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:3,display:'flex',alignItems:'center',gap:8,padding:(max?'calc(8px + '+SAFE_T+')':'10px')+' 10px 18px',background:'linear-gradient(to bottom,rgba(0,0,0,.7),rgba(0,0,0,0))',color:'#fff'}},
+    h('span',{style:{width:9,height:9,borderRadius:5,background:color||'#888',flexShrink:0,marginLeft:4}}),
+    h('span',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}},title),
+    h('span',{style:{fontSize:12,opacity:.75,flexShrink:0,fontVariantNumeric:'tabular-nums'}},posts.length?(Math.min(idx,posts.length-1)+1)+' / '+posts.length:''),
+    h('div',{style:{flex:1}}),
+    max!==defMax?h('button',{onClick:setDefault,className:'act95',style:{fontSize:11.5,fontWeight:650,color:'#fff',background:'rgba(255,255,255,.18)',borderRadius:12,padding:'5px 9px',flexShrink:0}},'Set as default'):null,
+    h('button',{onClick:onToggleMax,'aria-label':max?'Minimise':'Maximise',className:'act90',style:{display:'flex',color:'#fff',padding:6}},max?SIc.min(20):SIc.max(20)),
+    h('button',{onClick:onClose,'aria-label':'Close Shorts',className:'act90',style:{display:'flex',color:'#fff',padding:6}},Icons.x(21)));
+  const frame=h('div',{'data-noswipe':'1',style:max?{position:'fixed',inset:0,zIndex:95,background:'#000'}:{position:'relative',height:'min(66vh,600px)',borderRadius:18,overflow:'hidden',background:'#000',margin:'10px 0 4px'}},
+    top,
+    posts.length?h('div',{ref,onScroll,className:'sy',style:{position:'absolute',inset:0,overflowY:'auto',scrollSnapType:'y mandatory',overscrollBehavior:'contain'}},posts.map(slide))
+      :h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#bbb',fontSize:14,padding:30,textAlign:'center'}},'No updates in this group yet — tap Refresh.'));
+  return frame;
+}
+
 function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
@@ -4534,6 +4610,39 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const markSeen=urls=>{const list=(urls||[]).filter(Boolean);if(!list.length)return;onBrief(b=>{const s=Object.assign({},b.seen||{});const t=Date.now();list.forEach(u=>{s[u]=t});const cut=t-30*86400000;for(const k in s){if(s[k]<cut)delete s[k]}return{...b,seen:s}})};
   const open=it=>{const u=normalizeUrl(it.url)||it.url;if(u)openExternalUrl(u)};
   const openEntry=e=>{if(e&&e.url){markSeen([e.url]);openExternalUrl(e.url)}};
+  /* ---- Shorts: a group's updates as a vertical swipe feed ---- */
+  const [shorts,setShorts]=useState(null); // {gid, max}
+  const groupItems=gid=>gid==='_other'?vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId)):vis.filter(i=>i.groupId===gid);
+  const shortsPosts=gid=>{
+    const out=[];
+    for(const it of groupItems(gid)){
+      if(!hasFeed(it))continue;const c=feeds[it.id];if(!c||!c.entries)continue;
+      const fresh=new Set(win.future?[]:newEntries(it).map(x=>x.url));
+      for(const e of c.entries)if(e&&e.url)out.push({e,it,isNew:fresh.has(e.url)});
+    }
+    out.sort((a,b)=>(b.isNew-a.isNew)||((b.e.publishedMs||0)-(a.e.publishedMs||0)));
+    return out.slice(0,80);
+  };
+  const unSeen=url=>onBrief(b=>{const s=Object.assign({},b.seen||{});delete s[url];return{...b,seen:s}});
+  const shortsDone=p=>{
+    const seenNow=brief.seen||{};const url=p.e.url,it=p.it;
+    if(seenNow[url]){unSeen(url);if(doneIds.includes(it.id))toggle(it.id);return}
+    markSeen([url]);vibrate(8);
+    const left=(win.future?[]:newEntries(it)).filter(x=>x.url!==url&&!seenNow[x.url]);
+    if(!left.length&&win.key&&!doneIds.includes(it.id)){toggle(it.id);toastFn('✓ '+(it.name||'Channel')+' done for '+(curSlot.name||'this routine'))}
+  };
+  const openShorts=gid=>setShorts({gid,max:shortsMaxDefault()});
+  const shortsEl=gid=>{
+    if(!shorts||shorts.gid!==gid)return null;
+    const g=groups.find(x=>x.id===gid);
+    return h(RoutineShorts,{key:'sh'+gid,T,title:g?g.name:'Other',color:g?groupColor(g.id):'#667',posts:shortsPosts(gid),max:shorts.max,toastFn,
+      onToggleMax:()=>setShorts(x=>x&&{...x,max:!x.max}),onClose:()=>setShorts(null),
+      isDone:p=>!!(brief.seen||{})[p.e.url],onDone:shortsDone,
+      isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),
+      onOpen:p=>openEntry(p.e)});
+  };
+  const shortsBtn=gid=>groupItems(gid).some(hasFeed)?h('button',{onClick:()=>shorts&&shorts.gid===gid?setShorts(null):openShorts(gid),className:'act95','aria-label':'Shorts',
+    style:{display:'flex',alignItems:'center',gap:4,flexShrink:0,padding:'5px 10px',borderRadius:14,background:shorts&&shorts.gid===gid?T.fg:hexA(T.accent,.12),color:shorts&&shorts.gid===gid?T.bg:T.accent,fontSize:12,fontWeight:700}},Icons.play(11,true),'Shorts'):null;
   const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
   const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
   const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
@@ -4692,6 +4801,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
         h('span',{style:{fontSize:15,fontWeight:650,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,textAlign:'left'}},g?g.name:'Other'),
         groupNew?h('span',{style:{fontSize:11,fontWeight:700,color:T.accent,background:hexA(T.accent,.16),borderRadius:999,padding:'2px 8px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},String(list.length))),
+      shortsBtn(key),
       h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
   };
 
@@ -4881,6 +4991,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       const itemsOpen=!(collapsed.has(key)&&!q);
       return h(RoutineBlock,{key,T,accent:g?groupColor(g.id):T.sub},
         sectionHead(g,list),
+        shorts&&!shorts.max?shortsEl(key):null,
         itemsOpen?h('div',{style:{marginTop:8,borderTop:'1px solid '+T.hair,paddingTop:6}},
           flist.length?flist.map(itemRow):h('div',{style:{fontSize:13,color:T.sub,padding:'8px 4px 12px'}},focus==='all'?'Nothing here yet — tap + to add.':'Nothing matches this filter.')):null);
     });
@@ -4895,7 +5006,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
         h('div',{style:{flex:1,minWidth:0,fontSize:12.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
           (g?g.name:'Other')+' · '+tabList.length+' source'+(tabList.length===1?'':'s')),
+        shortsBtn(gid||'_other'),
         g?h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',flexShrink:0,color:T.sub,padding:4}},Icons.pencil(15)):null),
+      shorts&&!shorts.max?shortsEl(gid||'_other'):null,
       flist.length?flist.map(itemRow)
         :h('div',{style:{fontSize:13.5,color:T.sub,padding:'16px 4px',lineHeight:1.5}},
           tabList.length?'Nothing matches this filter.':'No channels or sites in this group yet.'),
@@ -4915,6 +5028,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       x.badge?h('span',{style:{position:'absolute',top:1,right:0,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.accent,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',border:'1.5px solid '+T.bg}},x.badge):null)};
   const moreAct=fn=>()=>{setMoreOpen(false);fn()};
   return h('div',null,
+    shorts&&shorts.max?shortsEl(shorts.gid):null,
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'8px 10px 4px 14px'}},
       /* The routine window is a labelled pill: the screen shows "now" unless you deliberately change it. */
       h('button',{onClick:()=>setSlotSheet(true),className:'act98','aria-label':'Routine windows',
@@ -7938,7 +8052,7 @@ function App(){
   }else{
     body=h('div',null,
       q?h('div',{style:{padding:'10px 16px 4px',fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub}},list.length+' result'+(list.length===1?'':'s')+' · '+({all:'searching everything',title:'in titles',source:'in sources',tags:'in tags'}[searchScope]||'searching everything')):null,
-      list.map(a=>h(ArticleRow,{key:a.id,a,T,scopeType:scope.type,
+      (()=>{const row=a=>h(ArticleRow,{key:a.id,a,T,scopeType:scope.type,
         onOpen:()=>openArticle(a.id),
         onLongPress:()=>setSheet({type:'article',id:a.id}),
         onSwipeLeft:()=>{const now=scope.type!=='archive';patchArticle(a.id,{archived:now});toastFn(now?'Archived':'Moved to Home')},
@@ -7947,7 +8061,10 @@ function App(){
         selected:selecting?selecting.ids.includes(a.id):false,
         disabledSelect:selecting&&selecting.mode==='playlist'&&(a.isVideo||!a.text),
         onToggleSelect:()=>toggleSelect(a.id),
-        snippet:snippetFor(a)})));
+        snippet:snippetFor(a)});
+        /* Home: split into This week · Last week · Earlier this month · Last month · each month */
+        return scope.type==='home'&&!q&&(!S.sort||S.sort==='newest'||S.sort==='oldest')&&window.InstaStats
+          ?h(window.InstaStats.TimeGroups,{T,list,row}):list.map(row);})());
   }
   /* premium Home: insights above the library (week / month comparisons) */
   if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),body);

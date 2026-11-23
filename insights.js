@@ -128,11 +128,55 @@ function Tile({T,label,cur,prev,fmt,sub}){
       h(Delta,{T,cur,prev,small:true})),
     h('div',{style:{fontSize:11,color:T.sub,marginTop:3}},sub||('vs '+(fmt||fmtN)(prev))));
 }
-function Section({T,title,right,children}){
-  return h('div',{style:{marginTop:22}},
-    h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',margin:'0 2px 10px'}},
-      h('div',{style:{fontSize:17,fontWeight:700,fontFamily:SERIF}},title),right||null),
-    children);
+/* every sub-section folds; what you fold is remembered */
+const SEC_KEY='insta_dash_sections';
+const secClosed=()=>{try{return new Set(JSON.parse(localStorage.getItem(SEC_KEY)||'[]'))}catch(e){return new Set()}};
+function Section({T,title,right,children,id,summary}){
+  const [open,setOpen]=useState(()=>!secClosed().has(id||title));
+  const flip=()=>{const k=id||title;const s=secClosed();open?s.add(k):s.delete(k);try{localStorage.setItem(SEC_KEY,JSON.stringify([...s]))}catch(e){}setOpen(!open)};
+  return h('div',{style:{marginTop:open?22:14}},
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',gap:8,margin:'0 2px '+(open?10:0)+'px'}},
+      h('button',{onClick:flip,'aria-expanded':open,className:'act95',style:{display:'flex',alignItems:'center',gap:8,minWidth:0,flex:1,textAlign:'left',color:T.fg,padding:'2px 0'}},
+        h('span',{style:{display:'flex',color:T.sub,transform:open?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(13)),
+        h('span',{style:{fontSize:17,fontWeight:700,fontFamily:SERIF,flexShrink:0}},title),
+        !open&&summary?h('span',{style:{fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},summary):null),
+      open?(right||null):null),
+    open?children:null);
+}
+/* Home library headings: This week · Last week · Earlier this month · Last month · then each month */
+function bucketOf(t){
+  const today=startOfDay(Date.now());const dow=(new Date(today).getDay()+6)%7;
+  const wk=today-dow*DAY,lwk=wk-7*DAY;
+  const d=new Date(today);const mo=new Date(d.getFullYear(),d.getMonth(),1).getTime(),pmo=new Date(d.getFullYear(),d.getMonth()-1,1).getTime();
+  const rng=(a,b)=>{const f=x=>new Date(x).toLocaleDateString([],{day:'numeric',month:'short'});return f(a)+' – '+f(b)};
+  t=t||0;
+  if(t>=wk)return{key:'tw',label:'This week',sub:rng(wk,today)};
+  if(t>=lwk)return{key:'lw',label:'Last week',sub:rng(lwk,wk-DAY)};
+  if(t>=mo)return{key:'tm',label:'Earlier this month',sub:new Date(mo).toLocaleDateString([],{month:'long'})};
+  if(t>=pmo)return{key:'lm',label:'Last month',sub:new Date(pmo).toLocaleDateString([],{month:'long',year:'numeric'})};
+  if(!t)return{key:'old',label:'Older',sub:''};
+  const x=new Date(t);return{key:'m'+x.getFullYear()+'-'+x.getMonth(),label:x.toLocaleDateString([],{month:'long',year:'numeric'}),sub:''};
+}
+const HG_KEY='insta_home_groups_closed';
+const hgClosed=()=>{try{return new Set(JSON.parse(localStorage.getItem(HG_KEY)||'[]'))}catch(e){return new Set()}};
+function TimeGroups({T,list,row}){
+  const [closed,setClosed]=useState(hgClosed);
+  const flip=k=>setClosed(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);try{localStorage.setItem(HG_KEY,JSON.stringify([...n]))}catch(e){}return n});
+  const groups=[];const at={};
+  for(const a of list){const b=bucketOf(a.addedAt);if(!(b.key in at)){at[b.key]=groups.length;groups.push(Object.assign({items:[]},b))}groups[at[b.key]].items.push(a)}
+  return h('div',null,groups.map(g=>{
+    const open=!closed.has(g.key);
+    const unread=g.items.filter(a=>(a.progress||0)<0.97).length;
+    const mins=g.items.filter(a=>!a.isVideo&&(a.progress||0)<0.97).reduce((s,a)=>s+(a.readMin||0),0);
+    return h('div',{key:g.key},
+      h('button',{onClick:()=>flip(g.key),'aria-expanded':open,className:'act98',style:{display:'flex',alignItems:'center',gap:10,width:'100%',textAlign:'left',padding:'16px 16px 8px',color:T.fg}},
+        h('span',{style:{display:'flex',color:T.sub,transform:open?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(13)),
+        h('span',{style:{flex:1,minWidth:0}},
+          h('span',{style:{display:'block',fontSize:19,fontWeight:700,fontFamily:SERIF,letterSpacing:'-.01em'}},g.label),
+          h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2}},[g.sub,g.items.length+' item'+(g.items.length===1?'':'s'),unread?unread+' unread':'all read',mins?fmtMin(mins)+' to read':''].filter(Boolean).join(' · '))),
+        h('span',{style:{fontSize:12,fontWeight:700,color:T.sub,background:T.card,borderRadius:10,padding:'3px 9px',flexShrink:0,fontVariantNumeric:'tabular-nums'}},g.items.length)),
+      open?g.items.map(row):null);
+  }));
 }
 /* bar chart: this period (accent) over last period (grey), one bar pair per day; tap a day for values */
 function Bars({T,cur,prev,labels,unit,curName,prevName}){
@@ -231,21 +275,21 @@ function HomeDashboard({T,data,onOpen,onGo}){
     lines.length?h('div',{style:{marginTop:12,padding:'12px 14px',borderRadius:16,border:'1px solid '+T.hair,fontSize:13.5,lineHeight:1.55,color:T.fg}},
       lines.slice(0,3).map((l,i)=>h('div',{key:i,style:{display:'flex',gap:8}},h('span',{style:{color:T.accent}},'✦'),l))):null,
     /* trend */
-    h(Section,{T,title:'Trend',right:h('div',{style:{display:'flex',gap:4}},[['saved','Saved'],['hl','Highlights'],['time','Minutes']].map(([k,l])=>
+    h(Section,{T,title:'Trend',id:'trend',right:h('div',{style:{display:'flex',gap:4}},[['saved','Saved'],['hl','Highlights'],['time','Minutes']].map(([k,l])=>
       h('button',{key:k,onClick:()=>setChart(k),className:'act95',style:{padding:'4px 9px',borderRadius:10,fontSize:11.5,fontWeight:650,background:chart===k?T.fg:'transparent',color:chart===k?T.bg:T.sub}},l)))},
       h('div',{style:{background:T.card,borderRadius:18,padding:'14px 12px 10px'}},
         h(Bars,{T,cur:curShow,prev:prevS.slice(0,P.len).concat(new Array(Math.max(0,P.len-prevS.length)).fill(0)),labels,unit,curName:P.name,prevName:P.prevName}))),
-    h(Section,{T,title:'Reading'},grid(
+    h(Section,{T,title:'Reading',id:'reading',summary:cur.saved+' saved · '+cur.fin+' finished · '+fmtMin(cur.readMin)},grid(
       h(Tile,{key:1,T,label:'Articles saved',cur:cur.saved,prev:prev.saved}),
       h(Tile,{key:2,T,label:'Finished',cur:cur.fin,prev:prev.fin}),
       h(Tile,{key:3,T,label:'Time reading',cur:cur.readMin,prev:prev.readMin,fmt:fmtMin}),
       h(Tile,{key:4,T,label:'Words read',cur:cur.words,prev:prev.words}))),
-    h(Section,{T,title:'Videos & transcripts',right:h('button',{onClick:()=>onGo&&onGo('videos'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'Videos ›')},grid(
+    h(Section,{T,title:'Videos & transcripts',id:'videos',summary:cur.vsaved+' saved · '+cur.wat+' watched · '+cur.tr+' transcripts',right:h('button',{onClick:()=>onGo&&onGo('videos'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'Videos ›')},grid(
       h(Tile,{key:1,T,label:'Videos saved',cur:cur.vsaved,prev:prev.vsaved}),
       h(Tile,{key:2,T,label:'Watched',cur:cur.wat,prev:prev.wat}),
       h(Tile,{key:3,T,label:'Time watching',cur:cur.watchMin,prev:prev.watchMin,fmt:fmtMin}),
       h(Tile,{key:4,T,label:'Transcripts',cur:cur.tr,prev:prev.tr}))),
-    h(Section,{T,title:'Highlights & notes',right:h('button',{onClick:()=>onGo&&onGo('notes'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'Notes ›')},
+    h(Section,{T,title:'Highlights & notes',id:'hl',summary:cur.hl+' highlights · '+cur.notes+' notes',right:h('button',{onClick:()=>onGo&&onGo('notes'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'Notes ›')},
       grid(h(Tile,{key:1,T,label:'Highlights',cur:cur.hl,prev:prev.hl}),h(Tile,{key:2,T,label:'Notes',cur:cur.notes,prev:prev.notes})),
       topSrc.length?h('div',{style:{marginTop:12}},
         h('div',{style:{fontSize:11,fontWeight:650,letterSpacing:'.04em',textTransform:'uppercase',color:T.sub,margin:'0 2px 6px'}},'Top sources'),
@@ -254,12 +298,12 @@ function HomeDashboard({T,data,onOpen,onGo}){
           h('span',{style:{width:90,height:6,borderRadius:3,background:T.card,overflow:'hidden'}},h('i',{style:{display:'block',height:'100%',width:Math.round(n/topSrc[0][1]*100)+'%',background:T.accent,borderRadius:3}})),
           h('span',{style:{width:22,textAlign:'right',fontSize:12.5,color:T.sub,fontVariantNumeric:'tabular-nums'}},n)))):null,
       topTags.length?h('div',{style:{display:'flex',gap:6,flexWrap:'wrap',marginTop:10}},topTags.map(([t,n])=>h('span',{key:t,style:{padding:'5px 10px',borderRadius:14,background:T.card,fontSize:12.5}},'#'+t+' ',h('span',{style:{color:T.sub}},n)))):null),
-    h(Section,{T,title:'Routine & news',right:h('button',{onClick:()=>onGo&&onGo('brief'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'My Routine ›')},grid(
+    h(Section,{T,title:'Routine & news',id:'routine',summary:cur.routine+' caught up · '+cur.rtOpen+' opened',right:h('button',{onClick:()=>onGo&&onGo('brief'),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'My Routine ›')},grid(
       h(Tile,{key:1,T,label:'Updates caught up',cur:cur.routine,prev:prev.routine}),
       h(Tile,{key:2,T,label:'Routine days done',cur:cur.briefDays,prev:prev.briefDays}),
       h(Tile,{key:3,T,label:'Updates opened',cur:cur.rtOpen,prev:prev.rtOpen}),
       h(Tile,{key:4,T,label:'Items opened',cur:cur.opens,prev:prev.opens}))),
-    going.length?h(Section,{T,title:'Continue'},
+    going.length?h(Section,{T,title:'Continue',id:'continue',summary:going.length+' in progress'},
       h('div',{className:'sx',style:{display:'flex',gap:10,overflowX:'auto',margin:'0 -16px',padding:'0 16px 4px'}},
         going.map(a=>h('button',{key:a.id,onClick:()=>onOpen&&onOpen(a.id),className:'act98',style:{flexShrink:0,width:210,textAlign:'left',background:T.card,borderRadius:16,overflow:'hidden',color:T.fg}},
           a.image||a.videoId?h('img',{src:a.videoId?'https://i.ytimg.com/vi/'+a.videoId+'/mqdefault.jpg':a.image,alt:'',loading:'lazy',style:{width:'100%',height:96,objectFit:'cover',display:'block'},onError:e=>{e.target.style.display='none'}}):null,
@@ -271,8 +315,8 @@ function HomeDashboard({T,data,onOpen,onGo}){
       :null,
     h('div',{style:{fontSize:11,color:T.sub,lineHeight:1.5,margin:'16px 2px 4px'}},
       'Saved items, highlights, notes, transcripts and routine check-offs are counted from their dates. Time, finished and watched are tracked on this device'+(loggingSince?' since '+new Date(loggingSince).toLocaleDateString([],{day:'numeric',month:'short'}):' from today')+'.'),
-    h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'18px 2px 0'}},'Your library'));
+    h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'18px 2px 0'}},'Your library · by week & month'));
 }
 
-window.InstaStats={track,tick,diff,HomeDashboard,compute,periods};
+window.InstaStats={track,tick,diff,HomeDashboard,compute,periods,bucketOf,TimeGroups};
 })();
