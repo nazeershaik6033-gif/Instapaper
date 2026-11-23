@@ -35,7 +35,9 @@ const fontCss=id=>{const f=FONTS.find(f=>f.id===id);return(f?f.css:FONTS[0].css)
 const WORDMARK="'Playfair Display','Lora',Georgia,serif";
 const UIF="-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif";
 
-const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small',whisperRunner:'mac'};
+const DEFAULT_SETTINGS={theme:'light',font:'Lora',fontSize:19,lineHeight:1.62,sort:'newest',filter:'all',typeFilter:'article',readFilter:'unread',hideRead:false,ttsRate:1,ttsVoice:'',wpm:380,justify:false,aiKey:'',aiModel:'deepseek/deepseek-r1-0528:free',aiLang:'English',aiProvider:'claude',geminiKey:'',geminiModel:'gemini-2.5-flash',briefRegion:'IN',briefCategory:'',blogSel:'',lenFilter:'',srcFilter:'',briefStarred:[],briefMuted:[],backupEvery:7,lastBackupAt:0,backupSnoozeUntil:0,homePage:'home',routineRailMax:false,routineLayout:'stories',ghToken:'',whisperModel:'small',whisperRunner:'mac',
+  /* in-app browser agent (browser.js) */
+  agentProvider:'',agentModels:{},agent:{},anthropicKey:'',openaiKey:'',browserUseKey:'',browserView:'smart'};
 
 /* models OpenRouter has retired — saved settings get migrated to the new default */
 const DEAD_MODELS=['deepseek/deepseek-chat-v3-0324:free','deepseek/deepseek-r1:free'];
@@ -6146,8 +6148,9 @@ function BookmarkRow({T,site,sub,onOpen,onPress,onMenu,editing,lifted,ghost,targ
         style:{display:'flex',alignItems:'center',justifyContent:'center',width:38,height:44,flexShrink:0,color:T.sub}},Icons.dots(17))));
 }
 
-function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose}){
+function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose,agentProps}){
   const [input,setInput]=useState('');
+  const [inApp,setInApp]=useState(null); // {url} — in-app browser + Browser Agent (browser.js)
   const [vaultOpen,setVaultOpen]=useState(false);
   const [addForm,setAddForm]=useState(null); // {name,url,folderId}
   const [actSite,setActSite]=useState(null);
@@ -6410,12 +6413,14 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       q?null:h('button',{onClick:()=>setEditMode(v=>!v),'aria-label':editMode?'Done editing':'Edit bookmarks',className:'act90',
         style:{display:'flex',alignItems:'center',justifyContent:'center',minWidth:38,height:38,flexShrink:0,padding:'0 6px',
           color:editMode?T.accent:T.fg,fontSize:14,fontWeight:editMode?700:500}},editMode?'Done':Icons.pencil(19)),
+      tbtn(Icons.ai(20),()=>setInApp({url:''}),'Browser Agent'),
       tbtn(Icons.key(19),()=>setVaultOpen(true),'Passwords')),
     h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},q?searchBody:homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actSite.name),
       h(ARow,{T,icon:Icons.external(21),label:'Open',onClick:()=>{const s=actSite;setActSite(null);go(s.url,s.name)}}),
+      h(ARow,{T,icon:Icons.ai(21),label:'Open in app browser',sub:'Tabs + Browser Agent',onClick:()=>{const s=actSite;setActSite(null);setInApp({url:s.url})}}),
       h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:()=>{try{navigator.clipboard.writeText(actSite.url)}catch(e){}setActSite(null)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Rename or edit link',onClick:()=>{const s=actSite;setActSite(null);setEditSite({id:s.id,name:s.name,url:s.url})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to folder…',onClick:()=>{const s=actSite;setActSite(null);setMoveSite(s)}}),
@@ -6437,6 +6442,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       h('button',{onClick:()=>setConfirm(null),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:2,color:T.fg,fontSize:15,fontWeight:500,textAlign:'center'}},'Cancel')):null,
 
     epaper?h(EpaperSheet,{T,startUrl:epaper.url,onClose:()=>setEpaper(null)}):null,
+    inApp&&window.InstaBrowser?h(window.InstaBrowser,Object.assign({},agentProps,{T,sites,onSites,vault,onChangeVault,session,initialUrl:inApp.url,onClose:()=>setInApp(null)})):null,
     histOpen?h(Sheet,{T,onClose:()=>{setHistOpen(false);setHistQ('')},title:'History',maxH:'86%'},
       h('div',{style:{padding:'0 20px 8px'}},
         h('div',{style:{display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'9px 12px'}},
@@ -7457,6 +7463,13 @@ function App(){
   };
 
   /* save a quick "note to self" as a searchable offline article */
+  /* used by the in-app browser + agent: save a page for offline reading, falling back to a link card */
+  const saveFromBrowser=async url=>{
+    if(!url)return'Nothing to save';
+    if(dataRef.current.articles.find(a=>a.url===url))return'Already in your list';
+    try{await addByUrl(url,null);return'Saved for offline reading'}
+    catch(e){saveStub(url,null);return'Saved the link (full text could not be downloaded)'}
+  };
   const saveQuickNote=text=>{
     const first=text.split('\n')[0].replace(/^#+\s*/,'').replace(/\*\*?/g,'').trim();
     const title=first.length>64?first.slice(0,64)+'…':(first||'Note');
@@ -7951,6 +7964,7 @@ function App(){
       onChangeVault:blob=>update(d=>({...d,vault:blob})),
       session:vaultSess,
       initialUrl:browserO.url,
+      agentProps:{S,data,update,toastFn,onSaveUrl:saveFromBrowser,onSaveNote:md=>saveQuickNote(md)},
       onClose:()=>{clearBrowserReturn();setBrowserO(null)}}):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);

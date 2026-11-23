@@ -81,6 +81,13 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🛟 **Safer edit controls** — rename and delete only appear in Edit mode, are full-size and well-separated, and nothing is ever deleted without a confirmation (deleting a folder keeps its bookmarks and moves them to Bookmarks)
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
+**In-app browser & Browser Agent** (✦ in the browser's header, or ⋯ on a bookmark → Open in app browser)
+- Safari-style tabs, back/forward, find on page, share, and one-tap **Save page to Instapaper**; tabs are remembered between launches
+- **Smart** view renders any page on your phone without its scripts (so it always opens; links, forms and dropdowns work, script-heavy sites are pre-rendered remotely); **Live** view shows the real site — tap the badge in the address bar to switch
+- ✦ **Browser Agent** — a rebuild of [browser-use](https://github.com/browser-use/browser-use) that runs on the iPhone: give it a task and it searches, opens pages, clicks, types, scrolls, reads whole pages with AI, manages tabs, keeps a todo.md and notes, saves pages to your library, and reports back with sources. Live step timeline, pause/resume/stop, follow-ups, continue, run history; answers can be copied, shared, read aloud or saved as notes
+- Models: **Gemini** (free key, recommended), OpenRouter, Claude (Anthropic API), OpenAI, or Browser Use Cloud (beta). Settings: max steps, actions per step, thinking, flash mode, highlights, allowed domains, custom instructions, search engine
+- Smart view and the agent don't use your logins, and pages go through public proxies — don't use them for anything private
+
 **Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
 - 🏠 **Home page** — pick which screen opens on launch: My Routine, Headlines, **Home/Library** (the default), Photos, Blogs, Liked, Archive, Notes, Threads, or Tags.
 - 🔄 **Force reload to latest version** — drops the cached app shell and service worker and reloads so you get the newest deployed build immediately. Your saved articles, notes, photos and settings are untouched.
