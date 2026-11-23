@@ -7832,7 +7832,9 @@ function App(){
     else if(dy<-8){if(chromeHidden)setChromeHidden(false)}
     if(Math.abs(dy)>8||y<40)lastY.current=y};
   const searchRef=useRef(null); // global search field — focused when entering the Search scope
+  const [searchOpenH,setSearchOpenH]=useState(false); // the header search icon expands into a full-width field
   const [findReq,setFindReq]=useState(0); // bumping this opens the Reader's find-in-article bar
+  useEffect(()=>{if(scope.type==='search')setSearchOpenH(true)},[scope.type]);
   useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
@@ -8430,11 +8432,21 @@ function App(){
     /* one slim bar (☰ · title · ✦ · settings) that slides away while you scroll down */
     const folderName=scope.type==='folder'?((data.folders||[]).find(f=>f.id===scope.id)||{}).name:'';
     const pageTitle=scope.type==='tag'?'#'+scope.id:folderName||({home:'Home',brief:'My Routine',blogs:'Blogs',headlines:'Headlines',photos:'Photos',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags',videos:'Videos',search:'Search'}[scope.type]||'Instapaper');
-    header=h('div',{style:{flexShrink:0,overflow:'hidden',height:chromeHidden?0:46,transition:'height 260ms cubic-bezier(.2,.8,.2,1)',background:T.bg,position:'relative',zIndex:3}},
-      h('div',{style:{display:'flex',alignItems:'center',gap:2,padding:'4px 8px',height:46}},
+    const searching=isArticleScope&&(searchOpenH||!!query);
+    const closeSearch=()=>{setSearchOpenH(false);setQuery('');setSearchScope('all');try{document.activeElement&&document.activeElement.blur()}catch(e){}if(scope.type==='search')setScope({type:'home'})};
+    header=h('div',{style:{flexShrink:0,overflow:'hidden',height:chromeHidden&&!searching?0:44,transition:'height 260ms cubic-bezier(.2,.8,.2,1)',background:T.bg,position:'relative',zIndex:3}},
+      searching?h('div',{className:'fdin',style:{display:'flex',alignItems:'center',gap:8,padding:'4px 10px 4px 12px',height:44}},
+        h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 11px',minWidth:0}},
+          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(16)),
+          h('input',{ref:searchRef,autoFocus:true,value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search everything you’ve saved',enterKeyHint:'search',
+            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:16,minWidth:0}}),
+          query?h('button',{onClick:()=>{setQuery('');setSearchScope('all');try{searchRef.current&&searchRef.current.focus()}catch(e){}},'aria-label':'Clear',className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null),
+        h('button',{onClick:closeSearch,style:{color:T.accent,fontSize:15.5,fontWeight:500,padding:'6px 2px',flexShrink:0}},'Cancel')):
+      h('div',{style:{display:'flex',alignItems:'center',gap:2,padding:'0 8px 0 4px',height:44}},
         headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
-        h('button',{onClick:goHome,'aria-label':'Scroll to top',style:{minWidth:0,padding:'0 4px',fontSize:20,fontWeight:800,letterSpacing:'-.022em',color:T.fg,textAlign:'left',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},pageTitle),
+        h('button',{onClick:goHome,'aria-label':'Scroll to top',style:{minWidth:0,padding:'0 2px',margin:0,fontSize:20,fontWeight:800,letterSpacing:'-.022em',lineHeight:1,color:T.fg,textAlign:'left',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},pageTitle),
         h('div',{style:{flex:1}}),
+        isArticleScope?headerBtn(Icons.search(21),()=>setSearchOpenH(true)):null,
         headerBtn(Icons.ai(22),()=>setAiOpen({})),
         h('button',{onClick:()=>setSettingsOpen(true),'aria-label':'Settings',className:'act90',style:{width:34,height:34,borderRadius:17,marginLeft:2,marginRight:4,background:T.card,color:T.fg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},Icons.gear(18)),
         EMBEDDED?headerBtn(Icons.back(23),exitToHost):null));
@@ -8513,12 +8525,8 @@ function App(){
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100dvh',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
       header,
-      isArticleScope&&!selecting?h('div',{style:{padding:chromeHidden?'0 16px':'2px 16px 10px',flexShrink:0,maxHeight:chromeHidden?0:240,overflow:chromeHidden?'hidden':'visible',opacity:chromeHidden?0:1,transition:'max-height 260ms cubic-bezier(.2,.8,.2,1), padding 260ms, opacity 200ms'}},
-        h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,borderRadius:11,padding:'9px 12px'}},
-          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
-          h('input',{ref:searchRef,value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
-            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          query?h('button',{onClick:()=>{setQuery('');setSearchScope('all')},className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null),
+      isArticleScope&&!selecting?h('div',{style:{padding:chromeHidden?'0 16px':'0 16px 8px',flexShrink:0,maxHeight:chromeHidden?0:240,overflow:chromeHidden?'hidden':'visible',opacity:chromeHidden?0:1,transition:'max-height 260ms cubic-bezier(.2,.8,.2,1), padding 260ms, opacity 200ms'}},
+
         q?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginTop:8}},
           [['all','Everything'],['title','Title'],['source','Source'],['tags','Tags']].map(([v,l])=>{
             const on=searchScope===v;
@@ -8536,7 +8544,7 @@ function App(){
           const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
           const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular',title:'Title A–Z'};
           const curSort=SORT_SHORT[S.sort]||(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
-          return h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:8,flexWrap:'nowrap'}},
+          return h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:q?8:2,flexWrap:'nowrap'}},
             h('div',{style:{position:'relative',flexShrink:0}},
               h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all'||!!S.lenFilter||!!S.srcFilter)},Icons.filter(14),curType),
               filterMenu?h(Fragment,null,
