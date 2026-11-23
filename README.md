@@ -55,6 +55,12 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them, or tap **✦ Suggest blocks to remove** to let AI pre-select the boilerplate (you review and Save)
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
+**Blogs — magazine view** (Latest / Manage switch at the top)
+- 📰 **Latest** is a magazine of every post from the blogs you follow: a big headline with how many are new, **category pills** (All posts, New, and one per group), the newest post as a large **featured card** with excerpt, then a two-column grid of image cards (blog, bold title, date, author, red dot for new). *Read more posts* loads more; *Mark all as read* clears the new dots
+- 🖼 Post pictures come from the feeds themselves (media images, enclosures or the first picture in the post); blogs without pictures get a tasteful colour cover with their icon and name
+- 🔎 Search filters posts by title, blog or excerpt; the AI digest and *Ask Claude about my blogs* stay in the toolbar
+- ⚙️ **Manage** is the previous screen — groups, adding, editing, reordering and moving blogs
+
 **My Routine**
 - 🗂 **Groups are tabs down the left** — a sticky side rail lists every group as a flat row with a colour dot and a count (or a red number when something's new); the pane beside it shows just that group's channels and their new posts, so content starts at the top of the screen instead of below a stack of cards
 - ⏴ **Collapse the rail** — the small arrow above it shrinks the rail to a slim column of colour-ringed dots (still badged when something's new), freeing width for reading; tap a dot to switch groups without expanding back

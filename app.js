@@ -729,6 +729,21 @@ function parseTelegramText(raw){
     return{id:post||String(publishedMs),title:title.slice(0,220),url:post?'https://t.me/'+post:'https://t.me/'+handle,publishedMs,thumb};
   }).filter(e=>e.publishedMs).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,25);
 }
+/* a post's picture for the Blogs magazine: media:content / media:thumbnail / an image enclosure /
+   itunes:image, else the first <img> in the post body */
+function feedImage(n,body,link){
+  const abs=u=>{try{return u?new URL(u,link||undefined).href:''}catch(e){return''}};
+  const attr=(tag,a)=>{const es=n.getElementsByTagName(tag);for(let i=0;i<es.length;i++){const v=es[i].getAttribute(a);const ty=es[i].getAttribute('type')||es[i].getAttribute('medium')||'image';if(v&&/image/i.test(ty))return v}return''};
+  let u=attr('media:content','url')||attr('media:thumbnail','url')||attr('enclosure','url')||attr('itunes:image','href');
+  if(!u&&body){const m=/<img[^>]+src=["']([^"']+)["']/i.exec(body);if(m)u=m[1].replace(/&amp;/g,'&')}
+  u=abs(u);
+  return/^https:\/\//.test(u)&&!/(feeds\.feedburner|pixel|tracking|gravatar|\.gif(\?|$))/i.test(u)?u.slice(0,600):'';
+}
+function feedExcerpt(body){
+  if(!body)return'';
+  const t=String(body).replace(/<(script|style)[\s\S]*?<\/\1>/gi,' ').replace(/<[^>]+>/g,' ').replace(/&nbsp;/g,' ').replace(/&amp;/g,'&').replace(/&quot;/g,'"').replace(/&#0?39;|&rsquo;/g,'’').replace(/&[a-z#0-9]+;/gi,' ').replace(/\s+/g,' ').trim();
+  return t.length>180?t.slice(0,177).replace(/\s+\S*$/,'')+'…':t;
+}
 function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddit, bridges
   const doc=new DOMParser().parseFromString(raw,'text/xml');
   let nodes=[].slice.call(doc.getElementsByTagName('item')),atom=false;
@@ -738,7 +753,9 @@ function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddi
     let link='';
     if(atom){const ls=n.getElementsByTagName('link');for(let i=0;i<ls.length;i++){if((ls[i].getAttribute('rel')||'alternate')==='alternate'){link=ls[i].getAttribute('href')||'';break}}if(!link&&ls[0])link=ls[0].getAttribute('href')||''}
     else link=tx('link')||tx('guid');
-    return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,thumb:''};
+    const body=tx('content:encoded')||tx('content')||tx('description')||tx('summary');
+    return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,
+      thumb:feedImage(n,body,link),excerpt:feedExcerpt(body),author:(tx('dc:creator')||tx('name')||'').slice(0,60)};
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
 async function fetchRss(url){
@@ -3495,7 +3512,84 @@ function ThreadDetail({T,S,thread,feedCache,media,articles,onBack,onPatch,onEdit
 /* Blogs — grouped like My Routine: collapsible groups of feeds, drag to reorder,
    edit/delete/add per group, "N new" badges, and the same AI actions. No
    checklist/streaks — tapping a post still saves it for offline reading. */
+/* ============================== Blogs — magazine view ==============================
+   Modelled on the "Blog page" Dribbble shot: a big centred headline, black / outlined category
+   pills, then large rounded image cards (category, bold title, date). The latest post leads as a
+   featured card; the rest sit in a two-column grid. Feed management lives behind "Manage". */
+const BLOG_COVERS=[['#c9d6df','#52616b'],['#f6d5c3','#b0563d'],['#d7e3d0','#4f6f52'],['#e5dcf3','#6a4c93'],['#f3e3c3','#a0742c'],['#cfe0ef','#2f5d8a'],['#efd3d7','#8e4552'],['#dfe7e2','#355c56']];
+function blogCover(name){let x=0;for(const c of String(name||''))x=(x*31+c.charCodeAt(0))>>>0;return BLOG_COVERS[x%BLOG_COVERS.length]}
+function BlogCover({e,name,site,ratio,radius,big}){
+  const [bad,setBad]=useState(false);
+  const [c1,c2]=blogCover(name);
+  const box={position:'relative',width:'100%',paddingTop:ratio||'75%',borderRadius:radius||16,overflow:'hidden',background:'linear-gradient(145deg,'+c1+' 0%,'+c2+' 100%)'};
+  return h('div',{style:box},
+    e.thumb&&!bad?h('img',{src:e.thumb,alt:'',loading:'lazy',referrerPolicy:'no-referrer',onError:()=>setBad(true),style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover'}})
+      :h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'flex-start',justifyContent:'flex-end',padding:big?18:12,color:'#fff'}},
+        h('div',{style:{position:'absolute',right:-30,top:-30,width:'70%',paddingTop:'70%',borderRadius:'50%',background:'radial-gradient(circle,rgba(255,255,255,.35),transparent 65%)'}}),
+        site?h('img',{src:faviconUrl(site),alt:'',style:{width:big?34:24,height:big?34:24,borderRadius:8,background:'rgba(255,255,255,.9)',padding:3,marginBottom:8},onError:ev=>{ev.target.style.display='none'}}):null,
+        h('div',{style:{fontSize:big?22:15,fontWeight:750,letterSpacing:'-.02em',lineHeight:1.1,textShadow:'0 1px 8px rgba(0,0,0,.18)'}},name)));
+}
+const blogDate=ms=>{if(!ms)return'';const d=Date.now()-ms;if(d<3600000)return Math.max(1,Math.round(d/60000))+' min ago';if(d<86400000)return Math.round(d/3600000)+'h ago';
+  return new Date(ms).toLocaleDateString([],{month:'short',day:'numeric',year:new Date(ms).getFullYear()===new Date().getFullYear()?undefined:'numeric'})};
+function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMarkAll,lastFetch}){
+  const [cat,setCat]=useState(()=>{try{return localStorage.getItem('insta_blogs_cat')||'all'}catch(e){return'all'}});
+  const [shown,setShown]=useState(13);
+  const pick=c=>{setCat(c);setShown(13);try{localStorage.setItem('insta_blogs_cat',c)}catch(e){}};
+  const gName=id=>{const g=groups.find(x=>x.id===id);return g?g.name:''};
+  const posts=[];
+  for(const f of feeds){
+    if(!f.feedUrl)continue;const c=blogFeeds[f.id];if(!c||!c.entries)continue;
+    const since=seen[f.id]||0;
+    for(const e of c.entries)posts.push({e,f,isNew:e.publishedMs>since,group:f.groupId&&groups.some(g=>g.id===f.groupId)?f.groupId:'_other'});
+  }
+  posts.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
+  const newN=posts.filter(p=>p.isNew).length;
+  const cats=[['all','All posts'],newN?['new','New · '+newN]:null].filter(Boolean)
+    .concat(groups.filter(g=>posts.some(p=>p.group===g.id)).map(g=>[g.id,g.name]))
+    .concat(posts.some(p=>p.group==='_other')&&groups.length?[['_other','Other']]:[]);
+  const cur=cats.some(c=>c[0]===cat)?cat:'all';
+  const q=String(query||'').trim().toLowerCase();
+  const list=posts.filter(p=>(cur==='all'||(cur==='new'?p.isNew:p.group===cur))&&(!q||(p.e.title||'').toLowerCase().includes(q)||p.f.name.toLowerCase().includes(q)||(p.e.excerpt||'').toLowerCase().includes(q)));
+  const loading=feeds.some(f=>f.feedUrl&&!(blogFeeds[f.id]&&blogFeeds[f.id].entries));
+  const label=p=>p.f.name;
+  const openP=p=>onOpen({title:p.e.title,url:p.e.url,source:p.f.name,publishedAt:p.e.publishedMs});
+  const meta=p=>h('div',{style:{display:'flex',alignItems:'center',gap:6,fontSize:11.5,color:T.sub,marginTop:6}},
+    p.isNew?h('span',{style:{width:6,height:6,borderRadius:3,background:'#d4564a',flexShrink:0}}):null,
+    h('span',null,blogDate(p.e.publishedMs)),p.e.author?h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'· '+p.e.author):null,
+    busyUrl===p.e.url?h(Spinner,{T,size:11}):null);
+  const card=p=>h('button',{key:p.e.url,onClick:()=>openP(p),className:'act98',style:{display:'block',width:'100%',textAlign:'left',color:T.fg,minWidth:0}},
+    h(BlogCover,{e:p.e,name:p.f.name,site:p.f.site,ratio:'78%'}),
+    h('div',{style:{fontSize:11.5,color:T.sub,marginTop:9,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label(p)),
+    h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,letterSpacing:'-.01em',marginTop:3,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},p.e.title),
+    meta(p));
+  const lead=list[0];
+  return h('div',{style:{padding:'8px 16px 0'}},
+    h('div',{style:{textAlign:'center',padding:'14px 6px 4px'}},
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.sub}},feeds.filter(f=>f.feedUrl).length+' blogs'+(lastFetch?' · updated '+blogDate(lastFetch).replace(' ago',' ago'):'')),
+      h('div',{style:{fontSize:30,fontWeight:780,letterSpacing:'-.03em',lineHeight:1.08,margin:'8px auto 0',maxWidth:340}},'The Latest Posts From Your Blogs'),
+      h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.5,margin:'10px auto 0',maxWidth:320}},newN?newN+' new since your last visit. ':'You’re all caught up. ','Fresh reading from every blog you follow, newest first.'),
+      newN?h('button',{onClick:onMarkAll,style:{marginTop:8,fontSize:12.5,fontWeight:600,color:T.accent}},'Mark all as read'):null),
+    h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'16px 2px 18px',justifyContent:cats.length<=4?'center':'flex-start'}},
+      cats.map(([id,l])=>h('button',{key:id,onClick:()=>pick(id),className:'act95',style:{flexShrink:0,padding:'8px 15px',borderRadius:999,fontSize:13,fontWeight:600,
+        background:cur===id?T.fg:'transparent',color:cur===id?T.bg:T.fg,border:'1px solid '+(cur===id?T.fg:T.hair)}},l))),
+    loading&&!posts.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.sub,fontSize:13.5,padding:'30px 0'}},h(Spinner,{T,size:16}),'Fetching the latest posts…'):null,
+    !loading&&!list.length?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'30px 10px'}},q?'No posts match “'+query.trim()+'”.':cur==='new'?'Nothing new — you’re all caught up.':'No posts yet. Add blogs under Manage.'):null,
+    lead?h('button',{onClick:()=>openP(lead),className:'act98',style:{display:'block',width:'100%',textAlign:'left',color:T.fg,marginBottom:22}},
+      h(BlogCover,{e:lead.e,name:lead.f.name,site:lead.f.site,ratio:'62%',radius:20,big:true}),
+      h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:12}},
+        h('span',{style:{fontSize:11,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:T.accent}},'Latest'),
+        h('span',{style:{fontSize:12,color:T.sub}},label(lead))),
+      h('div',{style:{fontSize:22,fontWeight:760,lineHeight:1.2,letterSpacing:'-.02em',marginTop:5}},lead.e.title),
+      lead.e.excerpt?h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.5,marginTop:7,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},lead.e.excerpt):null,
+      meta(lead)):null,
+    h('div',{style:{display:'grid',gridTemplateColumns:'repeat(2,minmax(0,1fr))',columnGap:14,rowGap:24}},list.slice(1,shown).map(card)),
+    list.length>shown?h('div',{style:{textAlign:'center',padding:'26px 0 6px'}},
+      h('button',{onClick:()=>setShown(n=>n+12),className:'act95',style:{padding:'11px 22px',borderRadius:999,border:'1px solid '+T.hair,color:T.fg,fontSize:14,fontWeight:600}},'Read more posts')):null);
+}
+
 function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds,onSeen,onOpenItem,onBrowse,toastFn}){
+  const [mode,setModeS]=useState(()=>{try{return localStorage.getItem('insta_blogs_mode')||'mag'}catch(e){return'mag'}});
+  const setMode=m=>{setModeS(m);try{localStorage.setItem('insta_blogs_mode',m)}catch(e){}};
   const [collapsed,setCollapsed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_blogs_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleCollapse=key=>setCollapsed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_blogs_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const [dragOver,setDragOver]=useState(-1);
@@ -3548,7 +3642,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     let live=true;
     (async()=>{for(const f of feeds){
       if(!f.feedUrl)continue;
-      const c=blogFeeds[f.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000)continue;
+      const c=blogFeeds[f.id];if(c&&Date.now()-(c.fetchedAt||0)<20*60*1000&&(c.entries||[]).some(e=>'excerpt' in e))continue; // older caches have no pictures: fetch once
       try{const es=await fetchRss(f.feedUrl);if(es&&live)onBlogFeeds(m=>({...m,[f.id]:{fetchedAt:Date.now(),entries:es}}))}catch(e){}
     }})();
     return()=>{live=false};
@@ -3633,24 +3727,33 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   const ungrouped=feeds.filter(f=>!f.groupId||!groups.some(g=>g.id===f.groupId));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
 
-  const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
+  const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
   const rowBtnBadge=(icon,onClick,label,badge,disabled)=>h('div',{style:{position:'relative',flexShrink:0}},
     rowBtn(icon,onClick,false,label,disabled),
     badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
 
+  const mag=mode==='mag'&&feeds.some(f=>f.feedUrl);
+  const lastFetch=Math.max(0,...feeds.map(f=>(blogFeeds[f.id]||{}).fetchedAt||0));
   return h('div',null,
-    h('div',{style:{display:'flex',gap:8,padding:'12px 14px 4px'}},
+    h('div',{className:'sx',style:{display:'flex',gap:8,padding:'12px 14px 4px',alignItems:'center',overflowX:'auto'}},
+      feeds.length?h('div',{style:{display:'inline-flex',background:T.card,borderRadius:11,padding:3,gap:2,flexShrink:0}},
+        [['mag','Latest'],['manage','Manage']].map(([k,l])=>h('button',{key:k,onClick:()=>setMode(k),className:'act95',style:{padding:'6px 12px',borderRadius:8,fontSize:13,fontWeight:650,background:(mode===k)?T.bg:'transparent',color:(mode===k)?T.fg:T.sub,boxShadow:mode===k?'0 1px 3px rgba(0,0,0,.12)':'none'}},l))):null,
+      h('div',{style:{flex:1}}),
       rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
-      rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
+      mag?null:rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
       rowBtn(Icons.refresh(17),refreshAll,false,'Refresh all'),
       rowBtnBadge(aiBusy?h(Spinner,{T,size:15}):Icons.ai(17),runDigest,'Summarize what’s new',totalNew>0?String(totalNew):'',aiBusy),
       rowBtn(Icons.send(17),()=>setClaudeOpen(true),false,'Ask Claude about my blogs')),
     (feeds.length&&searchOpen)?h('div',{style:{padding:'0 14px 10px'}},
       h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,border:'1px solid '+(q?T.accent:T.hair),borderRadius:12,padding:'9px 12px'}},
         h('span',{style:{display:'flex',color:q?T.accent:T.sub,flexShrink:0}},Icons.search(17)),
-        h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search blogs',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        h('input',{value:query,onChange:e=>setQuery(e.target.value),placeholder:mode==='mag'?'Search posts':'Search blogs',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
         query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null,
+    mag?h(Fragment,null,
+      h(BlogsMagazine,{T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen:open,lastFetch,
+        onMarkAll:()=>{const now=Date.now();onSeen(m=>{const n={...m};feeds.forEach(f=>{n[f.id]=now});return n});toastFn('All caught up')}}),
+      h('div',{style:{height:'calc(30px + '+SAFE_B+')'}})):
     h('div',{style:{padding:'2px 14px 0'}},
       (feeds.length||groups.length)?(()=>{
         const isDragging=dragOver!==-1;
