@@ -56,10 +56,11 @@ try{
 <style>
 *{-webkit-tap-highlight-color:transparent;box-sizing:border-box}
 html{height:-webkit-fill-available;height:100dvh}
-body{min-height:-webkit-fill-available;min-height:100dvh;margin:0;padding:0;background:#fff;overflow:hidden;overscroll-behavior-y:none;-webkit-font-smoothing:antialiased;-webkit-touch-callout:none}
+body{font-family:var(--uif);min-height:-webkit-fill-available;min-height:100dvh;margin:0;padding:0;background:#fff;overflow:hidden;overscroll-behavior-y:none;-webkit-font-smoothing:antialiased;-webkit-touch-callout:none}
 #root{height:100dvh;margin:0;padding:0;overflow:hidden}
 div,span,button,h1,h2,h3,h4,h5,h6,p,label{-webkit-user-select:none;user-select:none}
 button{border:none;background:none;padding:0;color:inherit;font:inherit;cursor:pointer}
+button{font-family:inherit}
 input,textarea,select{-webkit-user-select:text!important;user-select:text!important;-webkit-touch-callout:default;touch-action:auto;font-size:16px;font-family:inherit}
 input:focus,textarea:focus,select:focus{outline:none}
 a{-webkit-touch-callout:default}
@@ -88,6 +89,27 @@ a{-webkit-touch-callout:default}
 .spin{animation:spk 800ms linear infinite}
 @keyframes ppk{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
 .ppin{transform-origin:bottom right;animation:ppk 190ms cubic-bezier(.2,.9,.2,1) both}
+:root{--uif:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
+/* ---- motion: Settings → Display & Motion (rich · subtle · off); iPhone Reduce Motion is respected ---- */
+@keyframes suk2{from{transform:translateY(70px) scale(.985);opacity:0}to{transform:none;opacity:1}}
+@keyframes fdk2{from{opacity:0;transform:scale(.985)}to{opacity:1;transform:none}}
+@keyframes pgk{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+@keyframes tabk{0%{transform:scale(.6);opacity:0}60%{transform:scale(1.12)}100%{transform:scale(1);opacity:1}}
+@keyframes shm{to{background-position:-200% 0}}
+@keyframes cff{to{transform:translate3d(var(--dx),110vh,0) rotate(var(--rot));opacity:.9}}
+html.motion-rich .shn{animation:suk2 460ms cubic-bezier(.16,1.22,.36,1) both}
+html.motion-rich .fdin{animation:fdk2 280ms cubic-bezier(.2,.8,.2,1) both}
+html.motion-rich .act95,html.motion-rich .act90{transition:transform 320ms cubic-bezier(.2,1.5,.4,1)}
+html.motion-rich .act98{transition:transform 320ms cubic-bezier(.2,1.5,.4,1),opacity 150ms,background-color 150ms}
+html.motion-rich .act98:active{transform:scale(.97);opacity:.8}
+.pgin{animation:pgk 340ms cubic-bezier(.2,.9,.2,1) both}
+html.motion-subtle .pgin{animation-duration:180ms}
+.tabpop{animation:tabk 420ms cubic-bezier(.2,1.2,.4,1) both}
+.shimmer{background:linear-gradient(90deg,rgba(127,127,127,.12) 25%,rgba(127,127,127,.24) 50%,rgba(127,127,127,.12) 75%);background-size:200% 100%;animation:shm 1.2s linear infinite}
+html.motion-off *:not(.spin),html.motion-off *:not(.spin)::before,html.motion-off *:not(.spin)::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}
+@media (prefers-reduced-motion:reduce){html:not(.motion-forced) *:not(.spin){animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
+html.ui-bold body{-webkit-text-stroke:.32px currentColor}
+.cff{position:fixed;top:-14px;width:8px;height:14px;border-radius:2px;z-index:9999;pointer-events:none;animation:cff linear forwards}
 .act90:active{transform:scale(.9)}
 .act95:active{transform:scale(.95)}
 .act98{transition:background-color 150ms}

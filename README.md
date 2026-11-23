@@ -4,6 +4,14 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 
 ## Features
 
+**New look (iOS premium)**
+- 🧭 A frosted **tab bar** — Home · Routine · Browse · Blogs · More (More opens the menu with Headlines, Liked, Archive, Photos, Notes, Threads, Tags, Focus Timer, Settings); tap the current tab again to jump to the top
+- 🔠 **Large titles** that fold into a frosted bar as you scroll, with ☰, ✦ AI and a Settings button
+- ⚙️ **Settings → Display & Motion**: app **text size** (Small · Default · Large · Extra large), **app font** (San Francisco, Inter, Rounded, Serif — Telugu/Hindi always render), **Bold text**, **Higher contrast**, and **Motion** (Rich · Subtle · Off; iPhone Reduce Motion is followed until you choose)
+- ✨ Rich motion: spring sheets, page transitions between sections, cards that press in, a springy tab bar, and confetti when you finish a routine
+- 📖 **Reading presets** in Aa: Book, Newspaper, Modern, Large print
+
+
 **Core**
 - Save any link — the article is downloaded, stripped of clutter, and stored for **offline reading** (airplanes, subways, anywhere)
 - Beautiful, mobile-optimized text view with serif typography
