@@ -33,8 +33,10 @@ const DEFAULTS={
   hist:'all',     // history kept: off | 1 | 7 | 30 | 90 | all (days)
   listMode:false, // tab switcher as a list
   homeUrl:'',     // new tabs open this page
-  socialInApp:true,// YouTube / Instagram / X open in the in-app viewer
-  noApps:true,    // iPhone: open links in Safari, never let YouTube/Instagram… apps take them
+  /* sites that open inside the app when you open them from the Browse section (YouTube, Instagram
+     and X use their in-app viewer; any other site you add opens in the in-app browser). Everywhere
+     else in the app these links behave as before — installed apps take them. */
+  appSites:['youtube.com','youtu.be','instagram.com','x.com','twitter.com'],
   addrEngine:'',  // '' = the default search engine; or ddglite/startpage/brave/mojeek/ecosia
   lists:['easylist','easyprivacy']
 };
@@ -916,8 +918,6 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData,sa
       sw('deamp','Skip AMP pages','Opens the publisher’s real page instead of Google AMP'),
       sw('https','Upgrade to HTTPS','Every http:// link opens over https://'),
       sw('referrer','Hide where you came from','Pages don’t learn which site linked you there'),
-      sw('socialInApp','YouTube, Instagram & X inside the app','Videos, posts, reels and profiles open in the app’s own viewer instead of Safari'),
-      sw('noApps','Keep links in Safari','Stops YouTube, Instagram, Amazon… opening their apps instead of the website (iOS 17+)'),
       safari?null:sw('popups','Block pop-ups in Live view','Allow them per site from the shield; logins sometimes need them'),
       safari?null:h(Fragment,null,
       SectionTitle({T,children:'Filter lists'}),
@@ -934,6 +934,7 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData,sa
       h('textarea',{value:rules,onChange:e=>setRules(e.target.value),rows:5,spellCheck:false,autoCapitalize:'none',autoCorrect:'off',placeholder:'One rule per line',
         style:Object.assign(inputS(T),{fontFamily:'ui-monospace,Menlo,monospace',fontSize:13,resize:'vertical'})}),
       h('div',{style:{display:'flex',gap:8,marginTop:8}},h(Chip,{T,active:rules!==(S.filterRules||''),onClick:()=>{set({filterRules:rules});SH.rules=rules;scheduleBuild(20);toastFn('Filters saved')}},'Save filters'))),
+      h(AppSitesEditor,{T,g,set}),
       SectionTitle({T,children:safari?'Search':'Search & new tabs'}),
       h('div',{style:Object.assign({},small(T),{marginBottom:8})},'Address-bar search engine. “Default” uses the engine from Settings → Browser & Sites (also used by the agent).'),
       h('div',{style:{display:'flex',gap:7,flexWrap:'wrap'}},
@@ -964,6 +965,30 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData,sa
           h('span',{style:{flex:1,minWidth:0,fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},k),
           h('span',{style:{fontSize:11.5,color:T.sub}},Object.keys(S.siteShields[k]).join(', ')),
           h('button',{onClick:()=>setSite(set,S,k,null),style:{color:T.danger,fontSize:13,fontWeight:600}},'Reset')))):null));
+}
+
+/* which sites open inside the app from the Browse section */
+const normHost=v=>String(v||'').trim().toLowerCase().replace(/^https?:\/\//,'').replace(/^www\./,'').split(/[/?#]/)[0];
+function inAppSite(url){
+  const host=hostOf(url).replace(/^(www|m|mobile)\./,'');if(!host)return false;
+  return(cfg().appSites||[]).some(d=>{d=normHost(d);return d&&(host===d||host.endsWith('.'+d))});
+}
+function AppSitesEditor({T,g,set}){
+  const {SectionTitle,inputS}=UI();
+  const [v,setV]=useState('');
+  const list=g.appSites||[];
+  const add=()=>{const d=normHost(v);if(!d||!d.includes('.')||list.includes(d))return;setG(set,{appSites:list.concat([d])});setV('')};
+  return h(Fragment,null,
+    SectionTitle({T,children:'Open inside the app (from Browse)'}),
+    h('div',{style:Object.assign({},small(T),{marginBottom:8})},'When you open these from the Browse section they stay inside the app — YouTube, Instagram and X in the app’s own viewer, any other site in the in-app browser — instead of Safari or their apps. Everywhere else in the app they open as usual.'),
+    h('div',{style:{display:'flex',gap:7,flexWrap:'wrap'}},
+      list.map(d=>h('span',{key:d,style:{display:'inline-flex',alignItems:'center',gap:6,padding:'6px 6px 6px 12px',borderRadius:16,background:T.card,fontSize:13.5}},d,
+        h('button',{onClick:()=>setG(set,{appSites:list.filter(x=>x!==d)}),'aria-label':'Remove '+d,className:'act90',style:{display:'flex',color:T.sub,padding:2}},Icons.x(14)))),
+      list.length?null:h('span',{style:small(T)},'None — everything opens as usual.')),
+    h('div',{style:{display:'flex',gap:8,marginTop:10}},
+      h('input',{value:v,onChange:e=>setV(e.target.value),onKeyDown:e=>{if(e.key==='Enter')add()},placeholder:'Add a site, e.g. reddit.com',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inputS(T)}),
+      h('button',{onClick:add,className:'act95',style:{padding:'0 16px',borderRadius:10,background:T.fg,color:T.bg,fontWeight:600,flexShrink:0}},'Add')),
+    h('button',{onClick:()=>setG(set,{appSites:DEFAULTS.appSites.slice()}),style:{color:T.sub,fontSize:12.5,marginTop:8}},'Reset to YouTube, Instagram & X'));
 }
 
 /* Safari is a separate app: the only way to block ads inside it from here is encrypted DNS that
@@ -1071,7 +1096,7 @@ function BIc(name){try{const B=window.InstaUI&&window.InstaUI.BI;return B&&B[nam
 
 /* ============================== export ============================== */
 window.InstaShields={
-  DEFAULTS,FILTER_LISTS,ADDR_ENGINES,sync,cfg,siteCfg,siteKey,navUrl,shareUrl,cleanUrl,unwrapUrl,deAmp,upgradeHttps,
+  DEFAULTS,FILTER_LISTS,ADDR_ENGINES,sync,inAppSite,cfg,siteCfg,siteKey,navUrl,shareUrl,cleanUrl,unwrapUrl,deAmp,upgradeHttps,
   begin,frameBlocked,apply,isBlockedUrl,selectorFor,setSite,setG,recordVisit,trimHistory,suggest,
   bookmarksHtml,parseBookmarksHtml,importBookmarks,downloadText,engine,buildEngine,parseInto,newEngine,finishEngine,netBlocked,updateList,
   icons:SI,SiteShieldSheet,ShieldSettingsSheet,ClearDataSheet,HistorySheet,SourceSheet,SuggestList

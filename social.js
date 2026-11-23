@@ -42,8 +42,8 @@ function match(url){
   }
   return null;
 }
-const enabled=()=>{const X=window.InstaShields;return!(X&&X.cfg().socialInApp===false)};
-const handles=url=>enabled()&&!!match(url);
+const enabled=()=>true;
+const handles=url=>{const X=window.InstaShields;return!!match(url)&&(!X||X.inAppSite(url))};
 const LABEL={yt:'YouTube',ig:'Instagram',x:'X'};
 function titleFor(url){
   const m=match(url);if(!m)return'';
@@ -254,8 +254,7 @@ function Actions({T,url,onSaveUrl,toastFn,label}){
     onSaveUrl?h(Pill,{T,primary:true,onClick:async()=>{const m=await onSaveUrl(clean);if(m&&toastFn)toastFn(m)}},'＋ Save'):null,
     h(Pill,{T,onClick:()=>shareText('','',clean)},'Share'),
     h(Pill,{T,onClick:()=>{copyText(clean);toastFn&&toastFn('Link copied')}},'Copy link'),
-    h(Pill,{T,onClick:()=>openExternalUrl(clean)},'Safari ↗'),
-    h(Pill,{T,onClick:()=>openExternalUrl(clean,{allowApp:true})},(label||'App')+' app ↗'));
+    h(Pill,{T,onClick:()=>openExternalUrl(clean)},'Open in '+(label||'app')+' ↗'));
 }
 function RecentList({T,kind,onNav,title}){
   const l=recents().filter(x=>x.kind===kind).slice(0,20);

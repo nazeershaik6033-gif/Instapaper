@@ -426,24 +426,7 @@ async function vaultDecrypt(pass,blob){
 
 /* Opens a URL in the system browser — reliable in PWA standalone mode on iOS where
    window.open() gets blocked as a popup. */
-/* iOS hands https links for YouTube, Instagram, Amazon… to their apps (universal links).
-   The x-safari-https:// scheme (iOS 17+) opens the page in Safari itself, so no app takes over.
-   Privacy & Shields → "Keep links in Safari" (on by default) controls it. */
-function iosMajor(){
-  const ua=navigator.userAgent||'';
-  const ios=/iPhone|iPad|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
-  if(!ios)return 0;
-  const m=/OS (\d+)_/.exec(ua)||/Version\/(\d+)/.exec(ua);return m?Number(m[1]):0;
-}
-function safariOnlyUrl(url){
-  const u=String(url||'');
-  if(!/^https?:\/\//i.test(u)||iosMajor()<17)return'';
-  const X=window.InstaShields;if(X&&X.cfg().noApps===false)return'';
-  return'x-safari-'+u;
-}
-function openExternalUrl(url,opts){
-  const forced=!(opts&&opts.allowApp)&&safariOnlyUrl(url);
-  if(forced){try{const a=document.createElement('a');a.href=forced;a.style.cssText='position:fixed;left:-9999px;top:-9999px';document.body.appendChild(a);a.click();setTimeout(()=>{try{a.remove()}catch(e){}},500);return}catch(e){}}
+function openExternalUrl(url){
   try{
     const a=document.createElement('a');
     a.href=String(url);a.target='_blank';a.rel='noopener noreferrer';
@@ -966,7 +949,7 @@ function openInClaude(prompt,toastFn){
   const text=String(prompt||'').trim();if(!text)return false;
   copyText(text);
   const capped=text.length>1500?text.slice(0,1500)+'\n\n[Full prompt copied to clipboard — paste to continue]':text;
-  openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(capped),{allowApp:true}); // the Claude app should take this one
+  openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(capped));
   if(toastFn)toastFn('Prompt copied — opening Claude. Paste it if it doesn’t appear.');
   return true;
 }
@@ -2408,6 +2391,10 @@ function AaPopover({T,S,update,onClose}){
 
 /* ============================== reader ============================== */
 function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetry,findReq}){
+  useEffect(()=>{ // Home insights: time spent reading / watching
+    const iv=setInterval(()=>{if(window.InstaStats)window.InstaStats.tick(!!a.isVideo,15)},15000);
+    return()=>clearInterval(iv);
+  },[a.id]);
   const scrollRef=useRef(null),contentRef=useRef(null);
   const [aaOpen,setAaOpen]=useState(false);
   const [txOpen,setTxOpen]=useState(false); // video transcript window
@@ -6194,11 +6181,13 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const [bClosed,setBClosed]=useState(()=>{try{return new Set(JSON.parse(localStorage.getItem('insta_browser_collapsed')||'[]'))}catch(e){return new Set()}});
   const toggleB=key=>setBClosed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_browser_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const hist=Array.isArray(history)?history:[];
-  const go=(t,name)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
+  const go=(t,name,fromElsewhere)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
     let u=browserTarget(t);if(!u)return;
     if(SXa)u=SXa.navUrl(u); // no utm/fbclid, no redirect wrappers or AMP, https
     setInput(u);
-    if(window.InstaSocial&&window.InstaSocial.handles(u)){ // YouTube / Instagram / X play inside the app
+    /* sites on your "Open inside the app" list stay in the app when opened from Browse itself;
+       links sent here from other sections (headlines, routine…) open as usual */
+    if(!fromElsewhere&&SXa&&SXa.inAppSite(u)){
       if(onHistory&&!priv)onHistory(list=>recordBrowserVisit(list,u,name));
       setInApp({url:u});return;
     }
@@ -6206,7 +6195,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
     markBrowserReturn();
     openExternalUrl(u);
   };
-  useEffect(()=>{if(initialUrl)go(initialUrl)},[]);
+  useEffect(()=>{if(initialUrl)go(initialUrl,undefined,true)},[]);
   const setSiteFolder=(id,folderId)=>onSites(list=>list.map(s=>s.id===id?{...s,folderId}:s));
   const tbtn=(icon,onClick,label)=>h('button',{onClick,'aria-label':label,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},icon);
   const lblS={fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 2px 12px'};
@@ -7194,7 +7183,12 @@ function App(){
     const next=typeof mut==='function'?mut(prev):Object.assign({},prev,mut);
     dataRef.current=next;persist(next);return next;
   })},[persist]);
-  const patchArticle=useCallback((id,patch)=>{update(d=>({...d,articles:d.articles.map(a=>a.id===id?{...a,...(typeof patch==='function'?patch(a):patch)}:a)}))},[update]);
+  const patchArticle=useCallback((id,patch)=>{update(d=>({...d,articles:d.articles.map(a=>{
+    if(a.id!==id)return a;
+    const n={...a,...(typeof patch==='function'?patch(a):patch)};
+    if(window.InstaStats)window.InstaStats.diff(a,n); // Home insights: finished / watched / opened
+    return n;
+  })}))},[update]);
   const byId=id=>dataRef.current.articles.find(a=>a.id===id);
 
   const S=data.settings;
@@ -7247,7 +7241,7 @@ function App(){
     const within=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]); // never hang on a stuck step
     /* 1. download every app file fresh, past the phone's web cache (it keeps files ~10 min),
           so the reload below can't pick up an old copy */
-    const files=['./','./index.html','./app.js','./shields.js','./social.js','./browser.js','./sw.js','./manifest.json','./newspaper.html','./newspaper.js'];
+    const files=['./','./index.html','./app.js','./shields.js','./social.js','./insights.js','./browser.js','./sw.js','./manifest.json','./newspaper.html','./newspaper.js'];
     await within(Promise.all(files.map(f=>fetch(f,{cache:'reload'}).catch(()=>{}))),8000);
     /* 2. drop the service worker and the cached app shell (downloaded ad-block lists stay) */
     try{
@@ -7504,6 +7498,7 @@ function App(){
   };
   /* save a Daily Brief headline for offline reading, then open it */
   const addBriefItem=async it=>{
+    if(window.InstaStats)window.InstaStats.track('rt');
     const dup=dataRef.current.articles.find(a=>a.url===it.url);
     if(dup){openArticle(dup.id);return}
     try{
@@ -7851,6 +7846,8 @@ function App(){
         onToggleSelect:()=>toggleSelect(a.id),
         snippet:snippetFor(a)})));
   }
+  /* premium Home: insights above the library (week / month comparisons) */
+  if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100dvh',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},

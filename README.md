@@ -89,11 +89,19 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - Smart view and the agent don't use your logins, and pages go through public proxies — don't use them for anything private
 - 🇮🇳 **India mode** (Agent settings → India, on by default): Indian search results, and the agent knows you're in India. Many Indian sites (e.g. Eenadu e-paper) refuse servers abroad, which is where the free page fetchers run, so they open in Live view automatically. To open them in Smart view and with the agent, add a **Jina API key** (pages are then fetched and rendered through an Indian connection), and/or deploy `worker/feed-proxy.js` with a `KEY` secret and set the Feed proxy to `https://<worker>.workers.dev/?key=<KEY>&url=` — the worker runs in the Cloudflare data centre nearest you
 
+**Home insights** (top of Home — tap *Hide insights* to fold it away)
+- 🗓 A premium dashboard with a **Week / Month** switch: everything is compared with the **same days of last week / last month**, with ▲/▼ percentage changes
+- ✦ Hero card with reading & watching time, your **day streak**, how much is left to read (with total minutes) and to watch, plus plain-language insights (“You saved 12 items — 4 more than last week”, busiest day, top source)
+- 📊 **Trend** chart, this period against the last, day by day — Saved, Highlights or Minutes; tap a day for its numbers
+- **Reading** (saved, finished, time, words), **Videos & transcripts** (saved, watched, watch time, transcripts), **Highlights & notes** (with top sources and tags), **Routine & news** (updates caught up, routine days done, updates opened) and a **Continue** row of everything half-read
+- Saved items, highlights, notes, transcripts and routine check-offs count from their own dates, so comparisons work straight away; reading/watching time, finished and watched are tracked on the device from the day you update
+
 **YouTube, Instagram & X inside the app** (their full sites refuse to load inside other apps, so they get their own viewer)
 - ▶️ **YouTube** — any video, short or playlist link plays right in the app in YouTube’s privacy-enhanced player, with title, channel, description and **Up next**; **search YouTube**, open **channels** (latest videos) and see **Recently watched**. Save / Share / Copy link / Safari / YouTube app buttons on every video
 - 📷 **Instagram** — posts and reels open in Instagram’s own embed (with captions); public profiles show Instagram’s profile preview; paste any link with one tap
 - 𝕏 **X** — posts open in X’s embed; public profiles show recent posts; type an @username or paste a link
-- Works from the default Browse screen and the in-app browser (an **APP** badge shows in the address bar). Feeds, stories, comments and messages need your account, so they still need the real app. Turn it off in Privacy & Shields → *YouTube, Instagram & X inside the app*
+- Only when opened from the **Browse section** (the Browse screen and the in-app browser, which shows an **APP** badge). Everywhere else in the app these links open in their installed apps as usual. Feeds, stories, comments and messages need your account, so they still need the real app
+- **Privacy & Shields → Open inside the app (from Browse)** is the list of sites this applies to: remove any of them, or add others (e.g. reddit.com) — added sites open in the in-app browser instead of Safari
 
 **Shields — privacy & ad blocking** (inspired by [Cromite](https://github.com/uazo/cromite); shield icon in the address bar, or ⋯ → Privacy & Shields)
 - 🛡 **Built-in ad & tracker blocker** for Smart view: ad, tracker and tracking-pixel requests are removed before the page draws, and ad boxes, empty ad slots and cookie banners are cleaned out. A green shield with a count shows what was blocked; tap it for the numbers and the list of blocked servers
@@ -220,6 +228,7 @@ copy on `main`).
 | `app.js` | The entire application |
 | `browser.js` | In-app browser and Browser Agent |
 | `adblock-*.mobileconfig` | iOS ad-blocking DNS profiles (AdGuard, Mullvad) offered on the Browse screen |
+| `insights.js` | Home insights dashboard and the on-device activity log |
 | `social.js` | In-app viewer for YouTube, Instagram and X |
 | `shields.js` | Shields — ad & tracker blocking, filter lists, per-site settings, tracking protection |
 | `sw.js` | Service worker — offline caching |
