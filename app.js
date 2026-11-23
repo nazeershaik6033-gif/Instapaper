@@ -437,10 +437,13 @@ function openExternalUrl(url){
 }
 
 /* ============================== in-app browser helpers ============================== */
+/* the user's default search engine (Settings → Browser & Sites), kept current by App */
+const SEARCH_PREFS={engine:'google',region:'in'};
 function browserTarget(input){
   const t=String(input||'').trim();
   if(!t)return'';
-  const search='https://www.google.com/search?igu=1&q='+encodeURIComponent(t);
+  const E=window.InstaSearch&&window.InstaSearch.engines[SEARCH_PREFS.engine];
+  const search=E?E.live(t,SEARCH_PREFS.region):'https://www.google.com/search?igu=1&q='+encodeURIComponent(t);
   if(/\s/.test(t)||!t.includes('.'))return search;
   return normalizeUrl(t)||search;
 }
@@ -6499,6 +6502,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 /* ============================== settings ============================== */
 function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
+  const [engSaved,setEngSaved]=useState('');
   const fileRef=useRef(null);
   const [srcCopied,setSrcCopied]=useState(0);
   const [page,setPage]=useState('root');
@@ -6534,7 +6538,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
     h('span',{style:{display:'flex',color:T.meta}},icon),
     h('span',{style:{flex:1,fontSize:16}},label),
     h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
-  const PAGE_TITLES={homepage:'Home page',appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Logged-In Sites',data:'Syncing & Backup'};
+  const PAGE_TITLES={homepage:'Home page',appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
@@ -6553,7 +6557,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
         navRow('Behavior','behavior',Icons.bolt(20)),
         navRow('Voices','voices',Icons.headphones(20)),
         navRow('AI Assistant','ai',Icons.ai(20)),
-        navRow('Logged-In Sites','sites',Icons.globe(20)),
+        navRow('Browser & Sites','sites',Icons.globe(20)),
         navRow('Syncing & Backup','data',Icons.download(20),true)),
       head('App'),
       h(ARow,{T,icon:Icons.refresh(20),label:'Force reload to latest version',
@@ -6748,7 +6752,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
         h('div',{style:{fontSize:12,color:T.sub,marginTop:6,lineHeight:1.5}},
           (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+(txOnMac(S)?'Rough time on an Apple-silicon Mac for a 1-hour video: Tiny ~2 min \u00b7 Small ~8 min \u00b7 Medium ~20 min \u00b7 Large v3 ~45 min.':'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min.')+' Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
   }else if(page==='sites'){
+    const curEng=window.InstaSearch?window.InstaSearch.engineOf(S):'google';
+    const pickEng=e=>{set({agent:Object.assign({},S.agent||{},{engine:e})});setEngSaved(e)};
     content=h(Fragment,null,
+      head('Default search engine'),
+      h('div',{style:{padding:'0 20px'}},
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},[['google','Google'],['bing','Bing'],['duckduckgo','DuckDuckGo']].map(([id,lb])=>
+          h('button',{key:id,onClick:()=>pickEng(id),className:'act95',style:{padding:'9px 15px',borderRadius:18,fontSize:14,fontWeight:600,background:curEng===id?T.fg:T.card,color:curEng===id?T.bg:T.fg}},(curEng===id?'✓ ':'')+lb))),
+        h('div',{style:{fontSize:12.5,color:engSaved?'#2f9e44':T.sub,marginTop:8,lineHeight:1.5}},engSaved?'✓ Saved — searches now use '+({google:'Google',bing:'Bing',duckduckgo:'DuckDuckGo'}[engSaved])+'.':'Used when you type a search in the browser or ask the agent. Saves as soon as you tap.')),
       h('div',{style:{padding:'8px 20px 0'}},
         h('button',{onClick:()=>onOpenBrowser(''),className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'100%',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600}},Icons.globe(19),'Open browser')),
       head('Saved sites'),
@@ -7154,6 +7165,7 @@ function App(){
 
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
+  if(window.InstaSearch){SEARCH_PREFS.engine=window.InstaSearch.engineOf(S);SEARCH_PREFS.region=window.InstaSearch.regionOf(S)}
 
   const [scope,setScope]=useState(()=>{
     const valid=['brief','headlines','home','photos','liked','archive','notes','threads','tags','blogs'];

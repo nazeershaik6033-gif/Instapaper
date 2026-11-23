@@ -15,7 +15,7 @@
 const {Fragment,useState,useEffect,useRef,useCallback,useMemo}=React;
 
 /* ============================== config ============================== */
-const AGENT_DEFAULTS={maxSteps:25,maxActions:5,maxFailures:3,thinking:false,flash:false,highlight:true,depth:3,engine:'duckduckgo',allowed:'',instructions:'',jsRender:true,region:'in'};
+const AGENT_DEFAULTS={maxSteps:25,maxActions:5,maxFailures:3,thinking:false,flash:false,highlight:true,depth:3,engine:'google',allowed:'',instructions:'',jsRender:true,region:'in'};
 const PROVIDERS={
   gemini:{label:'Gemini',keyField:'geminiKey',keyUrl:'https://aistudio.google.com/apikey',keyHint:'AIza…',
     models:[['gemini-2.5-flash','Gemini 2.5 Flash (free tier)'],['gemini-2.5-pro','Gemini 2.5 Pro'],['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite']],def:'gemini-2.5-flash'},
@@ -325,9 +325,9 @@ async function fetchSmartPage(req,o){
 
 /* ---------- web search (DuckDuckGo → Bing → Google), rendered as a clean results page ---------- */
 const ENGINES={
-  duckduckgo:{label:'DuckDuckGo',url:(q,rg)=>'https://html.duckduckgo.com/html/?q='+encodeURIComponent(q)+(rg==='in'?'&kl=in-en':''),show:q=>'https://duckduckgo.com/?q='+encodeURIComponent(q)},
-  bing:{label:'Bing',url:(q,rg)=>'https://www.bing.com/search?setlang=en'+(rg==='in'?'&cc=IN&setmkt=en-IN':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.bing.com/search?q='+encodeURIComponent(q)},
-  google:{label:'Google',url:(q,rg)=>'https://www.google.com/search?hl=en&gbv=1'+(rg==='in'?'&gl=in':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.google.com/search?q='+encodeURIComponent(q)}
+  duckduckgo:{label:'DuckDuckGo',live:(q,rg)=>'https://duckduckgo.com/?q='+encodeURIComponent(q)+(rg==='in'?'&kl=in-en':''),url:(q,rg)=>'https://html.duckduckgo.com/html/?q='+encodeURIComponent(q)+(rg==='in'?'&kl=in-en':''),show:q=>'https://duckduckgo.com/?q='+encodeURIComponent(q)},
+  bing:{label:'Bing',live:(q,rg)=>'https://www.bing.com/search?q='+encodeURIComponent(q)+(rg==='in'?'&cc=IN':''),url:(q,rg)=>'https://www.bing.com/search?setlang=en'+(rg==='in'?'&cc=IN&setmkt=en-IN':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.bing.com/search?q='+encodeURIComponent(q)},
+  google:{label:'Google',live:(q,rg)=>'https://www.google.com/search?igu=1&q='+encodeURIComponent(q)+(rg==='in'?'&gl=in':''),url:(q,rg)=>'https://www.google.com/search?hl=en&gbv=1'+(rg==='in'?'&gl=in':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.google.com/search?q='+encodeURIComponent(q)}
 };
 function decodeResultUrl(href,engine){
   try{
@@ -373,9 +373,17 @@ function parseResults(raw,engine){
   }
   return out.slice(0,20);
 }
-function webSearch(query,engine,region){
-  const order=[engine||'duckduckgo','duckduckgo','bing','google'].filter((e,i,a)=>ENGINES[e]&&a.indexOf(e)===i);
+function webSearch(query,engine,region,strict){
+  const order=[engine||'google','duckduckgo','bing','google'].filter((e,i,a)=>ENGINES[e]&&a.indexOf(e)===i);
   const fetchOk=(u,ok)=>typeof fetchRawAcross==='function'?fetchRawAcross(u,ok,15000):fetchRawHtml(u);
+  if(strict)return(async()=>{ // the engine you chose, then the others one by one only if it fails
+    let lastErr=null;
+    for(const e of order){
+      try{const raw=await fetchOk(ENGINES[e].url(query,region),t=>parseResults(t,e).length>0);const res=parseResults(raw,e);
+        if(res.length)return{engine:e,results:res,wanted:order[0]}}catch(err){lastErr=err}
+    }
+    throw lastErr||new Error('search failed');
+  })();
   return new Promise((resolve,reject)=>{
     let done=false,left=order.length,lastErr=null;const timers=[];
     order.forEach((e,i)=>timers.push(setTimeout(async()=>{
@@ -390,7 +398,7 @@ function webSearch(query,engine,region){
     },i*1800)));
   });
 }
-function searchPageHtml(query,engine,results){
+function searchPageHtml(query,engine,results,wanted){
   const items=results.map(r=>'<div class="r"><a href="'+escapeHtml(r.url)+'"><span class="t">'+escapeHtml(r.title)+'</span></a><div class="u">'+escapeHtml(domainOf(r.url))+'</div>'+(r.snippet?'<p>'+escapeHtml(trunc(r.snippet,260))+'</p>':'')+'</div>').join('');
   return'<html><head><title>'+escapeHtml(query)+' — Search</title><style>'+
     'body{margin:0;padding:12px 16px 40px;font:15px/1.45 -apple-system,system-ui,sans-serif;color:#1c1c1e;background:#fff}'+
@@ -398,7 +406,7 @@ function searchPageHtml(query,engine,results){
     'button{font-size:15px;padding:0 14px;border:0;border-radius:10px;background:#1c1c1e;color:#fff}.via{font-size:12px;color:#8a8a90;margin:0 0 8px}'+
     '.r{padding:12px 0;border-bottom:1px solid #eee}.r a{text-decoration:none}.t{font-size:16.5px;font-weight:600;color:#1a5fb4}.u{font-size:12.5px;color:#2b8a3e;margin-top:2px;word-break:break-all}.r p{margin:5px 0 0;color:#444;font-size:14px}'+
     '</style></head><body><form data-bu-search="1" data-engine="'+escapeHtml(engine)+'"><input name="q" value="'+escapeHtml(query)+'" aria-label="Search"><button type="submit">Search</button></form>'+
-    '<div class="via">'+results.length+' results from '+escapeHtml(ENGINES[engine].label)+'</div>'+items+'</body></html>';
+    '<div class="via">'+results.length+' results from '+escapeHtml(ENGINES[engine].label)+(wanted&&wanted!==engine?' — '+escapeHtml(ENGINES[wanted].label)+' didn’t answer, so these come from '+escapeHtml(ENGINES[engine].label):'')+'</div>'+items+'</body></html>';
 }
 
 /* ============================== DOM state for the agent ============================== */
@@ -1277,13 +1285,19 @@ function AgentSettings({T,S,set,onClose}){
   const [prov,setProv]=useState(cfg.provider);
   const P=PROVIDERS[prov];
   const [show,setShow]=useState(false);
-  const setO=p=>set({agent:Object.assign({},S.agent||{},p)});
+  const [saved,setSaved]=useState(0);
+  const flash=()=>{setSaved(Date.now());setTimeout(()=>setSaved(x=>Date.now()-x>1300?0:x),1400)};
+  const setO=p=>{set({agent:Object.assign({},S.agent||{},p)});flash()};
   const models=P.models||(typeof AI_MODELS!=='undefined'?AI_MODELS:[]);
   const curModel=(S.agentModels||{})[prov]||(prov==='openrouter'?S.aiModel:prov==='gemini'?(S.geminiModel||P.def):P.def)||'';
   const setModel=m=>set({agentModels:Object.assign({},S.agentModels||{},{[prov]:m})});
-  const choose=id=>{setProv(id);set({agentProvider:id})};
-  return h(Sheet,{T,onClose,title:'Agent settings',z:97,maxH:'92%'},
+  const choose=id=>{setProv(id);set({agentProvider:id});flash()};
+  return h(Sheet,{T,onClose,title:saved?'Agent settings  ✓ Saved':'Agent settings',z:97,maxH:'92%'},
     h('div',{style:{padding:'0 20px 20px',fontFamily:UIF}},
+      h('div',{style:{fontSize:12,color:T.sub,marginTop:2}},'Changes save automatically.'),
+      SectionTitle({T,children:'Default search engine'}),
+      h('div',{style:{display:'flex',gap:8,marginTop:8}},Object.keys(ENGINES).reverse().map(e=>h(Chip,{key:e,T,active:o.engine===e,onClick:()=>setO({engine:e})},ENGINES[e].label))),
+      h('div',{style:{fontSize:12,color:T.sub,lineHeight:1.5,marginTop:8}},'Used by the address bar, the bookmarks search box, and the agent. Google opens the real Google page; Bing and DuckDuckGo show a clean results page.'),
       SectionTitle({T,children:'Model'}),
       h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'6px 0 4px'}},
         PROVIDER_ORDER.map(id=>h(Chip,{key:id,T,active:prov===id,onClick:()=>choose(id)},PROVIDERS[id].label+(id==='cloud'?' (beta)':'')))),
@@ -1323,19 +1337,17 @@ function AgentSettings({T,S,set,onClose}){
       h(Row,{T,label:'Highlight elements',sub:'Draw numbered boxes on what the agent can click'},h(Switch,{T,on:o.highlight,onChange:v=>setO({highlight:v})})),
       h(Row,{T,label:'Render JavaScript pages',sub:'Pre-render script-heavy sites remotely when they come back empty'},h(Switch,{T,on:o.jsRender,onChange:v=>setO({jsRender:v})})),
       h(Row,{T,label:'Page view depth',sub:'Screens of the page the agent sees per step'},h(Stepper,{T,value:o.depth,min:1,max:8,step:1,onChange:v=>setO({depth:v})})),
-      h('div',{style:{padding:'12px 0',borderBottom:'1px solid '+T.hair}},
-        h('div',{style:{fontSize:15,fontWeight:500,marginBottom:8}},'Search engine'),
-        h('div',{style:{display:'flex',gap:8}},Object.keys(ENGINES).map(e=>h(Chip,{key:e,T,active:o.engine===e,onClick:()=>setO({engine:e})},ENGINES[e].label)))),
       SectionTitle({T,children:'Allowed domains'}),
       h('textarea',{className:'bu-ta',value:o.allowed,onChange:e=>setO({allowed:e.target.value}),rows:2,placeholder:'Leave empty to allow all. One per line, e.g. wikipedia.org',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:Object.assign(inputS(T),{resize:'vertical',lineHeight:1.45})}),
       SectionTitle({T,children:'Custom instructions'}),
       h('textarea',{className:'bu-ta',value:o.instructions,onChange:e=>setO({instructions:e.target.value}),rows:3,placeholder:'Added to the agent’s system prompt, e.g. “Answer in Telugu” or “Prefer Indian news sites”.',style:Object.assign(inputS(T),{resize:'vertical',lineHeight:1.45})}),
       SectionTitle({T,children:'Browser'}),
       h('div',{style:{display:'flex',gap:8,marginTop:8}},
-        h(Chip,{T,active:(S.browserView||'live')==='live',onClick:()=>set({browserView:'live'})},'Open pages in Live view'),
-        h(Chip,{T,active:S.browserView==='smart',onClick:()=>set({browserView:'smart'})},'Smart view')),
+        h(Chip,{T,active:(S.browserView||'live')==='live',onClick:()=>{set({browserView:'live'});flash()}},'Open pages in Live view'),
+        h(Chip,{T,active:S.browserView==='smart',onClick:()=>{set({browserView:'smart'});flash()}},'Smart view')),
       h('div',{style:{fontSize:12,color:T.sub,lineHeight:1.5,marginTop:8}},'Live shows the real site (scripts and your logins) but some sites refuse to load inside apps. Smart always loads, without scripts, and is what the agent uses.'),
-      h('button',{onClick:()=>set({agent:{}}),style:{color:T.danger,fontSize:13.5,fontWeight:500,marginTop:18}},'Reset behavior to defaults')));
+      h('button',{onClick:()=>{set({agent:{engine:o.engine,region:o.region}});flash()},style:{color:T.danger,fontSize:13.5,fontWeight:500,marginTop:18}},'Reset behavior to defaults'),
+      h(PrimaryBtn,{T,label:'Done',onClick:onClose,style:{width:'100%',margin:'18px 0 0'}})));
 }
 
 /* ============================== step + result views ============================== */
@@ -1597,8 +1609,8 @@ function BUBrowser(props){
     let page;
     try{
       if(req.search){
-        const r=await webSearch(req.search,req.engine||oRef.current.engine,oRef.current.region);
-        page={url:ENGINES[r.engine].show(req.search),title:req.search+' — Search',srcdoc:preparePage(searchPageHtml(req.search,r.engine,r.results),'https://duckduckgo.com/').srcdoc,via:'search',engine:r.engine,count:r.results.length};
+        const r=await webSearch(req.search,req.engine||oRef.current.engine,oRef.current.region,!!req.strict);
+        page={url:ENGINES[r.engine].show(req.search),title:req.search+' — Search',srcdoc:preparePage(searchPageHtml(req.search,r.engine,r.results,r.wanted),'https://duckduckgo.com/').srcdoc,via:'search',engine:r.engine,count:r.results.length};
       }else if(req.cached){page=req.cached}
       else page=await fetchSmartPage(req,oRef.current);
     }catch(e){
@@ -1613,7 +1625,7 @@ function BUBrowser(props){
     if(lo.scrollY)pendingScroll.current[id]=lo.scrollY;
     patchTab(id,t=>{
       let hist=t.hist.slice(),hi=t.hi;
-      const entry={url:page.url,req:req.search?{search:req.search,engine:page.engine}:(req.method==='POST'?{url:req.url,method:'POST',body:req.body}:{url:page.url}),page,title:page.title};
+      const entry={url:page.url,req:req.search?{search:req.search,engine:page.engine,strict:req.strict}:(req.method==='POST'?{url:req.url,method:'POST',body:req.body}:{url:page.url}),page,title:page.title};
       if(lo.push!==false){hist=hist.slice(0,hi+1).concat([entry]);hi=hist.length-1}
       else if(hi>=0)hist[hi]=Object.assign({},hist[hi],entry);
       else{hist=[entry];hi=0}
@@ -1772,7 +1784,9 @@ function BUBrowser(props){
       if(form.hasAttribute('data-bu-search')){
         const q=squish((form.querySelector('[name=q]')||{}).value||'');
         if(!q)return{error:'Type a search query first'};
-        const r=await ctl.search(id,q,form.getAttribute('data-engine')||oRef.current.engine);
+        const t=await loadSmart(id,{search:q,engine:oRef.current.engine,strict:true},{user:true});
+        if(t&&t.error)return{error:'Search failed: '+t.error};
+        const r={count:t.count||0};
         return{text:'Searched “'+q+'” — '+r.count+' results',changed:true};
       }
       const sm=submitter&&submitter.getAttribute&&submitter.getAttribute('formmethod');
@@ -1905,7 +1919,12 @@ function BUBrowser(props){
     const tab=getTab(activeRef.current);
     const isUrl=!/\s/.test(t0)&&t0.includes('.')&&normalizeUrl(t0);
     const mode=tab.url?tab.mode:(S.browserView==='smart'?'smart':'live');
-    if(mode==='live')navLive(tab.id,isUrl?normalizeUrl(t0):browserTarget(t0));
+    if(!isUrl){
+      const eng=o.engine||'google';
+      if(eng==='google')navLive(tab.id,ENGINES.google.live(t0,o.region));
+      else loadSmart(tab.id,{search:t0,engine:eng,strict:true},{user:true});
+    }
+    else if(mode==='live')navLive(tab.id,normalizeUrl(t0));
     else if(isUrl){const u=normalizeUrl(t0);if(isSmartBlocked(u))toLiveBlocked(tab.id,u);else loadSmart(tab.id,{url:u},{user:true})}
     else loadSmart(tab.id,{search:t0,engine:o.engine},{});
     setView('page');
@@ -2078,6 +2097,7 @@ function TabsGrid({T,tabs,activeId,onPick,onClose,onNew,onDone,onCloseAll}){
 }
 
 window.InstaBrowser=BUBrowser;
+window.InstaSearch={engines:ENGINES,engineOf:S=>agentOpts(S).engine,regionOf:S=>agentOpts(S).region};
 /* exposed for tests / debugging */
 window.InstaBrowserAgent={captureState,stateText,preparePage,parseResults,searchPageHtml,normActions,parseJSONLoose,systemPrompt,allowedHost,AgentRunner,llmCall,ACTIONS};
 })();
