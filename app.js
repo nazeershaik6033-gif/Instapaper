@@ -442,8 +442,9 @@ const SEARCH_PREFS={engine:'google',region:'in'};
 function browserTarget(input){
   const t=String(input||'').trim();
   if(!t)return'';
+  const X=window.InstaShields;const AE=X&&X.cfg().addrEngine&&X.ADDR_ENGINES[X.cfg().addrEngine];
   const E=window.InstaSearch&&window.InstaSearch.engines[SEARCH_PREFS.engine];
-  const search=E?E.live(t,SEARCH_PREFS.region):'https://www.google.com/search?igu=1&q='+encodeURIComponent(t);
+  const search=AE?AE.url(t):E?E.live(t,SEARCH_PREFS.region):'https://www.google.com/search?igu=1&q='+encodeURIComponent(t);
   if(/\s/.test(t)||!t.includes('.'))return search;
   return normalizeUrl(t)||search;
 }
@@ -6165,6 +6166,11 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const [histOpen,setHistOpen]=useState(false);
   const [epaper,setEpaper]=useState(null); // {url}
   const [histQ,setHistQ]=useState('');
+  const [shSheet,setShSheet]=useState(null); // 'shields' | 'clear' — Privacy & Shields for Safari
+  const SXa=window.InstaShields;const aS=(agentProps&&agentProps.S)||{};const aUpdate=agentProps&&agentProps.update;
+  if(SXa)SXa.sync(aS);
+  const setA=p=>aUpdate&&aUpdate(d=>({...d,settings:{...d.settings,...p}}));
+  const priv=!!(SXa&&SXa.cfg().incognito);
   /* Renaming, deleting and reordering live behind this toggle, so the default
      screen is links only — no red trash can one mis-tap from your bookmarks. */
   const [editMode,setEditMode]=useState(false);
@@ -6172,9 +6178,10 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
   const toggleB=key=>setBClosed(prev=>{const n=new Set(prev);n.has(key)?n.delete(key):n.add(key);try{localStorage.setItem('insta_browser_collapsed',JSON.stringify([...n]))}catch(e){}return n});
   const hist=Array.isArray(history)?history:[];
   const go=(t,name)=>{ // hand off to the system browser — embedding goes blank on any site that blocks framing
-    const u=browserTarget(t);if(!u)return;
+    let u=browserTarget(t);if(!u)return;
+    if(SXa)u=SXa.navUrl(u); // no utm/fbclid, no redirect wrappers or AMP, https
     setInput(u);
-    if(onHistory)onHistory(list=>recordBrowserVisit(list,u,name));
+    if(onHistory&&!priv&&!(SXa&&SXa.cfg().hist==='off'))onHistory(list=>SXa?SXa.trimHistory(recordBrowserVisit(list,u,name)):recordBrowserVisit(list,u,name));
     markBrowserReturn();
     openExternalUrl(u);
   };
@@ -6416,8 +6423,12 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       q?null:h('button',{onClick:()=>setEditMode(v=>!v),'aria-label':editMode?'Done editing':'Edit bookmarks',className:'act90',
         style:{display:'flex',alignItems:'center',justifyContent:'center',minWidth:38,height:38,flexShrink:0,padding:'0 6px',
           color:editMode?T.accent:T.fg,fontSize:14,fontWeight:editMode?700:500}},editMode?'Done':Icons.pencil(19)),
+      SXa?h('button',{onClick:()=>{SXa.setG(setA,{incognito:!priv})},'aria-label':priv?'Private mode on':'Private mode off',className:'act90',
+        style:Object.assign({},iconBtnS,{width:38,color:priv?'#fff':T.fg,background:priv?'#3b2f5c':'transparent',borderRadius:10})},SXa.icons.mask(20)):null,
+      SXa?tbtn(SXa.icons.shield(20),()=>setShSheet('shields'),'Privacy & Shields'):null,
       tbtn(Icons.ai(20),()=>setInApp({url:''}),'Browser Agent'),
       tbtn(Icons.key(19),()=>setVaultOpen(true),'Passwords')),
+    priv?h('div',{style:{margin:'0 16px 4px',padding:'7px 12px',borderRadius:10,background:'#3b2f5c',color:'#fff',fontSize:12.5,lineHeight:1.4}},'Private mode — sites you open aren’t added to History.'):null,
     h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'14px 16px calc(20px + '+SAFE_B+')'}},q?searchBody:homeBody),
 
     actSite?h(Sheet,{T,onClose:()=>setActSite(null)},
@@ -6445,6 +6456,8 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
       h('button',{onClick:()=>setConfirm(null),className:'act98',style:{display:'block',width:'100%',padding:'14px',marginTop:2,color:T.fg,fontSize:15,fontWeight:500,textAlign:'center'}},'Cancel')):null,
 
     epaper?h(EpaperSheet,{T,startUrl:epaper.url,onClose:()=>setEpaper(null)}):null,
+    shSheet==='shields'&&SXa?h(SXa.ShieldSettingsSheet,{T,S:aS,set:setA,data:(agentProps&&agentProps.data)||{},update:aUpdate,safari:true,toastFn:(agentProps&&agentProps.toastFn)||(()=>{}),onClose:()=>setShSheet(null),onClearData:()=>setShSheet('clear')}):null,
+    shSheet==='clear'&&SXa?h(SXa.ClearDataSheet,{T,update:aUpdate,toastFn:(agentProps&&agentProps.toastFn)||(()=>{}),onClose:()=>setShSheet(null),onClearTabs:()=>{}}):null,
     inApp&&window.InstaBrowser?h(window.InstaBrowser,Object.assign({},agentProps,{T,sites,onSites,vault,onChangeVault,session,initialUrl:inApp.url,onClose:()=>setInApp(null)})):null,
     histOpen?h(Sheet,{T,onClose:()=>{setHistOpen(false);setHistQ('')},title:'History',maxH:'86%'},
       h('div',{style:{padding:'0 20px 8px'}},
@@ -7166,6 +7179,7 @@ function App(){
   const S=data.settings;
   const T=THEMES[S.theme]||THEMES.light;
   if(window.InstaSearch){SEARCH_PREFS.engine=window.InstaSearch.engineOf(S);SEARCH_PREFS.region=window.InstaSearch.regionOf(S)}
+  if(window.InstaShields)window.InstaShields.sync(S);
 
   const [scope,setScope]=useState(()=>{
     const valid=['brief','headlines','home','photos','liked','archive','notes','threads','tags','blogs'];

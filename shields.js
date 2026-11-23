@@ -886,7 +886,7 @@ function SiteShieldSheet({T,S,set,tab,onReload,onPick,onClose,onOpenSettings}){
 }
 
 /* global Privacy & Shields settings */
-function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData}){
+function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData,safari}){
   const {Switch,Row,Chip,SectionTitle,inputS}=UI();
   useShieldVersion();
   const g=cfg();const meta=listMeta();
@@ -900,19 +900,22 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData}){
   return h(Sheet,{T,onClose,title:'Privacy & Shields',z:97,maxH:'94%'},
     h('div',{style:Object.assign({},pad,{paddingBottom:24,fontFamily:UIF})},
       h('div',{style:small(T)},'Inspired by Cromite. Changes save automatically and apply to the next page you open.'),
-      SectionTitle({T,children:'Shields'}),
+      safari?h(SafariBlock,{T}):null,
+      safari?null:SectionTitle({T,children:'Shields'}),
+      safari?null:h(Fragment,null,
       sw('on','Block ads & trackers','Smart view removes ad, tracker and pixel requests before the page draws'),
       sw('cosmetic','Remove ad boxes & cookie banners','Cosmetic filtering of empty slots, consent walls and “open in app” bars'),
       sw('autoplay','Block autoplay','Videos and audio wait until you tap play'),
       sw('images','Load images','Turn off for a fast, text-only web'),
-      sw('dark','Force dark pages','Darken every site (Smart view)'),
+      sw('dark','Force dark pages','Darken every site (Smart view)')),
       SectionTitle({T,children:'Tracking protection'}),
       sw('cleanUrls','Strip tracking parameters','Removes utm_*, fbclid, gclid, igshid, Google’s rlz/ved… from every link'),
       sw('unwrap','Skip redirect wrappers','google.com/url, l.facebook.com, out.reddit.com… go straight to the site'),
       sw('deamp','Skip AMP pages','Opens the publisher’s real page instead of Google AMP'),
       sw('https','Upgrade to HTTPS','Every http:// link opens over https://'),
       sw('referrer','Hide where you came from','Pages don’t learn which site linked you there'),
-      sw('popups','Block pop-ups in Live view','Allow them per site from the shield; logins sometimes need them'),
+      safari?null:sw('popups','Block pop-ups in Live view','Allow them per site from the shield; logins sometimes need them'),
+      safari?null:h(Fragment,null,
       SectionTitle({T,children:'Filter lists'}),
       h('div',{style:small(T)},'Built-in list is always on. '+(total?total.toLocaleString()+' rules active.':'')),
       FILTER_LISTS.map(L=>{
@@ -926,18 +929,19 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData}){
       h('div',{style:Object.assign({},small(T),{marginBottom:6})},'Adblock Plus syntax: ',h('code',null,'||ads.example.com^'),' blocks a server, ',h('code',null,'example.com##.promo'),' hides on one site, ',h('code',null,'##.banner'),' everywhere, ',h('code',null,'@@||site.com^'),' allows.'),
       h('textarea',{value:rules,onChange:e=>setRules(e.target.value),rows:5,spellCheck:false,autoCapitalize:'none',autoCorrect:'off',placeholder:'One rule per line',
         style:Object.assign(inputS(T),{fontFamily:'ui-monospace,Menlo,monospace',fontSize:13,resize:'vertical'})}),
-      h('div',{style:{display:'flex',gap:8,marginTop:8}},h(Chip,{T,active:rules!==(S.filterRules||''),onClick:()=>{set({filterRules:rules});SH.rules=rules;scheduleBuild(20);toastFn('Filters saved')}},'Save filters')),
-      SectionTitle({T,children:'Search & new tabs'}),
+      h('div',{style:{display:'flex',gap:8,marginTop:8}},h(Chip,{T,active:rules!==(S.filterRules||''),onClick:()=>{set({filterRules:rules});SH.rules=rules;scheduleBuild(20);toastFn('Filters saved')}},'Save filters'))),
+      SectionTitle({T,children:safari?'Search':'Search & new tabs'}),
       h('div',{style:Object.assign({},small(T),{marginBottom:8})},'Address-bar search engine. “Default” uses the engine from Settings → Browser & Sites (also used by the agent).'),
       h('div',{style:{display:'flex',gap:7,flexWrap:'wrap'}},
         h(Chip,{T,active:!g.addrEngine,onClick:()=>setG(set,{addrEngine:''})},'Default'),
         Object.keys(ADDR_ENGINES).map(k=>h(Chip,{key:k,T,active:g.addrEngine===k,onClick:()=>setG(set,{addrEngine:k})},ADDR_ENGINES[k].label))),
       g.addrEngine?h('div',{style:Object.assign({},small(T),{marginTop:6})},ADDR_ENGINES[g.addrEngine].sub):null,
+      safari?null:h(Fragment,null,
       h('div',{style:{fontSize:14,fontWeight:500,margin:'14px 0 6px'}},'Home page for new tabs'),
       h('input',{value:home,onChange:e=>setHome(e.target.value),onBlur:()=>setG(set,{homeUrl:normalizeUrl(home)||''}),placeholder:'Leave empty for the start page',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inputS(T)}),
-      sw('listMode','Tab switcher as a list','Instead of the grid of cards'),
+      sw('listMode','Tab switcher as a list','Instead of the grid of cards')),
       SectionTitle({T,children:'Private browsing'}),
-      sw('incognito','Always open private tabs','New tabs aren’t remembered and don’t add to history'),
+      safari?sw('incognito','Private mode','Sites you open aren’t added to History (also the mask button)'):sw('incognito','Always open private tabs','New tabs aren’t remembered and don’t add to history'),
       h('div',{style:{fontSize:14,fontWeight:500,margin:'12px 0 6px'}},'Keep browsing history'),
       h('div',{style:{display:'flex',gap:7,flexWrap:'wrap'}},HIST_OPTS.map(([v,l])=>h(Chip,{key:v,T,active:g.hist===v,onClick:()=>{setG(set,{hist:v});update(d=>Object.assign({},d,{siteHistory:trimHistory(d.siteHistory||[])}))}},l))),
       h('div',{style:{display:'flex',gap:8,marginTop:14,flexWrap:'wrap'}},h(Chip,{T,onClick:onClearData,style:{color:T.danger}},'Clear browsing data…')),
@@ -956,6 +960,21 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData}){
           h('span',{style:{flex:1,minWidth:0,fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},k),
           h('span',{style:{fontSize:11.5,color:T.sub}},Object.keys(S.siteShields[k]).join(', ')),
           h('button',{onClick:()=>setSite(set,S,k,null),style:{color:T.danger,fontSize:13,fontWeight:600}},'Reset')))):null));
+}
+
+/* Safari is a separate app: the only way to block ads inside it from here is encrypted DNS that
+   drops ad and tracker servers for the whole phone — an iOS configuration profile */
+function SafariBlock({T}){
+  const {SectionTitle}=UI();
+  const base=location.href.replace(/[#?].*$/,'').replace(/[^/]*$/,'');
+  const btn=(label,sub,file)=>h('button',{onClick:()=>openExternalUrl(base+file),className:'act98',style:{display:'block',width:'100%',textAlign:'left',padding:'12px 14px',borderRadius:12,background:T.fg,color:T.bg,marginTop:8}},
+    h('span',{style:{display:'block',fontSize:15,fontWeight:650}},label),h('span',{style:{display:'block',fontSize:12,opacity:.75,marginTop:2}},sub));
+  return h(Fragment,null,
+    SectionTitle({T,children:'Block ads in Safari'}),
+    h('div',{style:small(T)},'Links from this screen open in Safari, which this app can’t reach inside. Install an ad-blocking DNS profile and Safari (and every other app) stops loading ad and tracker servers — the same idea as Cromite’s built-in blocker, for the whole phone.'),
+    btn('Install AdGuard DNS','Recommended · blocks ads & trackers','adblock-adguard.mobileconfig'),
+    btn('Install Mullvad DNS','Alternative · no logging','adblock-mullvad.mobileconfig'),
+    h('div',{style:Object.assign({},small(T),{marginTop:8})},'After tapping: Allow the download → open Settings → “Profile Downloaded” → Install. Turn it off or remove it any time in Settings → General → VPN & Device Management. YouTube ads aren’t blocked by DNS.'));
 }
 
 /* clear browsing data (Cromite keeps Chromium's dialog; this is the PWA version) */

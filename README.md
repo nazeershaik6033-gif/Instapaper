@@ -99,6 +99,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🕘 **History** with search, per-entry remove and a **keep history for** setting (off / 1 / 7 / 30 / 90 days / forever); **Clear browsing data** by time range (history, tabs, agent runs, site settings, Smart-view memory, filter lists)
 - 🔎 **Address-bar suggestions** from open tabs, your sites and history; extra search engines for the address bar — **DuckDuckGo Lite**, Startpage, Brave Search, Mojeek, Ecosia, Google (English, no tracking parameters)
 - 📖 **Reader view**, **View page source**, **Add to your sites**, **Bookmark all tabs**, **Use as home page** (new tabs open it), **import/export bookmarks** as HTML (works with Chrome, Safari and Firefox exports), a **list view** for the tab switcher, and a confirmation before **Close all**
+- 🧭 **On the default Browse screen too** (links that open in Safari): the 🛡 button opens Privacy & Shields with **Block ads in Safari** — one tap installs an ad-blocking DNS profile (**AdGuard DNS** or **Mullvad DNS**, encrypted DNS over HTTPS) that blocks ad and tracker servers in Safari and every app; remove it any time in Settings → General → VPN & Device Management. Links are cleaned (no tracking parameters, redirect wrappers or AMP, https) before Safari opens them, searches use your privacy search engine, and the 🕶 button turns on **Private mode** so nothing is added to History
 - Live view runs the real site, so blocking can’t reach inside it — use Smart view for ad-free pages. Cromite’s engine-level protections (fingerprinting, WebRTC, JIT…) need a real browser build and aren’t possible in a web app
 
 **Settings** are organized like the classic app: **Start → Home page**, General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup, and **App → Force reload**.
@@ -212,6 +213,7 @@ copy on `main`).
 | `index.html` | App shell, styles, fonts |
 | `app.js` | The entire application |
 | `browser.js` | In-app browser and Browser Agent |
+| `adblock-*.mobileconfig` | iOS ad-blocking DNS profiles (AdGuard, Mullvad) offered on the Browse screen |
 | `shields.js` | Shields — ad & tracker blocking, filter lists, per-site settings, tracking protection |
 | `sw.js` | Service worker — offline caching |
 | `manifest.json` | PWA manifest (icons, share target) |

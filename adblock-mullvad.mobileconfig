@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<key>PayloadContent</key>
+	<array>
+		<dict>
+			<key>DNSSettings</key>
+			<dict>
+				<key>DNSProtocol</key>
+				<string>HTTPS</string>
+				<key>ServerURL</key>
+				<string>https://adblock.dns.mullvad.net/dns-query</string>
+				<key>ServerAddresses</key>
+				<array><string>194.242.2.3</string><string>2a07:e340::3</string></array>
+			</dict>
+			<key>PayloadDescription</key>
+			<string>Blocks ads and trackers in Safari and every app using Mullvad DNS (encrypted DNS over HTTPS, no logging). Remove it any time in Settings → General → VPN &amp; Device Management.</string>
+			<key>PayloadDisplayName</key>
+			<string>Ad blocking DNS (Mullvad)</string>
+			<key>PayloadIdentifier</key>
+			<string>com.apple.dnsSettings.managed.4c2d28c0-f0de-4be1-9d9b-c3498e209a75</string>
+			<key>PayloadType</key>
+			<string>com.apple.dnsSettings.managed</string>
+			<key>PayloadUUID</key>
+			<string>76E72B6A-4303-43F1-97BC-D2F468A7F984</string>
+			<key>PayloadVersion</key>
+			<integer>1</integer>
+			<key>ProhibitDisablement</key>
+			<false/>
+		</dict>
+	</array>
+	<key>PayloadDescription</key>
+	<string>Blocks ads and trackers in Safari and every app using Mullvad DNS (encrypted DNS over HTTPS, no logging). Remove it any time in Settings → General → VPN &amp; Device Management.</string>
+	<key>PayloadDisplayName</key>
+	<string>Ad blocking DNS (Mullvad)</string>
+	<key>PayloadIdentifier</key>
+	<string>app.instapaper.dns.mullvad</string>
+	<key>PayloadRemovalDisallowed</key>
+	<false/>
+	<key>PayloadType</key>
+	<string>Configuration</string>
+	<key>PayloadUUID</key>
+	<string>969935BE-9E28-4461-A53B-17CA09D83921</string>
+	<key>PayloadVersion</key>
+	<integer>1</integer>
+</dict>
+</plist>
