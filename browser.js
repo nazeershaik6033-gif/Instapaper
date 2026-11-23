@@ -117,12 +117,13 @@ async function proxyPost(url,body){
 /* Jina Reader renders the page in a real headless browser and hands back the resulting HTML —
    this is how JavaScript-built sites still show content in Smart view */
 async function fetchRendered(url){
-  const res=await fetchWithTimeout('https://r.jina.ai/'+url,{headers:{'X-Return-Format':'html'}},35000);
+  const res=await fetchWithTimeout('https://r.jina.ai/'+url,{headers:{'X-Return-Format':'html'}},25000);
   if(!res.ok)throw new Error('renderer '+res.status);
   const t=await res.text();
   if(!t||t.length<150)throw new Error('empty render');
   return t;
 }
+const BOT_RX=/just a moment|attention required|access denied|are you a robot|verify you are (a )?human|checking your browser|enable javascript and cookies|pardon our interruption|request blocked|unusual traffic|captcha/i;
 const STRIP_SEL='script,iframe,frame,frameset,object,embed,applet,base,portal,meta[http-equiv],link[rel~="preload"],link[rel~="modulepreload"],link[rel~="prefetch"],link[rel~="prerender"],link[rel~="manifest"],link[rel~="serviceworker"]';
 function preparePage(raw,url){
   const doc=new DOMParser().parseFromString(raw,'text/html');
@@ -139,6 +140,9 @@ function preparePage(raw,url){
       f.replaceWith(a);
     }
   });
+  doc.querySelectorAll('link[rel~="preload"][as="style"]').forEach(l=>{l.setAttribute('rel','stylesheet');l.removeAttribute('as')});
+  doc.querySelectorAll('link[rel~="stylesheet"][media="print"][onload],link[rel~="stylesheet"][media="none"][onload]').forEach(l=>l.setAttribute('media','all'));
+  const blocked=BOT_RX.test(squish(doc.title||''))||BOT_RX.test(squish((doc.body&&doc.body.textContent)||'').slice(0,600));
   doc.querySelectorAll(STRIP_SEL).forEach(n=>n.remove());
   /* no scripts run here, so <noscript> fallbacks are exactly what we want */
   doc.querySelectorAll('noscript').forEach(n=>{const f=doc.createDocumentFragment();while(n.firstChild)f.appendChild(n.firstChild);n.replaceWith(f)});
@@ -167,7 +171,8 @@ function preparePage(raw,url){
   const base=doc.createElement('base');base.setAttribute('href',url);base.setAttribute('target','_self');head.prepend(base);
   const cs=doc.createElement('meta');cs.setAttribute('charset','utf-8');head.prepend(cs);
   const st=doc.createElement('style');
-  st.textContent='html{-webkit-text-size-adjust:100%}img,video{max-width:100%;height:auto}';
+  st.textContent='html{-webkit-text-size-adjust:100%}img,video{max-width:100%;height:auto}'+
+    '.async-hide,[data-aos],.aos-init,.lazyload,.lazyloading,.lazyloaded,.wow,.animate__animated,.fade-in,.fadeIn,.reveal,.js-reveal,[data-animate],[data-scroll]{opacity:1!important;visibility:visible!important;transform:none!important;animation:none!important}';
   head.appendChild(st);
   let textLen=0;
   if(doc.body){
@@ -175,7 +180,53 @@ function preparePage(raw,url){
     while((n=w.nextNode())){const p=n.parentNode&&n.parentNode.nodeName;if(p==='STYLE'||p==='TEMPLATE')continue;textLen+=squish(n.nodeValue).length;if(textLen>4000)break}
   }
   const title=squish(doc.title||'');
-  return{srcdoc:'<!DOCTYPE html>'+doc.documentElement.outerHTML,title,textLen,thin:textLen<250,hadScripts,refresh};
+  return{srcdoc:'<!DOCTYPE html>'+doc.documentElement.outerHTML,title,textLen,thin:textLen<250||blocked,blocked,hadScripts,refresh};
+}
+function revealPage(doc,win){
+  try{
+    const fix=(el,prop,val)=>{try{el.style.setProperty(prop,val,'important')}catch(e){}};
+    const vw=win.innerWidth||390,vh=win.innerHeight||700;
+    [doc.documentElement,doc.body].forEach((el,i)=>{
+      if(!el)return;const cs=win.getComputedStyle(el);
+      if(cs.display==='none')fix(el,'display','block');
+      if(cs.visibility==='hidden')fix(el,'visibility','visible');
+      if(parseFloat(cs.opacity)<0.1)fix(el,'opacity','1');
+      if(cs.overflowY==='hidden'||cs.overflow==='hidden')fix(el,'overflow-y',i===0?'auto':'visible'); // scroll locks left by loaders/modals
+      if(i===1&&/fixed/.test(cs.position))fix(el,'position','static');
+    });
+    const RX=/preload|loader|loading|spinner|overlay|modal|backdrop|consent|cookie|paywall|gdpr|splash|interstitial|popup|wall/i;
+    const all=doc.body?doc.body.getElementsByTagName('*'):[];
+    for(let i=0;i<all.length&&i<6000;i++){
+      const el=all[i];if(el.hasAttribute('data-bu-ov'))continue;
+      const cs=win.getComputedStyle(el);
+      if(cs.display==='none')continue;
+      if(cs.position==='fixed'){
+        const r=el.getBoundingClientRect();
+        if(r.width>=vw*0.85&&r.height>=vh*0.7){
+          const t=squish(el.textContent).length;const tag=(el.id||'')+' '+(el.getAttribute('class')||'');
+          if(t<150||(RX.test(tag)&&t<2500))fix(el,'display','none');
+        }
+      }else if(cs.opacity==='0'&&cs.position!=='absolute'&&squish(el.textContent).length>30)fix(el,'opacity','1');
+    }
+  }catch(e){}
+}
+function visibleTextLen(doc,win){
+  if(!doc||!doc.body)return 0;
+  const w=doc.createTreeWalker(doc.body,NodeFilter.SHOW_TEXT);let n,len=0,c=0;const seen=new Map();
+  while((n=w.nextNode())&&c++<8000){
+    const v=n.nodeValue;if(!v||!/\S/.test(v))continue;
+    const p=n.parentElement;if(!p||SKIP_TAGS[p.tagName]||p.closest('[data-bu-ov]'))continue;
+    let vis=seen.get(p);
+    if(vis==null){vis=elVisible(p,win);if(vis){const r=p.getBoundingClientRect();vis=r.width>0&&r.height>0}seen.set(p,vis)}
+    if(vis){len+=v.trim().length;if(len>600)return len}
+  }
+  return len;
+}
+function looksBlank(doc,win){
+  if(!doc||!doc.body)return true;
+  if(visibleTextLen(doc,win)>=150)return false;
+  let imgs=0;doc.querySelectorAll('img').forEach(im=>{if(imgs<3){const r=im.getBoundingClientRect();if(r.width>120&&r.height>80&&elVisible(im,win))imgs++}});
+  return imgs<2;
 }
 function readerShell(title,html,url){
   return'<html><head><title>'+escapeHtml(title||'')+'</title><style>body{margin:0;padding:18px 18px 40px;font:17px/1.6 Georgia,serif;color:#1c1c1e;background:#fff}h1{font:700 24px/1.25 -apple-system,system-ui,sans-serif;margin:0 0 6px}.src{font:13px -apple-system,system-ui,sans-serif;color:#888;margin-bottom:18px}img{max-width:100%;height:auto;border-radius:6px}a{color:#1c7ed6}pre{white-space:pre-wrap}</style></head><body><h1>'+escapeHtml(title||domainOf(url))+'</h1><div class="src">Reader view · '+escapeHtml(domainOf(url))+'</div><article>'+html+'</article></body></html>';
@@ -204,6 +255,12 @@ function raceLoad(url,o){
       fetchRendered(url).then(t=>{jPrep=preparePage(t,url)}).catch(e=>{if(!err)err=e}).then(()=>{jDone=true;check()})};
     fetchRawHtml(url).then(raw=>{pPrep=looksLikeHtml(raw)?preparePage(raw,url):{text:raw}}).catch(e=>{err=e}).then(()=>{pDone=true;check()});
     timer=setTimeout(startJ,2500);
+    setTimeout(()=>{ // never let one page load hang the agent: take the best page so far
+      if(done)return;
+      if(pPrep&&pPrep.text!=null)return fin({text:pPrep.text});
+      const best=[pPrep&&{prep:pPrep,via:'proxy'},jPrep&&{prep:jPrep,via:'rendered'}].filter(Boolean).sort((a,b)=>b.prep.textLen-a.prep.textLen)[0];
+      fin(best||{});
+    },20000);
   });
 }
 async function fetchSmartPage(req,o){
@@ -767,6 +824,11 @@ class AgentRunner{
       if(this.stopped)break;
       this.prevSigs=state.sigs||null;this.prevUrl=state.url;this.lastState=state;
       const last=taskSteps>=o.maxSteps;
+      const sig=s=>s.url+'|'+(s.results||[]).filter(r=>r.name!=='note').map(r=>r.label).join(',');
+      const rec=this.realSteps().filter(s=>!s.error).slice(-3);
+      this.nudge='';
+      if(rec.length>=2&&sig(rec[rec.length-1])===sig(rec[rec.length-2]))this.nudge='You repeated the same action on the same page and nothing changed. Change approach NOW: a different element, go_back, another result or site, a new search — or call done with what you have.';
+      else if(state.blank&&rec.length&&rec[rec.length-1].url===state.url)this.nudge='You are still on a blank page. Leave it now: go_back, open another search result, or try a different site.';
       const msgs=this.messages(state,stepNo,last);
       this.status('Thinking…');
       let out=null,raw='',err=null;
@@ -866,6 +928,7 @@ class AgentRunner{
     const prev=real[real.length-1];
     const reads=prev?(prev.results||[]).filter(r=>r.readOnce):[];
     if(reads.length)msg+='\n<read_state>\n'+reads.map(r=>r.readOnce).join('\n\n').slice(0,40000)+'\n</read_state>\n';
+    if(this.nudge)msg+='\n<sys>'+this.nudge+'</sys>\n';
     if(last)msg+='\n<sys>This is your LAST step. You must call done now — report everything you found, set success=false if incomplete.</sys>\n';
     return[{role:'system',content:sysP},{role:'user',content:msg}];
   }
@@ -1507,11 +1570,36 @@ function BUBrowser(props){
       else{hist=[entry];hi=0}
       /* keep cached page HTML only for recent entries */
       hist.forEach((h2,i)=>{if(Math.abs(i-hi)>3&&h2.page)hist[i]=Object.assign({},h2,{page:null})});
-      return{srcdoc:page.srcdoc,title:page.title,url:page.url,via:page.via,loading:false,error:'',hist,hi};
+      return{srcdoc:page.srcdoc,title:page.title,url:page.url,via:page.via,loading:false,error:'',blank:false,note:'',hist,hi};
     });
     await loaded;
+    if(!req.search&&req.method!=='POST'&&!req.cached)await rescueBlank(id,seq,page);
     const t=getTab(id);
     return Object.assign({},t,{count:page.count,engine:page.engine});
+  }
+  async function rescueBlank(id,seq,page){
+    const chain=[];
+    if(page.via!=='rendered'&&page.via!=='reader'&&page.via!=='text'&&oRef.current.jsRender!==false)chain.push('rendered');
+    if(page.via!=='reader'&&page.via!=='text')chain.push('reader');
+    const frameDoc=()=>{const fr=frames.current[id];try{return fr&&fr.contentDocument&&{doc:fr.contentDocument,win:fr.contentWindow}}catch(e){return null}};
+    for(const kind of chain){
+      if(seqs.current[id]!==seq)return;
+      const f=frameDoc();if(!f||!looksBlank(f.doc,f.win))break;
+      patchTab(id,{loading:true,note:'Page looks blank here — loading a '+(kind==='rendered'?'fully rendered':'reader')+' copy…'});
+      let alt=null;
+      try{
+        if(kind==='rendered'){const p=preparePage(await fetchRendered(page.url),page.url);if(p.textLen>=150&&!p.blocked)alt={srcdoc:p.srcdoc,title:p.title||page.title,via:'rendered'}}
+        else{const rd=await fetchViaJina(page.url);alt={srcdoc:preparePage(readerShell(rd.title,rd.html,page.url),page.url).srcdoc,title:rd.title||page.title,via:'reader'}}
+      }catch(e){}
+      if(seqs.current[id]!==seq)return;
+      if(!alt){patchTab(id,{loading:false,note:''});continue}
+      const l2=new Promise(res=>{waiters.current[id]=res;setTimeout(res,9000)});
+      patchTab(id,t=>{const hist=t.hist.slice();if(t.hi>=0&&hist[t.hi])hist[t.hi]=Object.assign({},hist[t.hi],{page:Object.assign({},page,alt)});return{srcdoc:alt.srcdoc,title:alt.title,via:alt.via,loading:false,note:'',hist}});
+      await l2;
+    }
+    if(seqs.current[id]!==seq)return;
+    const f=frameDoc();
+    patchTab(id,{loading:false,note:'',blank:!!(f&&looksBlank(f.doc,f.win))});
   }
   function navLive(id,url,push){
     patchTab(id,t=>{
@@ -1545,6 +1633,7 @@ function BUBrowser(props){
       if(e.key!=='Enter')return;const t=e.target;
       if(t&&t.tagName==='INPUT'&&t.form&&!/^(checkbox|radio|button|submit|reset|file)$/i.test(t.type||'')){e.preventDefault();ctl.submit(id,t.form,defaultSubmitter(t.form));try{t.blur()}catch(err){}}
     },true);
+    revealPage(doc,win);
     const y=pendingScroll.current[id];if(y){delete pendingScroll.current[id];try{win.scrollTo(0,y)}catch(e){}}
     const w=waiters.current[id];if(w){delete waiters.current[id];w()}
   }
@@ -1677,7 +1766,7 @@ function BUBrowser(props){
     async agentState(ao,prevSigs,prevUrl){
       let t=getTab(activeRef.current);
       if(t&&t.url&&!t.loading&&(t.mode==='live'||t.stale||(!t.srcdoc&&!t.error))){const e=t.hist[t.hi];await loadSmart(t.id,(e&&e.req&&!e.req.search?e.req:{url:t.url}),{push:false});}
-      for(let i=0;i<120&&(t=getTab(activeRef.current))&&t.loading;i++)await sleep(250);
+      for(let i=0;i<240&&(t=getTab(activeRef.current))&&t.loading;i++)await sleep(250);
       t=getTab(activeRef.current);
       await sleep(40);
       const tabsText='Current tab: '+(t?t.n:'?')+'\nAvailable tabs:\n'+tabsRef.current.map(x=>'Tab '+x.n+': '+(x.url||'about:blank')+(x.title?' - '+trunc(x.title,60):'')).join('\n');
@@ -1690,9 +1779,12 @@ function BUBrowser(props){
       const cap=captureState(doc,win,{depth:ao.depth,prevSigs:prevUrl===t.url?prevSigs:null,url:t.url});
       if(ao.highlight)drawOverlay(doc,win,cap.els);
       const via=t.via==='rendered'?' (pre-rendered with JavaScript)':t.via==='reader'?' (reader text only — page could not be loaded directly)':'';
-      return{url:t.url,title:t.title,tabsText,
+      const blank=looksBlank(doc,win);
+      let dom=stateText(cap);
+      if(blank)dom='⚠ THIS PAGE IS BLANK in this browser (it needs JavaScript, blocks automated browsers, or has no content). A rendered copy and a reader copy were already tried. Do NOT wait, scroll or refresh — go_back and use another result, go_to_url a different site, or search again with other words.\n'+dom;
+      return{url:t.url,title:t.title,tabsText,blank,
         pageInfo:'Current page: '+t.url+(t.title?' — '+trunc(t.title,80):'')+via+'\nPage info: '+cap.vw+'x'+cap.vh+'px viewport, '+cap.total+'px total height, '+(cap.above/cap.vh).toFixed(1)+' pages above, '+(cap.below/cap.vh).toFixed(1)+' pages below',
-        dom:stateText(cap),els:cap.els,sigs:cap.sigs};
+        dom,els:cap.els,sigs:cap.sigs};
     }
   }),[]);
 
@@ -1816,6 +1908,12 @@ function BUBrowser(props){
       return h('div',{key:t.id,style:{position:'absolute',inset:0,visibility:isA&&view==='page'?'visible':'hidden',zIndex:isA?2:1}},
         body,
         t.loading?h('div',{className:'bu-prog'},h('i',{style:{background:T.accent}})):null,
+        t.note?h('div',{style:{position:'absolute',top:10,left:12,right:12,zIndex:7,display:'flex',justifyContent:'center',pointerEvents:'none'}},
+          h('div',{style:{background:'rgba(28,28,30,.86)',color:'#fff',fontSize:12.5,fontWeight:500,padding:'7px 13px',borderRadius:16,display:'flex',alignItems:'center',gap:8}},h(Spinner,{T,size:12}),t.note)):null,
+        t.blank&&!t.loading&&t.mode==='smart'&&!t.error?h('div',{style:{position:'absolute',left:12,right:12,bottom:12,zIndex:7,background:T.sheet,color:T.fg,border:'1px solid '+T.hair,borderRadius:14,boxShadow:'0 6px 24px rgba(0,0,0,.18)',padding:'12px 14px'}},
+          h('div',{style:{fontSize:14,fontWeight:600}},'This page can’t be shown in Smart view'),
+          h('div',{style:{fontSize:12.5,color:T.sub,margin:'3px 0 10px',lineHeight:1.45}},'It needs its own JavaScript or blocks automated browsers.'),
+          h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},h(Chip,{T,onClick:()=>navLive(t.id,t.url,false)},'Live view'),h(Chip,{T,onClick:()=>openExternalUrl(t.url)},'Open in Safari ↗'),h(Chip,{T,onClick:()=>ctl.back(t.id)},'Go back'))):null,
         t.loading&&!t.srcdoc&&t.mode==='smart'?h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:12,background:T.bg,color:T.sub,fontSize:13.5}},h(Spinner,{T,size:22}),'Loading '+(domainOf(t.url)||'page')+'…'):null,
         t.error&&t.url?h('div',{style:{position:'absolute',inset:0,display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:10,padding:28,background:T.bg,color:T.fg,textAlign:'center'}},
           h('div',{style:{fontSize:17,fontWeight:600}},'Couldn’t open this page'),
