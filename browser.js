@@ -15,7 +15,7 @@
 const {Fragment,useState,useEffect,useRef,useCallback,useMemo}=React;
 
 /* ============================== config ============================== */
-const AGENT_DEFAULTS={maxSteps:25,maxActions:5,maxFailures:3,thinking:false,flash:false,highlight:true,depth:3,engine:'duckduckgo',allowed:'',instructions:'',jsRender:true};
+const AGENT_DEFAULTS={maxSteps:25,maxActions:5,maxFailures:3,thinking:false,flash:false,highlight:true,depth:3,engine:'duckduckgo',allowed:'',instructions:'',jsRender:true,region:'in'};
 const PROVIDERS={
   gemini:{label:'Gemini',keyField:'geminiKey',keyUrl:'https://aistudio.google.com/apikey',keyHint:'AIza…',
     models:[['gemini-2.5-flash','Gemini 2.5 Flash (free tier)'],['gemini-2.5-pro','Gemini 2.5 Pro'],['gemini-2.5-flash-lite','Gemini 2.5 Flash-Lite']],def:'gemini-2.5-flash'},
@@ -38,7 +38,17 @@ const EXAMPLES=[
   'Find 3 well-reviewed vegetarian recipes for dinner and save them to my reading list'
 ];
 
-function agentOpts(S){return Object.assign({},AGENT_DEFAULTS,S.agent||{})}
+function agentOpts(S){return Object.assign({},AGENT_DEFAULTS,S.agent||{},{jinaKey:String(S.jinaKey||'').trim()})}
+/* India mode: with a Jina key, pages are fetched + rendered through an Indian connection (sites like
+   epaper.eenadu.net answer 403 to servers abroad, which is what the public proxies are) */
+function jinaHeaders(o,extra){
+  const hd=Object.assign({},extra||{});
+  if(o&&o.jinaKey){hd['Authorization']='Bearer '+o.jinaKey;if(o.region==='in')hd['X-Proxy']='in'}
+  if(o&&o.region==='in')hd['X-Locale']='en-IN';
+  return hd;
+}
+const ownProxy=()=>{try{return typeof getFeedProxy==='function'?getFeedProxy():''}catch(e){return''}};
+const ownProxyUrl=(base,u)=>base+(/[?&=]$/.test(base)?'':(base.includes('?')?'&url=':'?url='))+encodeURIComponent(u);
 function agentProvider(S){
   if(S.agentProvider&&PROVIDERS[S.agentProvider])return S.agentProvider;
   if(S.geminiKey)return'gemini';
@@ -109,15 +119,17 @@ const waitVisible=()=>document.visibilityState==='visible'?Promise.resolve():new
 
 /* ============================== page loading (Smart view) ============================== */
 async function proxyPost(url,body){
-  /* only corsproxy.io passes POST bodies through */
+  const own=ownProxy();
+  if(own){try{const r=await fetchWithTimeout(ownProxyUrl(own,url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body},25000);if(r.ok)return r.text()}catch(e){}}
+  /* of the public proxies only corsproxy.io passes POST bodies through */
   const res=await fetchWithTimeout('https://corsproxy.io/?url='+encodeURIComponent(url),{method:'POST',headers:{'Content-Type':'application/x-www-form-urlencoded'},body},25000);
   if(!res.ok)throw new Error('form post failed ('+res.status+')');
   return res.text();
 }
 /* Jina Reader renders the page in a real headless browser and hands back the resulting HTML —
    this is how JavaScript-built sites still show content in Smart view */
-async function fetchRendered(url){
-  const res=await fetchWithTimeout('https://r.jina.ai/'+url,{headers:{'X-Return-Format':'html'}},25000);
+async function fetchRendered(url,o){
+  const res=await fetchWithTimeout('https://r.jina.ai/'+url,{headers:jinaHeaders(o,{'X-Return-Format':'html'})},o&&o.jinaKey?40000:25000);
   if(!res.ok)throw new Error('renderer '+res.status);
   const t=await res.text();
   if(!t||t.length<150)throw new Error('empty render');
@@ -240,6 +252,17 @@ function looksBlank(doc,win){
   let imgs=0;doc.querySelectorAll('img').forEach(im=>{if(imgs<3){const r=im.getBoundingClientRect();if(r.width>120&&r.height>80&&elVisible(im,win))imgs++}});
   return imgs<2;
 }
+async function fetchReader(url,o){
+  if(!o||!o.jinaKey)return fetchViaJina(url);
+  const res=await fetchWithTimeout('https://r.jina.ai/'+url,{headers:jinaHeaders(o)},40000);
+  if(!res.ok)throw new Error('reader '+res.status);
+  const body=await res.text();
+  let title='',md=body;const idx=body.indexOf('Markdown Content:');
+  if(idx>-1){const tm=body.slice(0,idx).match(/^Title:\s*(.+)$/m);if(tm)title=tm[1].trim();md=body.slice(idx+17).replace(/^\n+/,'')}
+  const html=mdToHtml(md);
+  if(htmlToText(html).length<120)throw new Error('reader returned too little text');
+  return{title,html};
+}
 function readerShell(title,html,url){
   return'<html><head><title>'+escapeHtml(title||'')+'</title><style>body{margin:0;padding:18px 18px 40px;font:17px/1.6 Georgia,serif;color:#1c1c1e;background:#fff}h1{font:700 24px/1.25 -apple-system,system-ui,sans-serif;margin:0 0 6px}.src{font:13px -apple-system,system-ui,sans-serif;color:#888;margin-bottom:18px}img{max-width:100%;height:auto;border-radius:6px}a{color:#1c7ed6}pre{white-space:pre-wrap}</style></head><body><h1>'+escapeHtml(title||domainOf(url))+'</h1><div class="src">Reader view · '+escapeHtml(domainOf(url))+'</div><article>'+html+'</article></body></html>';
 }
@@ -264,9 +287,9 @@ function raceLoad(url,o){
       fin(best||{});
     };
     const startJ=()=>{if(jStarted||done)return;jStarted=true;
-      fetchRendered(url).then(t=>{jPrep=preparePage(t,url)}).catch(e=>{if(!err)err=e}).then(()=>{jDone=true;check()})};
+      fetchRendered(url,o).then(t=>{jPrep=preparePage(t,url)}).catch(e=>{if(!err)err=e}).then(()=>{jDone=true;check()})};
     fetchRawHtml(url).then(raw=>{pPrep=looksLikeHtml(raw)?preparePage(raw,url):{text:raw}}).catch(e=>{err=e}).then(()=>{pDone=true;check()});
-    timer=setTimeout(startJ,2500);
+    timer=setTimeout(startJ,o.jinaKey?0:2500); // with a key the Indian-connection renderer races from the start
     setTimeout(()=>{ // never let one page load hang the agent: take the best page so far
       if(done)return;
       if(pPrep&&pPrep.text!=null)return fin({text:pPrep.text});
@@ -278,7 +301,7 @@ function raceLoad(url,o){
 async function fetchSmartPage(req,o){
   const url=req.url;
   if(/\.pdf(\?|#|$)/i.test(url)){
-    const rd=await fetchViaJina(url);
+    const rd=await fetchReader(url,o);
     const p=preparePage(readerShell(rd.title,rd.html,url),url);
     return{url,title:rd.title||domainOf(url),srcdoc:p.srcdoc,via:'reader'};
   }
@@ -294,7 +317,7 @@ async function fetchSmartPage(req,o){
     if(prep&&via==='proxy'&&prep.refresh&&prep.thin&&prep.refresh!==url&&!req._hop)return fetchSmartPage({url:prep.refresh,_hop:1},o);
   }
   if(!prep&&req.method!=='POST'){
-    try{const rd=await fetchViaJina(url);prep=preparePage(readerShell(rd.title,rd.html,url),url);via='reader'}catch(e){}
+    try{const rd=await fetchReader(url,o);prep=preparePage(readerShell(rd.title,rd.html,url),url);via='reader'}catch(e){}
   }
   if(!prep)throw err||new Error('could not load the page');
   return{url,title:prep.title||domainOf(url),srcdoc:prep.srcdoc,via};
@@ -302,9 +325,9 @@ async function fetchSmartPage(req,o){
 
 /* ---------- web search (DuckDuckGo → Bing → Google), rendered as a clean results page ---------- */
 const ENGINES={
-  duckduckgo:{label:'DuckDuckGo',url:q=>'https://html.duckduckgo.com/html/?q='+encodeURIComponent(q),show:q=>'https://duckduckgo.com/?q='+encodeURIComponent(q)},
-  bing:{label:'Bing',url:q=>'https://www.bing.com/search?setlang=en&q='+encodeURIComponent(q),show:q=>'https://www.bing.com/search?q='+encodeURIComponent(q)},
-  google:{label:'Google',url:q=>'https://www.google.com/search?hl=en&gbv=1&q='+encodeURIComponent(q),show:q=>'https://www.google.com/search?q='+encodeURIComponent(q)}
+  duckduckgo:{label:'DuckDuckGo',url:(q,rg)=>'https://html.duckduckgo.com/html/?q='+encodeURIComponent(q)+(rg==='in'?'&kl=in-en':''),show:q=>'https://duckduckgo.com/?q='+encodeURIComponent(q)},
+  bing:{label:'Bing',url:(q,rg)=>'https://www.bing.com/search?setlang=en'+(rg==='in'?'&cc=IN&setmkt=en-IN':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.bing.com/search?q='+encodeURIComponent(q)},
+  google:{label:'Google',url:(q,rg)=>'https://www.google.com/search?hl=en&gbv=1'+(rg==='in'?'&gl=in':'')+'&q='+encodeURIComponent(q),show:q=>'https://www.google.com/search?q='+encodeURIComponent(q)}
 };
 function decodeResultUrl(href,engine){
   try{
@@ -350,7 +373,7 @@ function parseResults(raw,engine){
   }
   return out.slice(0,20);
 }
-function webSearch(query,engine){
+function webSearch(query,engine,region){
   const order=[engine||'duckduckgo','duckduckgo','bing','google'].filter((e,i,a)=>ENGINES[e]&&a.indexOf(e)===i);
   const fetchOk=(u,ok)=>typeof fetchRawAcross==='function'?fetchRawAcross(u,ok,15000):fetchRawHtml(u);
   return new Promise((resolve,reject)=>{
@@ -358,7 +381,7 @@ function webSearch(query,engine){
     order.forEach((e,i)=>timers.push(setTimeout(async()=>{
       if(done){left--;return}
       try{
-        const raw=await fetchOk(ENGINES[e].url(query),t=>parseResults(t,e).length>0);
+        const raw=await fetchOk(ENGINES[e].url(query,region),t=>parseResults(t,e).length>0);
         const res=parseResults(raw,e);
         if(res.length&&!done){done=true;timers.forEach(clearTimeout);resolve({engine:e,results:res});return}
         lastErr=new Error(ENGINES[e].label+' returned no results');
@@ -789,6 +812,7 @@ function systemPrompt(o,opts){
   '<available_actions>\n'+acts+'\n</available_actions>\n\n'+
   '<output>\nRespond with ONE valid JSON object and nothing else — no markdown fences, no text outside JSON. Format:\n'+shape+'\nThe action list must never be empty. Example action list: [{"input_text": {"index": 3, "text": "iphone 17"}}, {"click": {"index": 4}}]\n</output>';
   if(opts.allowed&&String(opts.allowed).trim())s+='\n\n<allowed_domains>\nYou may only visit these domains (and their subdomains): '+String(opts.allowed).split(/[\s,]+/).filter(Boolean).join(', ')+'\n</allowed_domains>';
+  if(opts.region==='in')s+='\n\n<user_location>\nThe user is in India. Prefer Indian sources, prices in ₹ and Indian dates/time (IST) when relevant.\n</user_location>';
   if(opts.instructions&&String(opts.instructions).trim())s+='\n\n<user_instructions>\n'+String(opts.instructions).trim()+'\n</user_instructions>';
   return s;
 }
@@ -1279,6 +1303,17 @@ function AgentSettings({T,S,set,onClose}){
         h('input',{value:curModel,onChange:e=>setModel(e.target.value.trim()),placeholder:'or type any model id',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inputS(T)})):null,
       h('div',{style:{fontSize:11.5,color:T.sub,marginTop:8,lineHeight:1.5}},'Keys stay on this device (and in your backup file). Requests go straight from your iPhone to the provider.'),
 
+      SectionTitle({T,children:'India'}),
+      h('div',{style:{display:'flex',gap:8,marginTop:8}},
+        h(Chip,{T,active:o.region==='in',onClick:()=>setO({region:'in'})},'🇮🇳 India'),
+        h(Chip,{T,active:o.region!=='in',onClick:()=>setO({region:'global'})},'Global')),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,margin:'10px 0 8px'}},'Many Indian sites (Eenadu e-paper and others) refuse servers outside India, which is where Smart view’s free page fetchers run. Add a Jina API key and pages are fetched and rendered through an Indian connection instead.'),
+      h('div',{style:{display:'flex',gap:8,alignItems:'center'}},
+        h('input',{type:show?'text':'password',value:S.jinaKey||'',onChange:e=>{set({jinaKey:e.target.value.trim()});try{localStorage.removeItem('insta_smart_blocked')}catch(err){}},placeholder:'Jina API key (jina_…)',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inputS(T)})),
+      h('button',{onClick:()=>openExternalUrl('https://jina.ai/reader/#apiform'),style:{color:T.accent,fontSize:13,fontWeight:500,marginTop:8}},'Get a Jina key ↗'),
+      h('div',{style:{fontSize:12,color:T.sub,lineHeight:1.5,marginTop:8}},
+        ownProxy()?'✓ Your own feed proxy is set, so the browser uses it first. Deployed from worker/feed-proxy.js with a KEY, it can open any site from Cloudflare near you.'
+        :'Optional: deploy worker/feed-proxy.js (free Cloudflare Worker, steps inside) and set it in Settings → Behavior → Feed proxy. It runs near you, in India.'),
       SectionTitle({T,children:'Behavior'}),
       h(Row,{T,label:'Max steps',sub:'Per task; the agent must finish by then'},h(Stepper,{T,value:o.maxSteps,min:3,max:100,step:1,onChange:v=>setO({maxSteps:v})})),
       h(Row,{T,label:'Actions per step',sub:'How many actions it may chain at once'},h(Stepper,{T,value:o.maxActions,min:1,max:10,step:1,onChange:v=>setO({maxActions:v})})),
@@ -1562,7 +1597,7 @@ function BUBrowser(props){
     let page;
     try{
       if(req.search){
-        const r=await webSearch(req.search,req.engine||oRef.current.engine);
+        const r=await webSearch(req.search,req.engine||oRef.current.engine,oRef.current.region);
         page={url:ENGINES[r.engine].show(req.search),title:req.search+' — Search',srcdoc:preparePage(searchPageHtml(req.search,r.engine,r.results),'https://duckduckgo.com/').srcdoc,via:'search',engine:r.engine,count:r.results.length};
       }else if(req.cached){page=req.cached}
       else page=await fetchSmartPage(req,oRef.current);
@@ -1609,8 +1644,8 @@ function BUBrowser(props){
       patchTab(id,{loading:true,note:'Page looks blank here — loading a '+(kind==='rendered'?'fully rendered':'reader')+' copy…'});
       let alt=null;
       try{
-        if(kind==='rendered'){const p=preparePage(await fetchRendered(page.url),page.url);if(p.textLen>=150&&!p.blocked)alt={srcdoc:p.srcdoc,title:p.title||page.title,via:'rendered'}}
-        else{const rd=await fetchViaJina(page.url);alt={srcdoc:preparePage(readerShell(rd.title,rd.html,page.url),page.url).srcdoc,title:rd.title||page.title,via:'reader'}}
+        if(kind==='rendered'){const p=preparePage(await fetchRendered(page.url,oRef.current),page.url);if(p.textLen>=150&&!p.blocked)alt={srcdoc:p.srcdoc,title:p.title||page.title,via:'rendered'}}
+        else{const rd=await fetchReader(page.url,oRef.current);alt={srcdoc:preparePage(readerShell(rd.title,rd.html,page.url),page.url).srcdoc,title:rd.title||page.title,via:'reader'}}
       }catch(e){}
       if(seqs.current[id]!==seq)return;
       if(!alt){patchTab(id,{loading:false,note:''});continue}

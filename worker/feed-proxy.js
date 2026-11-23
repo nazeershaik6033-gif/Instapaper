@@ -1,21 +1,35 @@
 // Tiny CORS proxy for the app's feed fetching (YouTube / Telegram / RSS).
 // Deploy on Cloudflare Workers (free): dash.cloudflare.com -> Workers & Pages -> Create -> paste this -> Deploy.
 // Then in the app: Settings -> Behavior -> Feed proxy, paste  https://<your-worker>.workers.dev/?url=
+//
+// Browsing from India (in-app browser + Browser Agent): Indian sites such as epaper.eenadu.net
+// refuse servers abroad. This worker runs in the Cloudflare data centre nearest to you, so it
+// fetches from India. To let it open ANY site for the in-app browser:
+//   1. Worker -> Settings -> Variables -> add a secret  KEY = some long random text
+//   2. In the app, set the Feed proxy to  https://<your-worker>.workers.dev/?key=<that text>&url=
+// Requests without the right key keep the ALLOWED list below, so the worker is not an open proxy.
 const ALLOWED = ['youtube.com', 't.me', 'telegram.me', 'eenadu.net']; // add any RSS hosts you follow; use ['*'] to allow all
 
 const UA = { 'User-Agent': 'Mozilla/5.0 (compatible; RoutineFeedProxy/1.0)', Accept: '*/*' };
+const BROWSER = {
+  'User-Agent': 'Mozilla/5.0 (iPhone; CPU iPhone OS 18_5 like Mac OS X) AppleWebKit/605.1.15 (KHTML, like Gecko) Version/18.5 Mobile/15E148 Safari/604.1',
+  Accept: 'text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8',
+  'Accept-Language': 'en-IN,en;q=0.9,te;q=0.8,hi;q=0.7',
+};
 const allowed = host => ALLOWED.includes('*') || ALLOWED.some(d => host === d || host.endsWith('.' + d));
 
 export default {
-  async fetch(request) {
+  async fetch(request, env) {
     const cors = {
       'Access-Control-Allow-Origin': '*',
-      'Access-Control-Allow-Methods': 'GET, OPTIONS',
+      'Access-Control-Allow-Methods': 'GET, POST, OPTIONS',
       'Access-Control-Allow-Headers': '*',
+      'Access-Control-Expose-Headers': 'X-Final-Url',
     };
     if (request.method === 'OPTIONS') return new Response(null, { headers: cors });
-    if (request.method !== 'GET') return new Response('GET only', { status: 405, headers: cors });
     const params = new URL(request.url).searchParams;
+    const browse = !!(env && env.KEY) && params.get('key') === env.KEY; // full browsing, any host
+    if (request.method !== 'GET' && !(browse && request.method === 'POST')) return new Response('GET only', { status: 405, headers: cors });
 
     // Batch: ?u=<url>&u=<url>... -> {results:[{url,ok,status,body}]}, fetched in parallel.
     const many = params.getAll('u');
@@ -41,13 +55,25 @@ export default {
     try { u = new URL(target); } catch (e) { return new Response('bad url', { status: 400, headers: cors }); }
     if (u.protocol !== 'https:' && u.protocol !== 'http:') return new Response('bad scheme', { status: 400, headers: cors });
     const host = u.hostname.replace(/^www\./, '');
-    if (!allowed(host)) return new Response('host not allowed', { status: 403, headers: cors });
-    const res = await fetch(u.toString(), {
-      headers: UA,
-      cf: { cacheTtl: 120, cacheEverything: true },
-    });
+    if (!browse && !allowed(host)) return new Response('host not allowed', { status: 403, headers: cors });
+    let res;
+    if (browse) {
+      const init = { method: request.method, headers: { ...BROWSER }, redirect: 'follow' };
+      if (request.method === 'POST') {
+        init.headers['Content-Type'] = request.headers.get('Content-Type') || 'application/x-www-form-urlencoded';
+        init.body = await request.text();
+      }
+      res = await fetch(u.toString(), init);
+    } else {
+      res = await fetch(u.toString(), {
+        headers: UA,
+        cf: { cacheTtl: 120, cacheEverything: true },
+      });
+    }
     const out = new Response(res.body, res);
     for (const k in cors) out.headers.set(k, cors[k]);
+    out.headers.set('X-Final-Url', res.url || u.toString());
+    ['set-cookie', 'content-security-policy', 'x-frame-options'].forEach(k => out.headers.delete(k));
     return out;
   },
 
