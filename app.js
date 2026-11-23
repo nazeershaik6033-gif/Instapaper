@@ -754,7 +754,8 @@ function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddi
     if(atom){const ls=n.getElementsByTagName('link');for(let i=0;i<ls.length;i++){if((ls[i].getAttribute('rel')||'alternate')==='alternate'){link=ls[i].getAttribute('href')||'';break}}if(!link&&ls[0])link=ls[0].getAttribute('href')||''}
     else link=tx('link')||tx('guid');
     const body=tx('content:encoded')||tx('content')||tx('description')||tx('summary');
-    return{id:link||tx('title'),title:(tx('title')||'Untitled').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,
+    const ttl0=tx('title');
+    return{id:link||ttl0,title:(ttl0||(feedExcerpt(body)||'').slice(0,160)||'Post').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,
       thumb:feedImage(n,body,link),excerpt:feedExcerpt(body),author:(tx('dc:creator')||tx('name')||'').slice(0,60)};
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
@@ -4104,6 +4105,26 @@ function MediaViewer({T,m,onClose,onActions}){
 }
 
 /* ============================== daily brief ============================== */
+/* Social accounts in My Routine. Bluesky, Mastodon and Reddit publish real feeds; Instagram, X and
+   Threads don't, so they take a feed link from a bridge service (RSS.app, FetchRSS, RSSHub) — without
+   one they appear in Today as a live profile card built from the platform's own embed. Stored as an
+   ordinary 'rss' source (with a feed) or 'link' source (without), plus platform + handle. */
+const SOCIAL={
+  instagram:{label:'Instagram',c:'#d6249f',profile:h=>'https://www.instagram.com/'+h+'/',embed:h=>'https://www.instagram.com/'+encodeURIComponent(h)+'/embed/',bridge:h=>'https://rsshub.app/instagram/user/'+h},
+  x:{label:'X',c:'#111111',profile:h=>'https://x.com/'+h,embed:h=>'https://syndication.twitter.com/srv/timeline-profile/screen-name/'+encodeURIComponent(h)+'?dnt=true',bridge:h=>'https://rsshub.app/twitter/user/'+h},
+  threads:{label:'Threads',c:'#101010',profile:h=>'https://www.threads.net/@'+h,embed:null,bridge:h=>'https://rsshub.app/threads/'+h},
+  bluesky:{label:'Bluesky',c:'#1185fe',profile:h=>'https://bsky.app/profile/'+h,feed:h=>'https://bsky.app/profile/'+h+'/rss'},
+  mastodon:{label:'Mastodon',c:'#6364ff',profile:h=>{const m=/^@?([^@\s]+)@([^@\s]+)$/.exec(h);return m?'https://'+m[2]+'/@'+m[1]:''},feed:h=>{const m=/^@?([^@\s]+)@([^@\s]+)$/.exec(h);return m?'https://'+m[2]+'/@'+m[1]+'.rss':''}},
+  reddit:{label:'Reddit',c:'#ff4500',profile:h=>'https://www.reddit.com/'+h+'/',feed:h=>'https://www.reddit.com/'+h.replace(/^u\//,'user/')+'/.rss'}
+};
+function socialHandle(p,raw){
+  let v=String(raw||'').trim().replace(/[?#].*$/,'').replace(/\/+$/,'');
+  if(p==='reddit'){const m=/reddit\.com\/(r|u|user)\/([\w-]+)/i.exec(v);if(m)return(m[1].toLowerCase()==='r'?'r/':'u/')+m[2];v=v.replace(/^\//,'');return/^(r|u)\//i.test(v)?v:'r/'+v.replace(/^r\//i,'')}
+  if(p==='mastodon'){const m=/^https?:\/\/([^/]+)\/@([\w.]+)/i.exec(v);if(m)return m[2]+'@'+m[1];return v.replace(/^@/,'')}
+  if(p==='bluesky'){const m=/bsky\.app\/profile\/([^/]+)/i.exec(v);return(m?m[1]:v).replace(/^@/,'')}
+  const m=/(?:instagram\.com|x\.com|twitter\.com|threads\.net)\/@?([\w.]+)/i.exec(v);
+  return(m?m[1]:v).replace(/^@/,'');
+}
 const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
 /* "2h ago" style stamp — a routine is about recency, so an absolute date only
    earns its place once an item is older than a day. */
@@ -4438,7 +4459,22 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const railBtn=(icon,label,onClick,on,onColor)=>h('button',{onClick,className:'act90','aria-label':label,style:{display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:'#fff'}},
     h('span',{style:{width:small?40:46,height:small?40:46,borderRadius:23,display:'flex',alignItems:'center',justifyContent:'center',background:on?(onColor||'#fff'):'rgba(255,255,255,.16)',color:on&&!onColor?'#000':'#fff',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},icon),
     h('span',{style:{fontSize:10.5,fontWeight:600,textShadow:'0 1px 3px rgba(0,0,0,.6)'}},label));
+  const cardSlide=(p,i)=>{
+    const it=p.it,P=SOCIAL[it.platform]||{label:'Profile',c:'#444'};const hh=it.socialHandle||'';const near=Math.abs(i-idx)<=1;
+    return h('div',{key:'card'+it.id,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#0b0b0d',display:'flex',flexDirection:'column'}},
+      h('div',{style:{padding:(header===false?'14px':'52px')+' 16px 10px',color:'#fff',display:'flex',alignItems:'center',gap:10,flexShrink:0}},
+        h('span',{style:{width:34,height:34,borderRadius:17,background:P.c,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:15,border:'2px solid rgba(255,255,255,.25)'}},(hh||it.name||'?')[0].toUpperCase()),
+        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.name),
+          h('div',{style:{fontSize:11.5,opacity:.65}},'Live profile · '+P.label+' · add a feed link (Manage → Edit) for New counts'))),
+      h('div',{style:{flex:1,margin:'0 12px 10px',borderRadius:14,overflow:'hidden',background:'#fff',position:'relative'}},
+        near&&P.embed&&hh?h('iframe',{src:P.embed(hh),title:it.name,referrerPolicy:'strict-origin-when-cross-origin',style:{width:'100%',height:'100%',border:0,display:'block'}}):
+          h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',padding:24,textAlign:'center',color:'#333',fontSize:14,lineHeight:1.5}},P.embed?'Loading '+P.label+'…':P.label+' doesn’t allow its profiles inside other apps — open it below.')),
+      h('div',{style:{display:'flex',gap:8,padding:'0 12px '+(small?'70px':'16px'),flexShrink:0}},
+        h('button',{onClick:()=>openExternalUrl(it.url),className:'act95',style:{flex:1,padding:'11px',borderRadius:12,background:P.c==='#111111'||P.c==='#101010'?'#fff':P.c,color:P.c==='#111111'||P.c==='#101010'?'#000':'#fff',fontWeight:700,fontSize:14}},'Open in '+P.label),
+        h('button',{onClick:()=>shareText(it.name,'',it.url),className:'act95',style:{padding:'11px 16px',borderRadius:12,background:'rgba(255,255,255,.14)',color:'#fff',fontWeight:600,fontSize:14}},'Share')));
+  };
   const slide=(p,i)=>{
+    if(p.card)return cardSlide(p,i);
     const e=p.e,it=p.it;
     const vidId=ytIdOf(e.url)||'';
     const vid=it.kind==='youtube'||!!vidId;
@@ -4514,7 +4550,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
    Today's new YouTube videos from your channels, oldest first, in one player: when a video ends
    the next one starts (the same player keeps playing, so iPhone allows it). Swipe the player up /
    down or use ⏮ ⏭; Done / Save / Transcript / Summary / Newspaper for the current video. */
-function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpen,onClose,toastFn,hidden}){
+function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpen,onClose,toastFn,hidden,onPaper}){
   const [i,setI]=useState(()=>Math.max(0,posts.findIndex(p=>!isDone(p))));
   const [auto,setAuto]=useState(true);
   const [started,setStarted]=useState(false);
@@ -4534,6 +4570,7 @@ function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpe
       h('span',{style:{fontSize:15.5,fontWeight:700}},'Today’s playlist'),
       h('span',{style:{fontSize:12.5,opacity:.65,fontVariantNumeric:'tabular-nums'}},(i+1)+' of '+posts.length),
       h('div',{style:{flex:1}}),
+      onPaper?h('button',{onClick:onPaper,'aria-label':'Make today’s paper',className:'act95',style:{fontSize:12,fontWeight:650,padding:'5px 10px',borderRadius:12,background:'rgba(255,255,255,.14)',color:'#fff'}},'📰 Paper'):null,
       h('button',{onClick:()=>setAuto(v=>!v),className:'act95',style:{fontSize:12,fontWeight:650,padding:'5px 10px',borderRadius:12,background:auto?'#fff':'rgba(255,255,255,.14)',color:auto?'#000':'#fff'}},auto?'Autoplay on':'Autoplay off'),
       h('button',{onClick:onClose,'aria-label':'Close playlist',className:'act90',style:{display:'flex',color:'#fff',padding:8}},Icons.x(21))),
     h('div',{onTouchStart:e=>{touch.current=e.touches[0].clientY},onTouchEnd:e=>{const y=touch.current;touch.current=null;if(y==null)return;const dy=e.changedTouches[0].clientY-y;if(Math.abs(dy)>60)go(dy<0?1:-1)},
@@ -4566,7 +4603,7 @@ function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpe
   return ReactDOM.createPortal(node,document.body);
 }
 
-function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry,onVideoTool,txOf,overlayOpen}){
+function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry,onVideoTool,txOf,overlayOpen,onMakePaper}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const vis=items.filter(i=>!snoozedNow(i.id));
@@ -4771,7 +4808,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       for(const e of c.entries)if(e&&e.url)out.push({e,it,isNew:fresh.has(e.url)});
     }
     out.sort((a,b)=>(b.isNew-a.isNew)||((b.e.publishedMs||0)-(a.e.publishedMs||0)));
-    return out.slice(0,80);
+    return out.slice(0,80).concat(profileCards(groupItems(gid)));
   };
   const unSeen=url=>onBrief(b=>{const s=Object.assign({},b.seen||{});delete s[url];return{...b,seen:s}});
   const shortsDone=p=>{
@@ -4808,13 +4845,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     return out.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   };
   const todayItems=tab=>tab==='all'?vis:groupItems(tab);
-  const todayPosts=tab=>{let p=recentPosts(todayItems(tab),todayStart);if(!p.length)p=recentPosts(todayItems(tab),Date.now()-2*86400000);return p.slice(0,100)};
+  /* Instagram / X / Threads accounts without a feed link: a live profile card at the end of the feed */
+  const profileCards=items=>items.filter(it=>it.platform&&it.kind==='link'&&SOCIAL[it.platform]).map(it=>({card:true,it,e:{url:it.url,title:it.name,publishedMs:0},isNew:false}));
+  const todayPosts=tab=>{let p=recentPosts(todayItems(tab),todayStart);if(!p.length)p=recentPosts(todayItems(tab),Date.now()-2*86400000);return p.slice(0,100).concat(profileCards(todayItems(tab)))};
   const earlierPosts=d=>{
     if(!d||!d.entries)return[];const out=[];
     d.entries.forEach(en=>en.items.forEach(i=>(i.entries||[]).forEach(e=>{if(e&&e.url)out.push({e,it:{id:i.id,name:i.name,kind:i.kind},isNew:!seenMap[e.url],earlier:true})})));
     return out.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   };
   const playlistPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)&&!seenMap[p.e.url]).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
+  const paperPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
   const doneEarlier=p=>{if(seenMap[p.e.url])unSeen(p.e.url);else{markSeen([p.e.url]);vibrate(8)}};
   const shortsBtn=gid=>groupItems(gid).some(hasFeed)?h('button',{onClick:()=>shorts&&shorts.gid===gid?setShorts(null):openShorts(gid),className:'act95','aria-label':'Shorts',
     style:{display:'flex',alignItems:'center',gap:4,flexShrink:0,padding:'5px 10px',borderRadius:14,background:shorts&&shorts.gid===gid?T.fg:hexA(T.accent,.12),color:shorts&&shorts.gid===gid?T.bg:T.accent,fontSize:12,fontWeight:700}},Icons.play(11,true),'Shorts'):null;
@@ -4828,6 +4868,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     if(f.kind==='youtube'){patch.url=patch.channelId?'https://www.youtube.com/channel/'+patch.channelId:(ytTargetUrl(raw)||raw)}
     else if(f.kind==='telegram'){patch.handle=tgHandle(raw);patch.url=patch.handle?'https://t.me/'+patch.handle:(normalizeUrl(raw)||raw)}
     else if(f.kind==='rss'){patch.feedUrl=normalizeUrl(raw)||raw;patch.url=patch.feedUrl}
+    else if(f.kind==='social'){
+      const p=f.platform||'instagram',P=SOCIAL[p];const hh=socialHandle(p,raw);
+      const feed=(f.bridge||'').trim()?(normalizeUrl(f.bridge.trim())||f.bridge.trim()):(P.feed?P.feed(hh):'');
+      patch.kind=feed?'rss':'link';patch.feedUrl=feed;patch.url=P.profile(hh)||normalizeUrl(raw)||raw;patch.platform=p;patch.handle=p==='reddit'?'':hh;patch.socialHandle=hh;
+      if(!f.name||!f.name.trim())f={...f,name:(p==='reddit'?hh:'@'+hh)+' · '+P.label};
+    }
     else{patch.url=normalizeUrl(raw)||raw}
     let ytName='';if(f.kind==='youtube'){const hm=raw.match(/@([\w.\-]+)/)||(/^[\w.\-]+$/.test(raw)&&!/youtu/i.test(raw)?[null,raw]:null);if(hm)ytName='@'+hm[1]}
     patch.name=(f.name||'').trim()||(patch.handle?'@'+patch.handle:'')||ytName||domainOf(patch.url)||'Item';
@@ -5219,7 +5265,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Routine',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a routine')));
   const playlistEl=playlist?h(RoutinePlaylist,{T,posts:playlist,hidden:!!overlayOpen,toastFn,
     isDone:p=>!!seenMap[p.e.url],onDone:p=>doneEarlier(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),
-    onTool:vtool,txOf,onOpen:p=>openEntry(p.e),onClose:()=>setPlaylist(null)}):null;
+    onTool:vtool,txOf,onOpen:p=>openEntry(p.e),onClose:()=>setPlaylist(null),onPaper:onMakePaper?()=>onMakePaper(playlist):null}):null;
   if(view==='today'){
     const tab=todayTab==='earlier'||todayTab==='all'||todayTab==='_other'||groups.some(g=>g.id===todayTab)?todayTab:'all';
     const dayObj=tab==='earlier'?(catchDays.find(d=>d.key===day)||catchDays[0]||null):null;
@@ -5245,6 +5291,11 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
           h('span',{style:{width:40,height:40,borderRadius:20,background:'rgba(255,255,255,.22)',display:'flex',alignItems:'center',justifyContent:'center',paddingLeft:3,flexShrink:0}},Icons.play(20,true)),
           h('span',{style:{flex:1,minWidth:0}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:750}},'Play today’s videos'),
             h('span',{style:{display:'block',fontSize:12,opacity:.85,marginTop:2}},plN+' new video'+(plN>1?'s':'')+' · plays one after another')))):null,
+      onMakePaper&&paperPosts().length?h('div',{style:{padding:'0 14px 8px'}},
+        h('button',{onClick:()=>onMakePaper(paperPosts()),className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',padding:'11px 14px',borderRadius:16,background:'#f3eee2',color:'#1c1a16',border:'1px solid #d9cfb6',textAlign:'left'}},
+          h('span',{style:{fontSize:22,lineHeight:1}},'📰'),
+          h('span',{style:{flex:1,minWidth:0}},h('span',{style:{display:'block',fontFamily:"'Playfair Display',Georgia,serif",fontSize:16,fontWeight:800}},'Make today’s paper'),
+            h('span',{style:{display:'block',fontSize:12,opacity:.7,marginTop:2}},'Tick videos → one newspaper with contents · '+paperPosts().length+' videos today')))):null,
       h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:7,overflowX:'auto',padding:'4px 14px 10px'}},
         pill('all','Today',newCount),
         groupsWithFeeds.map(x=>pill(x.id,x.name,groupNewCount(groupItems(x.id)),groupColor(x.id))),
@@ -5351,7 +5402,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       h(ARow,{T,icon:Icons.external(21),label:act.kind==='youtube'?'Open channel':'Open',onClick:()=>{const it=act;setAct(null);open(it)}}),
       hasFeed(act)&&feeds[act.id]&&feeds[act.id].entries&&feeds[act.id].entries[0]?h(ARow,{T,icon:Icons.play(21,true),label:'Open latest',onClick:()=>{const e=feeds[act.id].entries[0];setAct(null);openEntry(e)}}):null,
       h(ARow,{T,icon:Icons.checkCircle(21,doneIds.includes(act.id)),label:doneIds.includes(act.id)?'Mark not done':'Mark done',onClick:()=>{toggle(act.id);setAct(null)}}),
-      h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const it=act;setAct(null);setEdit({id:it.id,groupId:it.groupId,kind:it.kind,name:it.name,url:it.url,channelId:it.channelId})}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Edit',onClick:()=>{const it=act;setAct(null);setEdit(it.platform?{id:it.id,groupId:it.groupId,kind:'social',platform:it.platform,name:it.name,url:it.socialHandle||it.url,bridge:SOCIAL[it.platform]&&!SOCIAL[it.platform].feed?it.feedUrl||'':''}:{id:it.id,groupId:it.groupId,kind:it.kind,name:it.name,url:it.url,channelId:it.channelId})}}),
       h(ARow,{T,icon:Icons.folder(21),label:'Move to group…',onClick:()=>{const it=act;setAct(null);setMoveIt(it)}}),
       h(ARow,{T,icon:Icons.calendar(21),label:'Snooze 1 hour',onClick:()=>{snooze(act.id,3600000);setAct(null)}}),
       h(ARow,{T,icon:Icons.moon(21),label:'Snooze until tomorrow',onClick:()=>{const d=new Date();d.setHours(0,0,0,0);d.setDate(d.getDate()+1);snooze(act.id,Math.max(60000,d.getTime()-Date.now()));setAct(null)}}),
@@ -5374,12 +5425,29 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
         h('div',{style:{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}},
-          [['link','Site / app'],['youtube','YouTube'],['telegram','Telegram'],['rss','RSS / News']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
+          [['link','Site / app'],['youtube','YouTube'],['telegram','Telegram'],['rss','RSS / News'],['social','Social']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
+        edit.kind==='social'?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginBottom:12}},
+          Object.keys(SOCIAL).map(p=>{const on=(edit.platform||'instagram')===p;return h('button',{key:p,onClick:()=>setEdit({...edit,platform:p}),className:'act95',
+            style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'7px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:on?SOCIAL[p].c:'transparent',color:on?'#fff':T.fg,border:'1px solid '+(on?SOCIAL[p].c:T.hair)}},SOCIAL[p].label)})):null,
         h('input',{value:edit.name,onChange:e=>setEdit({...edit,name:e.target.value}),placeholder:'Name (optional)',
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:10}}),
-        h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value,channelId:'',handle:'',feedUrl:''}),placeholder:edit.kind==='youtube'?'@handle, channel link, or name':edit.kind==='telegram'?'t.me/durov or @durov':edit.kind==='rss'?'https://…/feed.xml':'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        edit.kind==='social'?h(Fragment,null,
+          h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value}),placeholder:(edit.platform||'instagram')==='reddit'?'r/india or u/name':(edit.platform==='mastodon'?'name@mastodon.social':'@handle or profile link'),autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+            style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:8}}),
+          /instagram|x|threads/.test(edit.platform||'instagram')&&!/bluesky|mastodon|reddit/.test(edit.platform||'')?h(Fragment,null,
+            h('input',{value:edit.bridge||'',onChange:e=>setEdit({...edit,bridge:e.target.value}),placeholder:'Bridge feed link (optional) — https://rss.app/feeds/…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+              style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:14,marginBottom:6}}),
+            h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.5}},
+              SOCIAL[edit.platform||'instagram'].label+' has no public feed. For new posts with “New” counts and Done, make a free feed: open ',
+              h('button',{onClick:()=>openExternalUrl('https://rss.app/'),style:{color:T.accent,fontWeight:600,fontSize:11.5}},'RSS.app'),' or ',
+              h('button',{onClick:()=>openExternalUrl('https://fetchrss.com/'),style:{color:T.accent,fontWeight:600,fontSize:11.5}},'FetchRSS'),
+              ', paste the profile link, copy the feed link they give you, and paste it above. ',
+              h('button',{onClick:()=>{const hh=socialHandle(edit.platform||'instagram',edit.url);if(hh)setEdit({...edit,bridge:SOCIAL[edit.platform||'instagram'].bridge(hh)})},style:{color:T.accent,fontWeight:600,fontSize:11.5}},'Try RSSHub'),
+              ' (free, sometimes blocked). Without a link it shows in Today as a live profile card.')):
+            h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.5}},SOCIAL[edit.platform].label+' publishes a public feed — new posts arrive like videos do.')):null,
+        edit.kind==='social'?null:h('input',{value:edit.url,onChange:e=>setEdit({...edit,url:e.target.value,channelId:'',handle:'',feedUrl:''}),placeholder:edit.kind==='youtube'?'@handle, channel link, or name':edit.kind==='telegram'?'t.me/durov or @durov':edit.kind==='rss'?'https://…/feed.xml':'https://…',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:6}}),
-        h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},
+        edit.kind==='social'?null:h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},
           edit.kind==='youtube'?'Paste a channel URL, an @handle, or just the handle name (youtube.com/@handle, @handle, or /channel/…). The brief shows its new videos.'
           :edit.kind==='telegram'?'Public channel only (t.me/<name> or @name). The brief shows its new posts.'
           :edit.kind==='rss'?'Any RSS/Atom feed — a news site, blog, Substack, subreddit (.../.rss), or an X/Instagram bridge URL.'
@@ -7936,6 +8004,8 @@ function App(){
   /* ---------- routine videos: transcript, newspaper edition, summary, translate, notes ---------- */
   const [edition,setEdition]=useState(null); // {id, panel}
   const [vidTool,setVidTool]=useState(null); // {id} — transcript sheet for a video
+  const [paperBuild,setPaperBuild]=useState(null); // posts snapshot for the daily paper
+  const [paperOpen,setPaperOpen]=useState(null); // paper id
   const findVideo=vid=>dataRef.current.articles.find(a=>!a.isEdition&&(a.videoId===vid||ytIdOf(a.url)===vid));
   /* a routine video becomes a library item (once) so it can hold its transcript, editions and notes */
   const ensureVideoArticle=(e,sourceName)=>{
@@ -7958,7 +8028,7 @@ function App(){
     setEdition({id,panel:kind==='translate'?'translate':kind==='notes'?'notes':null});
   };
   const saveEditionCopy=(id,c)=>{
-    const src=byId(id);const url=((src&&src.url)||'edition:'+id)+'#edition-'+(c.lang||'orig');
+    const src=id?byId(id):null;const url=c.url||(((src&&src.url)||'edition:'+id)+'#edition-'+(c.lang||'orig'));
     const art={id:uid(),url,title:c.title||'Edition',source:'Edition',author:src?(src.author||src.source||''):'',image:c.image||'',html:c.html,text:c.text,excerpt:c.standfirst||'',
       words:c.words||0,readMin:Math.max(1,Math.round((c.words||0)/230)),isVideo:false,videoId:null,isEdition:true,editionOf:id,editionLang:c.lang||'orig',
       publishedAt:Date.now(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:['edition'],progress:0,opens:0,highlights:[]};
@@ -8283,7 +8353,7 @@ function App(){
     onSetting:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
     onAskClaude:()=>setAiOpen({routine:true}),
     isSaved:isEntrySaved,onSaveEntry:saveRoutineEntry,
-    onVideoTool,txOf:txOfEntry,overlayOpen:!!(edition||vidTool||aiOpen||readingId)});
+    onVideoTool,txOf:txOfEntry,overlayOpen:!!(edition||vidTool||aiOpen||readingId||paperBuild||paperOpen),onMakePaper:posts=>setPaperBuild(posts)});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     starred:S.briefStarred||[],muted:S.briefMuted||[],
@@ -8342,7 +8412,7 @@ function App(){
   }
   /* premium Home: insights above the library (week / month comparisons) */
   if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
-    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id})}):null,body);
+    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100dvh',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
@@ -8486,6 +8556,11 @@ function App(){
 
     vidTool&&byId(vidTool.id)?h(TranscriptSheet,{T,S,a:byId(vidTool.id),patch:p=>patchArticle(vidTool.id,p),update,toastFn,onClose:()=>setVidTool(null),
       onMaximize:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})},onNewspaper:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})}}):null,
+    paperBuild&&window.InstaEdition?h(window.InstaEdition.PaperBuilder,{T,S,posts:paperBuild,articles:data.articles,ensure:ensureVideoArticle,patchArticle,toastFn,
+      onClose:()=>setPaperBuild(null),onBuilt:p=>{update(d=>({...d,papers:[p,...(d.papers||[])].slice(0,30)}));setPaperBuild(null);setPaperOpen(p.id);toastFn('Today’s paper is ready')}}):null,
+    paperOpen&&window.InstaEdition&&(data.papers||[]).some(p=>p.id===paperOpen)?h(window.InstaEdition.PaperReader,{key:paperOpen,T,S,paper:(data.papers||[]).find(p=>p.id===paperOpen),articles:data.articles,toastFn,
+      onClose:()=>setPaperOpen(null),onDelete:()=>{const id=paperOpen;setPaperOpen(null);update(d=>({...d,papers:(d.papers||[]).filter(p=>p.id!==id)}));toastFn('Paper deleted')},
+      onOpenEdition:id=>setEdition({id}),onSaveToLibrary:c=>saveEditionCopy(null,Object.assign({},c,{url:'paper:'+paperOpen}))}):null,
     edition&&byId(edition.id)&&window.InstaEdition?h(window.InstaEdition.EditionReader,{key:edition.id,T,S,a:byId(edition.id),patch:p=>patchArticle(edition.id,p),toastFn,initialPanel:edition.panel,
       onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,

@@ -72,6 +72,15 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🔴 **Play today's videos** — a playlist of today's new YouTube videos, oldest first, skipping ones you marked Done. Tap play once and each video **starts the next when it ends** (Autoplay on/off); ⏮ ⏭ or swipe the player; an **Up next** list to jump anywhere
 - Every YouTube video in the feed and the playlist has **Done · Save · Transcript · Summary · More** (Newspaper edition, Translate, Notes & highlights, Share, Copy link, Open in YouTube). Swiping never marks anything; **Done** does. Full-screen Shorts now sit above the app's header and + button, so the ✕ / minimise header always works
 
+**Today's paper — every chosen video in one newspaper**
+- 📰 **Make today's paper** (in Today and in the playlist) lists today's videos: tick the ones you want. Each ticked video needs a transcript — **Get ↗** opens youtubetotranscript on that video, copy it, come back, **Paste**
+- **Make the paper** writes a short news story for each ticked video with AI — headline, one-line standfirst, a 200–260-word story, key points and one quote copied word for word — using only that video's transcript, then binds them into **The Daily Transcript**: the date and the time it was made, a **contents** list grouped by channel (tap to jump), each story with its channel and published time, a link to watch, and **Read full transcript** under every story
+- Same fonts, sizes, paper colours and one/two columns as editions; **Download** as PDF (the stories), an HTML file (stories + folded full transcripts) or save to your library; papers sit first on the **Editions** shelf; delete any paper without touching the videos
+
+**Social accounts in My Routine** (Manage → + → Social)
+- **Bluesky, Mastodon and Reddit** use their real public feeds — new posts arrive like videos (New counts, Done, Earlier)
+- **Instagram, X and Threads** have no public feed: paste a feed link from a free bridge (RSS.app, FetchRSS, or *Try RSSHub*) for real updates; until then each account appears at the end of Today as a **live profile card** (the platform's own embed) with *Open in…*
+
 **Newspaper editions of transcripts**
 - 📝 **Transcript** on a video saves it to your library (once) and opens the transcript box: tap *YouTubeToTranscript* (opens straight to that video), copy, come back, **Paste** — then **Read as newspaper**
 - 📰 The **AI newspaper edition**: masthead, section label, headline, standfirst, an *In this edition* box of key points, section headings, pull quotes and a drop cap. The AI only lays out the page — your transcript's words are never rewritten (no key → the same layout with plain parts)
