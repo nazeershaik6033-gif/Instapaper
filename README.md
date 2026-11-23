@@ -61,6 +61,17 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🔎 Search filters posts by title, blog or excerpt; the AI digest and *Ask Claude about my blogs* stay in the toolbar
 - ⚙️ **Manage** is the previous screen — groups, adding, editing, reordering and moving blogs
 
+**My Routine — Today (watch-first)**
+- ▶️ My Routine opens on **Today**: one Shorts-style swipe feed of everything new since this morning's routine window, with pills for **Today**, each group, and **Earlier** (the catch-up days, one pill per day). **Manage** opens the full list — channels, groups, routine times — and **Today** brings you back
+- 🔴 **Play today's videos** — a playlist of today's new YouTube videos, oldest first, skipping ones you marked Done. Tap play once and each video **starts the next when it ends** (Autoplay on/off); ⏮ ⏭ or swipe the player; an **Up next** list to jump anywhere
+- Every YouTube video in the feed and the playlist has **Done · Save · Transcript · Summary · More** (Newspaper edition, Translate, Notes & highlights, Share, Copy link, Open in YouTube). Swiping never marks anything; **Done** does. Full-screen Shorts now sit above the app's header and + button, so the ✕ / minimise header always works
+
+**Newspaper editions of transcripts**
+- 📝 **Transcript** on a video saves it to your library (once) and opens the transcript box: tap *YouTubeToTranscript* (opens straight to that video), copy, come back, **Paste** — then **Read as newspaper**
+- 📰 The **AI newspaper edition**: masthead, section label, headline, standfirst, an *In this edition* box of key points, section headings, pull quotes and a drop cap. The AI only lays out the page — your transcript's words are never rewritten (no key → the same layout with plain parts)
+- Read it your way: **fonts** (Newsprint, Lora, Literata, Merriweather, Sans — Telugu and Hindi always render), **text size**, **paper** (Newsprint / White / Sepia / Night), **one or two columns**, a **Contents** list that jumps to each section, a reading-progress bar; select text to **Highlight** or copy; a **Notes** pad per video; **Translate** into Telugu, Hindi, English and more — each language gets its own edition
+- ⤓ **Download** as **PDF** (Print → Save to Files), a self-contained **HTML file**, or **Save to my library** as an article; every newspaper also appears on the **Editions** shelf on Home
+
 **My Routine**
 - 🗂 **Groups are tabs down the left** — a sticky side rail lists every group as a flat row with a colour dot and a count (or a red number when something's new); the pane beside it shows just that group's channels and their new posts, so content starts at the top of the screen instead of below a stack of cards
 - ⏴ **Collapse the rail** — the small arrow above it shrinks the rail to a slim column of colour-ringed dots (still badged when something's new), freeing width for reading; tap a dot to switch groups without expanding back
@@ -237,6 +248,7 @@ copy on `main`).
 | `app.js` | The entire application |
 | `browser.js` | In-app browser and Browser Agent |
 | `adblock-*.mobileconfig` | iOS ad-blocking DNS profiles (AdGuard, Mullvad) offered on the Browse screen |
+| `edition.js` | Newspaper editions of transcripts: AI layout, reader, downloads, Editions shelf |
 | `insights.js` | Home insights dashboard and the on-device activity log |
 | `social.js` | In-app viewer for YouTube, Instagram and X |
 | `shields.js` | Shields — ad & tracker blocking, filter lists, per-site settings, tracking protection |

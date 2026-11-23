@@ -315,7 +315,7 @@ function HomeDashboard({T,data,onOpen,onGo}){
       :null,
     h('div',{style:{fontSize:11,color:T.sub,lineHeight:1.5,margin:'16px 2px 4px'}},
       'Saved items, highlights, notes, transcripts and routine check-offs are counted from their dates. Time, finished and watched are tracked on this device'+(loggingSince?' since '+new Date(loggingSince).toLocaleDateString([],{day:'numeric',month:'short'}):' from today')+'.'),
-    h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'18px 2px 0'}},'Your library · by week & month'));
+    null);
 }
 
 window.InstaStats={track,tick,diff,HomeDashboard,compute,periods,bucketOf,TimeGroups};
