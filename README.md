@@ -30,10 +30,25 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🧹 **Remove blocks** — saved a page with leftover junk? Long-press → Edit content → tap unwanted paragraphs/images to delete them
 - 📝 **Edit text** — edit the title and full article text (simple markdown formatting) and save your own version
 
-**Browser & Logged-In Sites**
-- 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
+**Browser & Browser Agent** (sidebar → Browse)
+- 🌐 Safari-style browser built for iPhone: tabs (with a tab switcher), back/forward, find on page, share, open in Safari, and one-tap **Save page to Instapaper**. Tabs are remembered between launches.
+- Two views per tab — tap the **LIVE / SMART** badge in the address bar to switch:
+  - **Live** — the real site with its JavaScript and your logins (some sites refuse to load inside apps)
+  - **Smart** — the page is fetched and rendered on your phone without its scripts, so it always opens; links, forms, dropdowns and checkboxes still work. Script-heavy sites are pre-rendered remotely so they still show content.
+- ✦ **Browser Agent** — a rebuild of [browser-use](https://github.com/browser-use/browser-use) that runs on your iPhone. Give it a task in plain words and watch it work:
+  - sees each page as numbered interactive elements (drawn as colored boxes on the page) and acts on them: **search** (DuckDuckGo / Bing / Google), **go to URL**, **click**, **type**, **send keys**, **scroll**, **scroll to text**, **dropdowns**, **back / forward / refresh**, **open / switch / close tabs**, **wait**
+  - **extract** reads a whole page with AI to pull out exactly what you asked for
+  - keeps **memory**, a **todo.md** checklist and its own **files** (results.md, extracted notes) across steps; evaluates each step and changes approach when stuck
+  - **save to reading list**: ask it to save pages and they land in your Instapaper library
+  - live step timeline (evaluation, memory, next goal, actions, optional thinking), **pause / resume / stop**, **follow-up tasks** in the same session, **continue** an interrupted run, full **history** of past runs
+  - final answer with sources: copy, share, **listen** (Telugu/Hindi voices auto-detected), or **save as a note**
+  - settings: max steps, actions per step, max failures, thinking, flash mode, highlight elements, page view depth, search engine, **allowed domains**, custom instructions
+  - models: **Gemini** (free key — recommended), **OpenRouter**, **Claude** (Anthropic API), **OpenAI**, or **Browser Use Cloud** (beta — runs on a real cloud Chromium you can watch live)
+  - keeps the screen awake while it works (iOS pauses apps in the background)
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
-- 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
+- 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in in Live view. Nothing ever leaves your device; backups carry the vault still encrypted.
+
+> Smart view and the agent run without your cookies, so they can't use sites you're logged into, and buttons that only work with JavaScript do nothing there (the agent is told this and works around it). Pages are fetched through public proxies, so don't use Smart view for anything private.
 
 **Settings** are organized like the classic app: General → Appearance, Behavior, Voices, AI Assistant, Logged-In Sites, Syncing & Backup.
 
@@ -64,7 +79,8 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 | File | Purpose |
 |---|---|
 | `index.html` | App shell, styles, fonts |
-| `app.js` | The entire application |
+| `app.js` | The reading app |
+| `browser.js` | In-app browser + Browser Agent |
 | `sw.js` | Service worker — offline caching |
 | `manifest.json` | PWA manifest (icons, share target) |
 | `icon-*.png` | App icons |
