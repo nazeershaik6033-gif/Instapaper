@@ -2060,19 +2060,21 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
     h('span',{style:{fontSize:16.5,fontWeight:active?650:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name));
 }
 
-/* iOS-style bottom tab bar: frosted glass, springy selection */
-const TAB_ICONS={home:s=>Icons.home(s),brief:s=>Icons.play(s),browse:s=>Icons.globe(s),blogs:s=>Icons.rss(s),more:s=>Icons.menu(s)};
-function TabBar({T,active,onTab}){
-  const tabs=[['home','Home'],['brief','Routine'],['browse','Browse'],['blogs','Blogs'],['more','More']];
-  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:0,zIndex:35,display:'flex',justifyContent:'space-around',alignItems:'flex-start',
-      padding:'6px 4px calc(4px + '+SAFE_B+')',background:hexA(T.bg,.78),backdropFilter:'saturate(180%) blur(22px)',WebkitBackdropFilter:'saturate(180%) blur(22px)',borderTop:'0.5px solid '+T.hair}},
-    tabs.map(([k,l])=>{const on=active===k;
-      return h('button',{key:k,onClick:()=>{vibrate(6);onTab(k)},'aria-label':l,'aria-current':on?'page':undefined,className:'act90',
-        style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:on?T.accent:T.sub,padding:'2px 0',minWidth:0}},
-        h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{position:'relative',display:'flex',alignItems:'center',justifyContent:'center',width:52,height:30,borderRadius:15,background:on?hexA(T.accent,.13):'transparent'}},
-          h('span',{style:{display:'flex'}},TAB_ICONS[k](k==='brief'?20:23))),
-        h('span',{style:{fontSize:10.5,fontWeight:on?700:550,letterSpacing:'.01em'}},l));
-    }));
+/* YouTube-style navigation: a slim frosted capsule floating over the content, icons only, the + in
+   the middle; it slides away while you scroll down and returns when you scroll up */
+const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['browse','Browse',s=>Icons.globe(s)],['more','More',s=>Icons.menu(s)]];
+function FloatingNav({T,active,hidden,onTab,overVideo}){
+  const dark=overVideo||(typeof isDarkTheme==='function'&&isDarkTheme(T.id));
+  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(10px + '+SAFE_B+')',zIndex:35,display:'flex',justifyContent:'center',pointerEvents:'none',
+      transform:hidden?'translateY(calc(100% + 30px))':'none',transition:'transform 320ms cubic-bezier(.2,.9,.2,1)'}},
+    h('div',{style:{pointerEvents:'auto',display:'flex',alignItems:'center',gap:2,padding:5,borderRadius:30,background:dark?'rgba(38,38,42,.72)':'rgba(250,250,252,.78)',
+        backdropFilter:'saturate(180%) blur(24px)',WebkitBackdropFilter:'saturate(180%) blur(24px)',border:'0.5px solid '+(dark?'rgba(255,255,255,.12)':'rgba(0,0,0,.08)'),boxShadow:'0 8px 30px rgba(0,0,0,'+(dark?.45:.16)+')'}},
+      NAV_ITEMS.map(([k,l,ic])=>{const on=active===k;const plus=k==='plus';
+        return h('button',{key:k,onClick:()=>{vibrate(6);onTab(k)},'aria-label':l,'aria-current':on?'page':undefined,className:'act90',
+          style:{width:plus?54:52,height:42,borderRadius:21,display:'flex',alignItems:'center',justifyContent:'center',color:plus?(overVideo?'#000':T.bg):on?(overVideo?'#fff':T.fg):(overVideo?'rgba(255,255,255,.7)':T.sub),
+            background:plus?(overVideo?'#fff':T.fg):on?(dark?'rgba(255,255,255,.16)':'rgba(0,0,0,.07)'):'transparent',transition:'background-color 200ms,color 200ms'}},
+          h('span',{key:on?'on':'off',className:on&&!plus?'tabpop':undefined,style:{display:'flex'}},ic(k==='brief'?19:plus?22:22)));
+      })));
 }
 function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
@@ -2783,7 +2785,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
 const RATES=[0.8,0.9,1,1.1,1.25,1.5,1.75,2];
 
 function MiniPlayer({T,ui,title,onToggle,onNextArticle,onStop,onOpen,lift}){
-  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?74:12)+'px + '+SAFE_B+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
+  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?72:12)+'px + '+SAFE_B+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
     h('button',{onClick:onToggle,className:'act90',style:Object.assign({},iconBtnS,{color:'#fff'})},ui.playing?Icons.pause(22):Icons.play(22,true)),
     h('div',{onClick:onOpen,style:{flex:1,minWidth:0,cursor:'pointer'}},
       h('div',{style:{fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
@@ -4480,7 +4482,8 @@ function YtPlayer({vid,onEnded,autoplay,style}){
 }
 const SVG_TX=s=>Svg({size:s},P('M5 5.5h14M5 10h14M5 14.5h9M5 19h6'),P('M16.5 15.5 19 18l3-4.5'));
 const SVG_PAPER=s=>Svg({size:s},P('M4.5 5.5h12v13a1.5 1.5 0 0 0 1.5 1.5H6A1.5 1.5 0 0 1 4.5 18.5v-13Z'),P('M16.5 9h3v9.5a1.5 1.5 0 0 1-3 0M7.5 9h6M7.5 12h6M7.5 15h4'));
-function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDone,isSaved,onSave,onOpen,onTool,txOf,toastFn,height,hidden,embedded,header}){
+function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDone,isSaved,onSave,onOpen,onTool,txOf,toastFn,height,hidden,embedded,header,padTop,padBottom}){
+  const padB=padBottom||'0px';
   const ref=useRef(null);
   const [idx,setIdx]=useState(0);
   const [playing,setPlaying]=useState('');
@@ -4499,14 +4502,14 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const cardSlide=(p,i)=>{
     const it=p.it,P=SOCIAL[it.platform]||{label:'Profile',c:'#444'};const hh=it.socialHandle||'';const near=Math.abs(i-idx)<=1;
     return h('div',{key:'card'+it.id,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#0b0b0d',display:'flex',flexDirection:'column'}},
-      h('div',{style:{padding:(header===false?'14px':'52px')+' 16px 10px',color:'#fff',display:'flex',alignItems:'center',gap:10,flexShrink:0}},
+      h('div',{style:{padding:(padTop?padTop+'px':header===false?'14px':'52px')+' 16px 10px',color:'#fff',display:'flex',alignItems:'center',gap:10,flexShrink:0}},
         h('span',{style:{width:34,height:34,borderRadius:17,background:P.c,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:15,border:'2px solid rgba(255,255,255,.25)'}},(hh||it.name||'?')[0].toUpperCase()),
         h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.name),
           h('div',{style:{fontSize:11.5,opacity:.65}},'Live profile · '+P.label+' · add a feed link (Manage → Edit) for New counts'))),
       h('div',{style:{flex:1,margin:'0 12px 10px',borderRadius:14,overflow:'hidden',background:'#fff',position:'relative'}},
         near&&P.embed&&hh?h('iframe',{src:P.embed(hh),title:it.name,referrerPolicy:'strict-origin-when-cross-origin',style:{width:'100%',height:'100%',border:0,display:'block'}}):
           h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',padding:24,textAlign:'center',color:'#333',fontSize:14,lineHeight:1.5}},P.embed?'Loading '+P.label+'…':P.label+' doesn’t allow its profiles inside other apps — open it below.')),
-      h('div',{style:{display:'flex',gap:8,padding:'0 12px '+(small?'70px':'16px'),flexShrink:0}},
+      h('div',{style:{display:'flex',gap:8,padding:'0 12px calc('+(small?'70px':'16px')+' + '+padB+')',flexShrink:0}},
         h('button',{onClick:()=>openExternalUrl(it.url),className:'act95',style:{flex:1,padding:'11px',borderRadius:12,background:P.c==='#111111'||P.c==='#101010'?'#fff':P.c,color:P.c==='#111111'||P.c==='#101010'?'#000':'#fff',fontWeight:700,fontSize:14}},'Open in '+P.label),
         h('button',{onClick:()=>shareText(it.name,'',it.url),className:'act95',style:{padding:'11px 16px',borderRadius:12,background:'rgba(255,255,255,.14)',color:'#fff',fontWeight:600,fontSize:14}},'Share')));
   };
@@ -4532,7 +4535,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
       thumb&&near&&!play?h('div',{style:{position:'absolute',inset:-30,backgroundImage:'url("'+thumb+'")',backgroundSize:'cover',backgroundPosition:'center',filter:'blur(28px) brightness(.45)'}}):
         !thumb?h('div',{style:{position:'absolute',inset:0,background:'linear-gradient(160deg,'+(color||'#334')+' 0%,#0b0b10 85%)'}}):null,
       h('div',{style:{position:'relative',width:'100%',maxHeight:'100%',display:'flex',alignItems:'center',justifyContent:'center',marginTop:-40}},media),
-      h('div',{style:{position:'absolute',left:0,right:70,bottom:0,padding:'60px 16px 18px',background:'linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0))',color:'#fff',pointerEvents:'none'}},
+      h('div',{style:{position:'absolute',left:0,right:70,bottom:0,padding:'60px 16px calc(18px + '+padB+')',background:'linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0))',color:'#fff',pointerEvents:'none'}},
         h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:7,flexWrap:'wrap'}},
           h('span',{style:{width:28,height:28,borderRadius:14,background:color||'#556',display:'flex',alignItems:'center',justifyContent:'center',fontSize:13,fontWeight:700,flexShrink:0}},(it.name||'?')[0].toUpperCase()),
           h('span',{style:{fontSize:14,fontWeight:700}},it.name),
@@ -4542,7 +4545,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
         thumb||vidId?h('div',{style:{fontSize:15,fontWeight:600,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl):null,
         e.excerpt?h('div',{style:{fontSize:12.5,opacity:.8,lineHeight:1.4,marginTop:4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null,
         h('div',{style:{fontSize:11.5,opacity:.7,marginTop:5}},fmtAgo(e.publishedMs))),
-      h('div',{style:{position:'absolute',right:10,bottom:small?78:22,display:'flex',flexDirection:'column',gap:small?10:14}},
+      h('div',{style:{position:'absolute',right:10,bottom:'calc('+(small?78:22)+'px + '+padB+')',display:'flex',flexDirection:'column',gap:small?10:14}},
         railBtn(Icons.check(22),'Done',()=>onDone(p),done,'#2f9e44'),
         railBtn(Icons.download(21),saved?'Saved':'Save',()=>{if(!saved)onSave(p)},saved),
         vidId&&onTool?railBtn(hasTx?SVG_PAPER(21):SVG_TX(21),hasTx?'Read':'Transcript',()=>onTool(p,hasTx?'newspaper':'transcript'),hasTx):null,
@@ -5314,37 +5317,37 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       dot?h('span',{style:{width:8,height:8,borderRadius:4,background:dot}}):null,label,
       n?h('span',{style:{fontSize:11,fontWeight:800,color:tab===id?T.bg:T.accent}},n>99?'99+':n):null);
     const groupsWithFeeds=groups.filter(x=>groupItems(x.id).some(hasFeed));
-    return h('div',null,
-      playlistEl,
-      h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'8px 12px 2px 14px'}},
-        h('button',{onClick:()=>setSlotSheet(true),className:'act98','aria-label':'Routine windows',
-          style:{flexShrink:0,display:'flex',alignItems:'center',gap:7,height:36,padding:'0 12px',borderRadius:18,background:T.card,color:T.fg,fontSize:13.5,fontWeight:600}},
-          Icons.calendar(15),curSlot.name,win.sel===win.activeSlotId?h('span',{style:{fontSize:10.5,fontWeight:600,color:T.accent}},'now'):null),
-        h('div',{style:{flex:1}}),
-        h('button',{onClick:()=>setView('manage'),className:'act95',style:{display:'flex',alignItems:'center',gap:6,height:36,padding:'0 14px',borderRadius:18,border:'1px solid '+T.hair,color:T.fg,fontSize:13.5,fontWeight:600}},Icons.gear?Icons.gear(15):null,'Manage')),
-      refreshBar,fixRow,
-      plN?h('div',{style:{padding:'2px 14px 8px'}},
-        h('button',{onClick:()=>setPlaylist(playlistPosts()),className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',padding:'12px 14px',borderRadius:16,background:'linear-gradient(135deg,#ff3b30,#c2185b)',color:'#fff',textAlign:'left',boxShadow:'0 6px 18px rgba(194,24,91,.25)'}},
-          h('span',{style:{width:40,height:40,borderRadius:20,background:'rgba(255,255,255,.22)',display:'flex',alignItems:'center',justifyContent:'center',paddingLeft:3,flexShrink:0}},Icons.play(20,true)),
-          h('span',{style:{flex:1,minWidth:0}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:750}},'Play today’s videos'),
-            h('span',{style:{display:'block',fontSize:12,opacity:.85,marginTop:2}},plN+' new video'+(plN>1?'s':'')+' · plays one after another')))):null,
-      onMakePaper&&paperPosts().length?h('div',{style:{padding:'0 14px 8px'}},
-        h('button',{onClick:()=>onMakePaper(paperPosts()),className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',padding:'11px 14px',borderRadius:16,background:'#f3eee2',color:'#1c1a16',border:'1px solid #d9cfb6',textAlign:'left'}},
-          h('span',{style:{fontSize:22,lineHeight:1}},'📰'),
-          h('span',{style:{flex:1,minWidth:0}},h('span',{style:{display:'block',fontFamily:"'Playfair Display',Georgia,serif",fontSize:16,fontWeight:800}},'Make today’s paper'),
-            h('span',{style:{display:'block',fontSize:12,opacity:.7,marginTop:2}},'Tick videos → one newspaper with contents · '+paperPosts().length+' videos today')))):null,
-      h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:7,overflowX:'auto',padding:'4px 14px 10px'}},
-        pill('all','Today',newCount),
-        groupsWithFeeds.map(x=>pill(x.id,x.name,groupNewCount(groupItems(x.id)),groupColor(x.id))),
-        ungrouped.some(hasFeed)&&groups.length?pill('_other','Other',groupNewCount(ungrouped)):null,
-        catchDays.length?pill('earlier','Earlier',missedTotal):null),
-      tab==='earlier'&&catchDays.length?h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 14px 10px'}},
-        catchDays.map(d=>h('button',{key:d.key,onClick:()=>setDay(d.key),className:'act95',style:{flexShrink:0,padding:'6px 12px',borderRadius:9,fontSize:12.5,fontWeight:600,background:dayObj&&dayObj.key===d.key?T.fg:'transparent',color:dayObj&&dayObj.key===d.key?T.bg:T.meta,border:'1px solid '+(dayObj&&dayObj.key===d.key?T.fg:T.hair)}},
-          d.label,d.unseen?' · '+d.unseen:''))):null,
+    /* immersive: the feed fills the screen like YouTube Shorts; controls float over the video */
+    const glass={background:'rgba(20,20,24,.55)',backdropFilter:'blur(14px)',WebkitBackdropFilter:'blur(14px)',color:'#fff',border:'0.5px solid rgba(255,255,255,.14)'};
+    const pillD=(id,label,n,dot)=>h('button',{key:id,onClick:()=>{setTodayTab(id);if(id==='earlier')setDay(null)},className:'act95',
+      style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:999,fontSize:13,fontWeight:650},tab===id?{background:'#fff',color:'#000',border:'0.5px solid #fff'}:{})},
+      dot?h('span',{style:{width:7,height:7,borderRadius:4,background:dot}}):null,label,n?h('span',{style:{fontSize:11,fontWeight:800,opacity:.75}},n>99?'99+':n):null);
+    const chipD=(label,onClick,extra,aria)=>h('button',{onClick,'aria-label':aria||label,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:32,padding:'0 11px',borderRadius:16,fontSize:12.5,fontWeight:650},extra||{})},label);
+    const layer=h('div',{'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},
       h(RoutineShorts,{key:'today-'+tab+(dayObj?dayObj.key:''),T,title:tab==='earlier'?(dayObj?dayObj.label:'Earlier'):tab==='all'?'Today':(g?g.name:'Other'),color:g?groupColor(g.id):T.accent,
-        posts,max:todayMax,onToggleMax:()=>setTodayMax(v=>!v),embedded:true,height:'max(420px, calc(100dvh - '+(plN?330:255)+'px - 66px - env(safe-area-inset-bottom)))',toastFn,hidden:!!overlayOpen&&todayMax,
+        posts,max:false,embedded:true,header:false,height:'100%',padTop:tab==='earlier'?128:96,padBottom:'calc(64px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
         isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
+      h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(6px + '+SAFE_T+') 0 18px',background:'linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.35) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
+        h('div',{className:'sx',style:{display:'flex',alignItems:'center',gap:6,padding:'0 10px 8px',overflowX:'auto',pointerEvents:'auto'}},
+          chipD(h(Fragment,null,Icons.calendar(13),curSlot.name,win.sel===win.activeSlotId?h('span',{style:{fontSize:10,opacity:.75}},'now'):null),()=>setSlotSheet(true),null,'Routine windows'),
+          plN?chipD(h(Fragment,null,h('span',{style:{display:'flex'}},Icons.play(12,true)),'Play '+plN),()=>setPlaylist(playlistPosts()),{background:'#ff3b30',border:'0.5px solid #ff3b30'},'Play today’s videos'):null,
+          onMakePaper&&paperPosts().length?chipD('📰 Paper',()=>onMakePaper(paperPosts()),null,'Make today’s paper'):null,
+          h('div',{style:{flex:1,minWidth:4}}),
+          chipD(h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),()=>refreshFeeds(true),{width:32,padding:0,justifyContent:'center'},'Refresh'),
+          chipD(Icons.gear(15),()=>setView('manage'),{width:32,padding:0,justifyContent:'center'},'Manage channels, groups and times')),
+        h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 10px',pointerEvents:'auto'}},
+          pillD('all','Today',newCount),
+          groupsWithFeeds.map(x=>pillD(x.id,x.name,groupNewCount(groupItems(x.id)),groupColor(x.id))),
+          ungrouped.some(hasFeed)&&groups.length?pillD('_other','Other',groupNewCount(ungrouped)):null,
+          catchDays.length?pillD('earlier','Earlier',missedTotal):null),
+        tab==='earlier'&&catchDays.length?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'8px 10px 0',pointerEvents:'auto'}},
+          catchDays.map(d=>h('button',{key:d.key,onClick:()=>setDay(d.key),className:'act95',style:Object.assign({},glass,{flexShrink:0,padding:'5px 11px',borderRadius:9,fontSize:12,fontWeight:600},dayObj&&dayObj.key===d.key?{background:'#fff',color:'#000'}:{})},
+            d.label,d.unseen?' · '+d.unseen:''))):null,
+        (failN||proxyDown)&&!refreshing?h('div',{style:{padding:'6px 12px 0',fontSize:11.5,color:'#ffb4a8',pointerEvents:'auto'}},statusText,!snapAt?h('button',{onClick:()=>setupServerRefresh(brief,toastFn),style:{color:'#fff',fontWeight:700,marginLeft:6,fontSize:11.5,textDecoration:'underline'}},'Fix'):null):null));
+    return h(Fragment,null,
+      playlistEl,
+      ReactDOM.createPortal(layer,document.body),
       slotSheet?slotSheetEl():null);
   }
   return h('div',null,
@@ -6704,6 +6707,15 @@ function BookmarkRow({T,site,sub,onOpen,onPress,onMenu,editing,lifted,ghost,targ
         style:{display:'flex',alignItems:'center',justifyContent:'center',width:38,height:44,flexShrink:0,color:T.sub}},Icons.dots(17))));
 }
 
+/* swipe in from the left edge to leave a full-screen screen (like iOS back) */
+function edgeSwipe(onBack){
+  const st={x:0,y:0,on:false};
+  return{
+    onTouchStart:e=>{const t=e.touches[0];st.on=t.clientX<24;st.x=t.clientX;st.y=t.clientY},
+    onTouchEnd:e=>{if(!st.on)return;st.on=false;const t=e.changedTouches[0];const dx=t.clientX-st.x,dy=Math.abs(t.clientY-st.y);if(dx>80&&dy<60){vibrate(8);onBack()}}
+  };
+}
+window.instaEdgeSwipe=edgeSwipe;
 function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose,agentProps}){
   const [input,setInput]=useState('');
   const [inApp,setInApp]=useState(null); // {url} — in-app browser + Browser Agent (browser.js)
@@ -6968,9 +6980,9 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
         ?'Drag ∷ to reorder a link or move it into another group. Tap Done when you’re finished.'
         :'Tap a group’s name to collapse it, ⋯ on a link for its actions. Edit lets you reorder.'));
 
-  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+  return h('div',Object.assign({className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},inApp?{}:edgeSwipe(()=>{clearBrowserReturn();onClose()})),
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:()=>{clearBrowserReturn();onClose()},className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.x(22)),
+      h('button',{onClick:()=>{clearBrowserReturn();onClose()},'aria-label':'Back to the app',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.home(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search saved links or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
@@ -7809,10 +7821,16 @@ function App(){
   const pendingAlbumRef=useRef(null); // when set, the next upload lands straight in this album
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
   const listScrollRef=useRef(null); // main list scroller — used to jump to top from the wordmark
-  const [hdrP,setHdrP]=useState(0); // 0 = large title showing, 1 = folded into the bar
-  const hdrRaf=useRef(0);
-  useEffect(()=>{const el=listScrollRef.current;if(el)el.scrollTop=0;setHdrP(0)},[scope.type,scope.id]); // each section opens at its large title
-  const onListScroll=e=>{const y=e.currentTarget.scrollTop;if(hdrRaf.current)return;hdrRaf.current=requestAnimationFrame(()=>{hdrRaf.current=0;const p=Math.max(0,Math.min(1,y/46));setHdrP(x=>Math.abs(x-p)>0.04||p===0||p===1?p:x)})};
+  /* header, search row and the floating bar slide away while scrolling down and return on scroll up */
+  const [chromeHidden,setChromeHidden]=useState(false);
+  const lastY=useRef(0);
+  const setHdrP=()=>setChromeHidden(false);
+  useEffect(()=>{const el=listScrollRef.current;if(el)el.scrollTop=0;lastY.current=0;setChromeHidden(false)},[scope.type,scope.id]);
+  const onListScroll=e=>{const y=e.currentTarget.scrollTop;const dy=y-lastY.current;
+    if(y<40){if(chromeHidden)setChromeHidden(false)}
+    else if(dy>8){if(!chromeHidden)setChromeHidden(true)}
+    else if(dy<-8){if(chromeHidden)setChromeHidden(false)}
+    if(Math.abs(dy)>8||y<40)lastY.current=y};
   const searchRef=useRef(null); // global search field — focused when entering the Search scope
   const [findReq,setFindReq]=useState(0); // bumping this opens the Reader's find-in-article bar
   useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
@@ -8409,19 +8427,17 @@ function App(){
         selecting.mode==='playlist'?'Playlist · '+selecting.ids.length:selecting.ids.length+' selected'),
       h('div',{style:{width:70}}));
   }else{
-    /* iOS-style: a compact bar (☰ · title · ✦ · settings) and a large title that folds into it on scroll */
+    /* one slim bar (☰ · title · ✦ · settings) that slides away while you scroll down */
     const folderName=scope.type==='folder'?((data.folders||[]).find(f=>f.id===scope.id)||{}).name:'';
     const pageTitle=scope.type==='tag'?'#'+scope.id:folderName||({home:'Home',brief:'My Routine',blogs:'Blogs',headlines:'Headlines',photos:'Photos',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags',videos:'Videos',search:'Search'}[scope.type]||'Instapaper');
-    header=h('div',{style:{flexShrink:0,position:'relative',zIndex:3,background:hdrP>0.9?hexA(T.bg,.82):T.bg,backdropFilter:hdrP>0.9?'saturate(180%) blur(20px)':'none',WebkitBackdropFilter:hdrP>0.9?'saturate(180%) blur(20px)':'none',borderBottom:'0.5px solid '+(hdrP>0.9?T.hair:'transparent'),transition:'border-color 200ms, background-color 200ms'}},
-      h('div',{style:{display:'flex',alignItems:'center',padding:'4px 8px',position:'relative',height:46}},
+    header=h('div',{style:{flexShrink:0,overflow:'hidden',height:chromeHidden?0:46,transition:'height 260ms cubic-bezier(.2,.8,.2,1)',background:T.bg,position:'relative',zIndex:3}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:2,padding:'4px 8px',height:46}},
         headerBtn(scope.type==='tag'?Icons.back(23):Icons.menu(23),()=>scope.type==='tag'?setScope({type:'tags'}):setSidebar(true)),
-        h('button',{onClick:goHome,'aria-label':'Scroll to top',style:{position:'absolute',left:64,right:64,top:0,bottom:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:16.5,fontWeight:650,letterSpacing:'-.01em',color:T.fg,opacity:hdrP,transform:'translateY('+((1-hdrP)*6)+'px)',transition:'opacity 120ms',pointerEvents:hdrP>0.5?'auto':'none',overflow:'hidden',whiteSpace:'nowrap',textOverflow:'ellipsis'}},pageTitle),
+        h('button',{onClick:goHome,'aria-label':'Scroll to top',style:{minWidth:0,padding:'0 4px',fontSize:20,fontWeight:800,letterSpacing:'-.022em',color:T.fg,textAlign:'left',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},pageTitle),
         h('div',{style:{flex:1}}),
         headerBtn(Icons.ai(22),()=>setAiOpen({})),
         h('button',{onClick:()=>setSettingsOpen(true),'aria-label':'Settings',className:'act90',style:{width:34,height:34,borderRadius:17,marginLeft:2,marginRight:4,background:T.card,color:T.fg,display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},Icons.gear(18)),
-        EMBEDDED?headerBtn(Icons.back(23),exitToHost):null),
-      h('div',{style:{height:Math.round((1-hdrP)*46),overflow:'hidden',padding:'0 18px',opacity:1-hdrP*1.2}},
-        h('button',{onClick:goHome,style:{display:'block',fontFamily:UIF,fontSize:33,fontWeight:800,letterSpacing:'-.028em',lineHeight:'42px',color:T.fg,textAlign:'left',whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis',maxWidth:'100%',transformOrigin:'left center',transform:'scale('+(1-hdrP*0.12)+')'}},pageTitle)));
+        EMBEDDED?headerBtn(Icons.back(23),exitToHost):null));
   }
 
   /* ---------- main area ---------- */
@@ -8497,7 +8513,7 @@ function App(){
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100dvh',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
       header,
-      isArticleScope&&!selecting?h('div',{style:{padding:'2px 16px 10px',flexShrink:0}},
+      isArticleScope&&!selecting?h('div',{style:{padding:chromeHidden?'0 16px':'2px 16px 10px',flexShrink:0,maxHeight:chromeHidden?0:240,overflow:chromeHidden?'hidden':'visible',opacity:chromeHidden?0:1,transition:'max-height 260ms cubic-bezier(.2,.8,.2,1), padding 260ms, opacity 200ms'}},
         h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,borderRadius:11,padding:'9px 12px'}},
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
           h('input',{ref:searchRef,value:query,onChange:e=>setQuery(e.target.value),placeholder:'Search',
@@ -8548,7 +8564,7 @@ function App(){
                     l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
         })():null):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
-      h('div',{ref:listScrollRef,onScroll:onListScroll,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?66:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
+      h('div',{ref:listScrollRef,onScroll:onListScroll,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?74:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
         h('div',{key:scope.type+':'+(scope.id||''),className:'pgin'},body)),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
@@ -8569,11 +8585,11 @@ function App(){
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
       onRetry:()=>retryFetch(reading.id),findReq}):null,
 
-    !selecting&&!reading&&scope.type!=='turn'&&scope.type!=='brief'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
+    !showTabs&&!selecting&&!reading&&scope.type!=='turn'&&scope.type!=='brief'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
       style:{position:'fixed',right:18,bottom:'calc('+((ttsUI?94:24)+(showTabs?62:0))+'px + '+SAFE_B+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
 
-    showTabs?h(TabBar,{T,active:['home','brief','blogs'].includes(scope.type)?scope.type:'more',
-      onTab:k=>{if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}
+    showTabs?h(FloatingNav,{T,active:['home','brief'].includes(scope.type)?scope.type:'more',hidden:chromeHidden&&scope.type!=='brief',overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
+      onTab:k=>{if(k==='plus'){setSheet({type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
         setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),

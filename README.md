@@ -5,8 +5,10 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 ## Features
 
 **New look (iOS premium)**
-- 🧭 A frosted **tab bar** — Home · Routine · Browse · Blogs · More (More opens the menu with Headlines, Liked, Archive, Photos, Notes, Threads, Tags, Focus Timer, Settings); tap the current tab again to jump to the top
-- 🔠 **Large titles** that fold into a frosted bar as you scroll, with ☰, ✦ AI and a Settings button
+- 🧭 A YouTube-style **floating bar** — a slim frosted capsule of icons: Home · Routine · **+** (save a link, photo, note) · Browse · More (the menu: Blogs, Headlines, Liked, Archive, Photos, Notes, Threads, Tags, Focus Timer, Settings). Tap the current one again to jump to the top
+- 📐 More room: one slim header (title · ✦ · Settings) — the header, search row and floating bar slide away while you scroll down and come back when you scroll up
+- 🎬 **My Routine is immersive**: Today's Shorts fill the screen; routine time, ▶ Play, 📰 Paper, refresh, ⚙ Manage and the group pills float over the video
+- 🏠 Both browsers have a **Home** button, and a **swipe in from the left edge** takes you back to the app
 - ⚙️ **Settings → Display & Motion**: app **text size** (Small · Default · Large · Extra large), **app font** (San Francisco, Inter, Rounded, Serif — Telugu/Hindi always render), **Bold text**, **Higher contrast**, and **Motion** (Rich · Subtle · Off; iPhone Reduce Motion is followed until you choose)
 - ✨ Rich motion: spring sheets, page transitions between sections, cards that press in, a springy tab bar, and confetti when you finish a routine
 - 📖 **Reading presets** in Aa: Book, Newspaper, Modern, Large print

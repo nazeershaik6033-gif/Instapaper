@@ -2139,7 +2139,7 @@ function BUBrowser(props){
           h('span',{style:{flex:1,fontSize:13.5,lineHeight:1.4}},'Tap the banner, box or bar you want gone.'),
           h(Chip,{T,onClick:cancelPick},'Cancel'))):null);
 
-  return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+  return h('div',Object.assign({className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},window.instaEdgeSwipe?window.instaEdgeSwipe(tryClose):{}),
     /* address bar */
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0,borderBottom:'1px solid '+T.hair}},
       h('button',{onClick:tryClose,'aria-label':'Close browser',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg,width:38})},Icons.x(22)),
@@ -2165,6 +2165,7 @@ function BUBrowser(props){
       h('button',{onClick:()=>setHideHint(x=>({...x,[active.id]:1})),style:{color:T.sub,display:'flex',padding:2}},Icons.x(14))):null,
     /* toolbar */
     h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'space-around',padding:'4px 6px calc(4px + '+SAFE_B+')',borderTop:'1px solid '+T.hair,background:T.bg}},
+      tb(Icons.home(22),tryClose,false,'Back to the app'),
       tb(Icons.back(22),()=>ctl.back(activeId),!canBack,'Back'),
       tb(Icons.chevR(22),()=>ctl.forward(activeId),!canFwd,'Forward'),
       h('button',{onClick:()=>setSnap(snap&&snap!=='peek'?(running||run?'peek':null):'half'),className:'act95','aria-label':'Browser agent',style:{display:'flex',alignItems:'center',gap:7,height:38,padding:'0 15px',borderRadius:19,background:running?T.accent:T.fg,color:running?'#fff':T.bg,fontSize:14,fontWeight:650}},
