@@ -1875,8 +1875,9 @@ const Icons={
 const iconBtnS={width:42,height:42,display:'flex',alignItems:'center',justifyContent:'center',borderRadius:10,flexShrink:0};
 const SAFE_T='env(safe-area-inset-top)';
 const SAFE_B='env(safe-area-inset-bottom)';
-/* for fixed elements anchored to the bottom: corrects for iOS's too-short page (see index.html) */
-const SAFE_BF='(env(safe-area-inset-bottom) - var(--vgap, 0px))';
+/* bottom-anchored fixed elements: with the page stretched to the real height (index.html) the
+   plain safe-area inset is correct */
+const SAFE_BF='env(safe-area-inset-bottom)';
 
 function useLongPress(cb){
   const ref=useRef({t:null,x:0,y:0,fired:false});
@@ -2067,7 +2068,7 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
 const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['browse','Browse',s=>Icons.globe(s)],['more','More',s=>Icons.menu(s)]];
 function FloatingNav({T,active,hidden,onTab,overVideo}){
   const dark=overVideo||(typeof isDarkTheme==='function'&&isDarkTheme(T.id));
-  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(-1 * var(--vgap, 0px))',zIndex:35,
+  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:0,zIndex:35,
       display:'flex',justifyContent:'space-around',alignItems:'center',padding:'5px 6px calc(4px + '+SAFE_B+')',
       background:dark?'rgba(22,22,26,.82)':hexA(T.bg,.86),backdropFilter:'saturate(180%) blur(22px)',WebkitBackdropFilter:'saturate(180%) blur(22px)',
       borderTop:'0.5px solid '+(dark?'rgba(255,255,255,.12)':T.hair),
