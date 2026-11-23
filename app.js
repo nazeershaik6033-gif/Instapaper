@@ -7223,21 +7223,35 @@ function App(){
      IndexedDB (articles, notes, photos, settings) is never touched. */
   const forceReload=useCallback(async()=>{
     toastFn('Fetching the latest version…');
+    const within=(p,ms)=>Promise.race([p,new Promise(r=>setTimeout(r,ms))]); // never hang on a stuck step
+    /* 1. download every app file fresh, past the phone's web cache (it keeps files ~10 min),
+          so the reload below can't pick up an old copy */
+    const files=['./','./index.html','./app.js','./shields.js','./browser.js','./sw.js','./manifest.json','./newspaper.html','./newspaper.js'];
+    await within(Promise.all(files.map(f=>fetch(f,{cache:'reload'}).catch(()=>{}))),8000);
+    /* 2. drop the service worker and the cached app shell (downloaded ad-block lists stay) */
     try{
       if('serviceWorker'in navigator){
-        const regs=await navigator.serviceWorker.getRegistrations();
-        await Promise.all(regs.map(r=>r.unregister().catch(()=>{})));
+        const regs=await within(navigator.serviceWorker.getRegistrations(),3000)||[];
+        await within(Promise.all(regs.map(r=>r.unregister().catch(()=>{}))),3000);
       }
     }catch(e){}
     try{
       if('caches'in window){
-        const keys=await caches.keys();
-        await Promise.all(keys.map(k=>caches.delete(k).catch(()=>{})));
+        const keys=await within(caches.keys(),3000)||[];
+        await within(Promise.all(keys.filter(k=>!k.startsWith('insta-filters')).map(k=>caches.delete(k).catch(()=>{}))),3000);
       }
     }catch(e){}
+    try{sessionStorage.setItem('insta_forced',String(Date.now()))}catch(e){}
     const u=location.pathname+'?v='+Date.now();
     try{location.replace(u)}catch(e){location.reload()}
   },[toastFn]);
+  useEffect(()=>{ // confirm the reload worked
+    let f=0;try{f=Number(sessionStorage.getItem('insta_forced'))||0}catch(e){}
+    /* the new service worker may reload the page once more, so the note lives for 20 s */
+    if(f&&Date.now()-f<20000)setTimeout(()=>toastFn('✓ Updated to the latest version'),600);
+    else if(f)try{sessionStorage.removeItem('insta_forced')}catch(e){}
+    try{if(/[?&]v=\d+/.test(location.search))history.replaceState(null,'',location.pathname+location.hash)}catch(e){}
+  },[]);
 
   /* ---------- media (photos & files) — declared after toastFn so its useCallback deps resolve ---------- */
   useEffect(()=>{ // load media + albums from IndexedDB once

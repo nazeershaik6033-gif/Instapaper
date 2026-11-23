@@ -1,6 +1,6 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
 /* redeploy trigger: retry Pages deploy after a transient GitHub Pages failure */
-const CACHE = 'instapaper-shell-v130';
+const CACHE = 'instapaper-shell-v131';
 const SHELL = ['./', './index.html', './app.js', './shields.js', './browser.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   './newspaper.html', './newspaper.js', './newspaper.manifest.json',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
@@ -12,7 +12,8 @@ const RUNTIME_HOSTS = ['cdnjs.cloudflare.com', 'cdn.jsdelivr.net', 'fonts.google
 self.addEventListener('install', e => {
   e.waitUntil(
     caches.open(CACHE)
-      .then(c => Promise.allSettled(SHELL.map(u => c.add(u))))
+      /* cache: 'reload' skips the phone's web cache, so a new version never caches old files */
+      .then(c => Promise.allSettled(SHELL.map(u => c.add(new Request(u, { cache: 'reload' })))))
       .then(() => self.skipWaiting())
   );
 });
@@ -29,7 +30,8 @@ self.addEventListener('activate', e => {
 async function staleWhileRevalidate(req, navFallback) {
   const c = await caches.open(CACHE);
   const cached = await c.match(req, { ignoreSearch: navFallback });
-  const net = fetch(req).then(res => {
+  /* always check the server for a newer file (a navigation request can't take options, so use its URL) */
+  const net = fetch(req.mode === 'navigate' ? req.url : req, { cache: 'no-cache' }).then(res => {
     if (res && res.ok) c.put(req, res.clone()).catch(() => {});
     return res;
   }).catch(() => null);
