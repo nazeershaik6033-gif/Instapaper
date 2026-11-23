@@ -5,7 +5,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 ## Features
 
 **New look (iOS premium)**
-- 🧭 A YouTube-style **floating bar** — a slim frosted capsule of icons: Home · Routine · **+** (save a link, photo, note) · Browse · More (the menu: Blogs, Headlines, Liked, Archive, Photos, Notes, Threads, Tags, Focus Timer, Settings). Tap the current one again to jump to the top
+- 🧭 A slim **bottom bar** docked across the whole bottom edge — frosted, icons only: Home · Routine · **+** (save a link, photo, note) · Browse · More (the menu: Blogs, Headlines, Liked, Archive, Photos, Notes, Threads, Tags, Focus Timer, Settings). Tap the current one again to jump to the top
 - 🔍 Search is an icon in the header: tap it and it expands into a full-width search field (Everything · Title · Source · Tags) with **Cancel**
 - 📐 More room: one slim header (☰ · title · 🔍 · ✦ · Settings) — the header, search row and floating bar slide away while you scroll down and come back when you scroll up
 - 🎬 **My Routine is immersive**: Today's Shorts fill the screen; routine time, ▶ Play, 📰 Paper, refresh, ⚙ Manage and the group pills float over the video
