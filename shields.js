@@ -33,6 +33,7 @@ const DEFAULTS={
   hist:'all',     // history kept: off | 1 | 7 | 30 | 90 | all (days)
   listMode:false, // tab switcher as a list
   homeUrl:'',     // new tabs open this page
+  noApps:true,    // iPhone: open links in Safari, never let YouTube/Instagram… apps take them
   addrEngine:'',  // '' = the default search engine; or ddglite/startpage/brave/mojeek/ecosia
   lists:['easylist','easyprivacy']
 };
@@ -914,6 +915,7 @@ function ShieldSettingsSheet({T,S,set,data,update,onClose,toastFn,onClearData,sa
       sw('deamp','Skip AMP pages','Opens the publisher’s real page instead of Google AMP'),
       sw('https','Upgrade to HTTPS','Every http:// link opens over https://'),
       sw('referrer','Hide where you came from','Pages don’t learn which site linked you there'),
+      sw('noApps','Keep links in Safari','Stops YouTube, Instagram, Amazon… opening their apps instead of the website (iOS 17+)'),
       safari?null:sw('popups','Block pop-ups in Live view','Allow them per site from the shield; logins sometimes need them'),
       safari?null:h(Fragment,null,
       SectionTitle({T,children:'Filter lists'}),

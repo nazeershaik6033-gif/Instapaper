@@ -426,7 +426,24 @@ async function vaultDecrypt(pass,blob){
 
 /* Opens a URL in the system browser — reliable in PWA standalone mode on iOS where
    window.open() gets blocked as a popup. */
-function openExternalUrl(url){
+/* iOS hands https links for YouTube, Instagram, Amazon… to their apps (universal links).
+   The x-safari-https:// scheme (iOS 17+) opens the page in Safari itself, so no app takes over.
+   Privacy & Shields → "Keep links in Safari" (on by default) controls it. */
+function iosMajor(){
+  const ua=navigator.userAgent||'';
+  const ios=/iPhone|iPad|iPod/.test(ua)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1);
+  if(!ios)return 0;
+  const m=/OS (\d+)_/.exec(ua)||/Version\/(\d+)/.exec(ua);return m?Number(m[1]):0;
+}
+function safariOnlyUrl(url){
+  const u=String(url||'');
+  if(!/^https?:\/\//i.test(u)||iosMajor()<17)return'';
+  const X=window.InstaShields;if(X&&X.cfg().noApps===false)return'';
+  return'x-safari-'+u;
+}
+function openExternalUrl(url,opts){
+  const forced=!(opts&&opts.allowApp)&&safariOnlyUrl(url);
+  if(forced){try{const a=document.createElement('a');a.href=forced;a.style.cssText='position:fixed;left:-9999px;top:-9999px';document.body.appendChild(a);a.click();setTimeout(()=>{try{a.remove()}catch(e){}},500);return}catch(e){}}
   try{
     const a=document.createElement('a');
     a.href=String(url);a.target='_blank';a.rel='noopener noreferrer';
@@ -949,7 +966,7 @@ function openInClaude(prompt,toastFn){
   const text=String(prompt||'').trim();if(!text)return false;
   copyText(text);
   const capped=text.length>1500?text.slice(0,1500)+'\n\n[Full prompt copied to clipboard — paste to continue]':text;
-  openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(capped));
+  openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(capped),{allowApp:true}); // the Claude app should take this one
   if(toastFn)toastFn('Prompt copied — opening Claude. Paste it if it doesn’t appear.');
   return true;
 }
