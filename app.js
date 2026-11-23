@@ -4878,6 +4878,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const setView=v=>{setViewS(v);try{localStorage.setItem('insta_routine_view',v)}catch(e){}};
   const [todayTab,setTodayTab]=useState('all'); // 'all' | group id | '_other' | 'earlier'
   const [todayMax,setTodayMax]=useState(false);
+  const [todayMenu,setTodayMenu]=useState(false);
   const [playlist,setPlaylist]=useState(null); // posts snapshot
   /* "today" starts at this morning's first routine window (or 24h back before it begins) */
   const todayStart=(()=>{const d=new Date();const f=(slots[0]&&slots[0].time)||'06:00';const [hh,mm]=f.split(':').map(Number);
@@ -5322,11 +5323,11 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       n?h('span',{style:{fontSize:11,fontWeight:800,color:tab===id?T.bg:T.accent}},n>99?'99+':n):null);
     const groupsWithFeeds=groups.filter(x=>groupItems(x.id).some(hasFeed));
     /* immersive: the feed fills the screen like YouTube Shorts; controls float over the video */
-    const glass={background:'rgba(20,20,24,.55)',backdropFilter:'blur(14px)',WebkitBackdropFilter:'blur(14px)',color:'#fff',border:'0.5px solid rgba(255,255,255,.14)'};
+    const glass={background:'rgba(0,0,0,.58)',backdropFilter:'blur(14px)',WebkitBackdropFilter:'blur(14px)',color:'#fff',border:'1px solid rgba(255,255,255,.28)',touchAction:'manipulation'};
     const pillD=(id,label,n,dot)=>h('button',{key:id,onClick:()=>{setTodayTab(id);if(id==='earlier')setDay(null)},className:'act95',
       style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 12px',borderRadius:999,fontSize:13,fontWeight:650},tab===id?{background:'#fff',color:'#000',border:'0.5px solid #fff'}:{})},
       dot?h('span',{style:{width:7,height:7,borderRadius:4,background:dot}}):null,label,n?h('span',{style:{fontSize:11,fontWeight:800,opacity:.75}},n>99?'99+':n):null);
-    const chipD=(label,onClick,extra,aria)=>h('button',{onClick,'aria-label':aria||label,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:32,padding:'0 11px',borderRadius:16,fontSize:12.5,fontWeight:650},extra||{})},label);
+    const chipD=(label,onClick,extra,aria)=>h('button',{onClick,'aria-label':aria||label,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:36,padding:'0 13px',borderRadius:18,fontSize:13.5,fontWeight:700,textShadow:'0 1px 2px rgba(0,0,0,.4)'},extra||{})},label);
     const layer=h('div',{'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},
       h(RoutineShorts,{key:'today-'+tab+(dayObj?dayObj.key:''),T,title:tab==='earlier'?(dayObj?dayObj.label:'Earlier'):tab==='all'?'Today':(g?g.name:'Other'),color:g?groupColor(g.id):T.accent,
         posts,max:false,embedded:true,header:false,height:'100%',padTop:tab==='earlier'?128:96,padBottom:'calc(52px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
@@ -5334,12 +5335,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
       h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(6px + '+SAFE_T+') 0 18px',background:'linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.35) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
         h('div',{className:'sx',style:{display:'flex',alignItems:'center',gap:6,padding:'0 10px 8px',overflowX:'auto',pointerEvents:'auto'}},
-          chipD(h(Fragment,null,Icons.calendar(13),curSlot.name,win.sel===win.activeSlotId?h('span',{style:{fontSize:10,opacity:.75}},'now'):null),()=>setSlotSheet(true),null,'Routine windows'),
-          plN?chipD(h(Fragment,null,h('span',{style:{display:'flex'}},Icons.play(12,true)),'Play '+plN),()=>setPlaylist(playlistPosts()),{background:'#ff3b30',border:'0.5px solid #ff3b30'},'Play today’s videos'):null,
+          chipD(h(Fragment,null,curSlot.name,h('span',{style:{display:'flex',transform:'rotate(90deg)',opacity:.8}},Icons.chevR(12))),()=>setSlotSheet(true),null,'Routine windows'),
+          plN?chipD(h(Fragment,null,h('span',{style:{display:'flex'}},Icons.play(13,true)),'Play '+plN),()=>setPlaylist(playlistPosts()),{background:'#ff3b30',border:'1px solid #ff6a5f'},'Play today’s videos'):null,
           onMakePaper&&paperPosts().length?chipD('📰 Paper',()=>onMakePaper(paperPosts()),null,'Make today’s paper'):null,
           h('div',{style:{flex:1,minWidth:4}}),
-          chipD(h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),()=>refreshFeeds(true),{width:32,padding:0,justifyContent:'center'},'Refresh'),
-          chipD(Icons.gear(15),()=>setView('manage'),{width:32,padding:0,justifyContent:'center'},'Manage channels, groups and times')),
+          refreshing?h('span',{style:{display:'flex',color:'#fff',animation:'spk 900ms linear infinite',flexShrink:0}},Icons.refresh(15)):null,
+          chipD(Icons.dots(18),()=>setTodayMenu(true),{width:36,padding:0,justifyContent:'center'},'Routine menu')),
         h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 10px',pointerEvents:'auto'}},
           pillD('all','Today',newCount),
           groupsWithFeeds.map(x=>pillD(x.id,x.name,groupNewCount(groupItems(x.id)),groupColor(x.id))),
@@ -5349,10 +5350,19 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
           catchDays.map(d=>h('button',{key:d.key,onClick:()=>setDay(d.key),className:'act95',style:Object.assign({},glass,{flexShrink:0,padding:'5px 11px',borderRadius:9,fontSize:12,fontWeight:600},dayObj&&dayObj.key===d.key?{background:'#fff',color:'#000'}:{})},
             d.label,d.unseen?' · '+d.unseen:''))):null,
         (failN||proxyDown)&&!refreshing?h('div',{style:{padding:'6px 12px 0',fontSize:11.5,color:'#ffb4a8',pointerEvents:'auto'}},statusText,!snapAt?h('button',{onClick:()=>setupServerRefresh(brief,toastFn),style:{color:'#fff',fontWeight:700,marginLeft:6,fontSize:11.5,textDecoration:'underline'}},'Fix'):null):null));
+    const menuEl=todayMenu?h(Sheet,{T,onClose:()=>setTodayMenu(false),z:80},
+      h('div',{style:{padding:'4px 20px 10px',fontSize:13,color:T.sub}},statusText+(nextSlot&&!refreshing?' · Next: '+nextSlot.name+' '+fmtClock(nextSlot.time):'')),
+      h(ARow,{T,icon:Icons.refresh(21),label:refreshing?'Refreshing…':'Refresh now',sub:'Fetch the latest from every channel',onClick:()=>{setTodayMenu(false);refreshFeeds(true)}}),
+      h(ARow,{T,icon:Icons.pencil(21),label:'Manage channels & groups',sub:'Add, edit, group, reorder, catch-up list',onClick:()=>{setTodayMenu(false);setView('manage')}}),
+      h(ARow,{T,icon:Icons.calendar(21),label:'Routine times',sub:'Morning, afternoon, night windows',onClick:()=>{setTodayMenu(false);setSlotSheet(true)}}),
+      catchDays.length?h(ARow,{T,icon:Icons.clock(21),label:'Earlier updates',sub:(missedTotal?missedTotal+' unread · ':'')+'Catch up on past days',onClick:()=>{setTodayMenu(false);setTodayTab('earlier');setDay(null)}}):null,
+      (failN||proxyDown)&&!snapAt?h(ARow,{T,icon:Icons.bolt(21),label:'Fix updates for good',sub:'Set up server refresh (2 taps)',onClick:()=>{setTodayMenu(false);setupServerRefresh(brief,toastFn)}}):null):null;
+    /* sheets from this screen render on <body> so they open above the full-screen video layer */
     return h(Fragment,null,
       playlistEl,
       ReactDOM.createPortal(layer,document.body),
-      slotSheet?slotSheetEl():null);
+      slotSheet?ReactDOM.createPortal(slotSheetEl(),document.body):null,
+      menuEl?ReactDOM.createPortal(menuEl,document.body):null);
   }
   return h('div',null,
     playlistEl,
@@ -6978,7 +6988,6 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
     h('div',{style:{display:'flex',gap:10,marginTop:16}},
       h('button',{onClick:()=>{setFName('');setMkFolder({})},className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
       h('button',{onClick:()=>setHistOpen(true),className:'act98',style:{flex:1,display:'flex',alignItems:'center',justifyContent:'center',gap:8,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.clock(17),'History')),
-    h('button',{onClick:()=>setEpaper({url:''}),className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',marginTop:10,padding:'12px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.download(18),'E-paper to PDF'),
     h('div',{style:{fontSize:12,color:T.sub,marginTop:16,lineHeight:1.5}},
       editMode
         ?'Drag ∷ to reorder a link or move it into another group. Tap Done when you’re finished.'
