@@ -8657,7 +8657,7 @@ function App(){
       onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
       onExit:()=>setScope({type:'home'})}):null,
 
-    bookId&&window.InstaBooks?h(window.InstaBooks.BookReader,{key:bookId,T,bookId,toastFn,onClose:()=>setBookId(null)}):null,
+    bookId&&window.InstaBooks?h(window.InstaBooks.BookReader,{key:bookId,T,S,bookId,toastFn,onClose:()=>setBookId(null)}):null,
     reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,more:readMore,
       onOpenMore:m=>{if(m.kind==='lib')openArticle(m.id);else addBriefItem({title:m.title,url:m.url,source:m.label,publishedAt:m.date})},
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
