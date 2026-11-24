@@ -692,7 +692,8 @@ function parseYtText(raw){
     const videoId=tx('yt:videoId')||tx('videoId');if(!videoId)return null;
     const tn=entry.getElementsByTagName('media:thumbnail')[0];
     const thumb=(tn&&tn.getAttribute('url'))||('https://i.ytimg.com/vi/'+videoId+'/hqdefault.jpg');
-    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb};
+    const alt=[].slice.call(entry.getElementsByTagName('link')).map(l=>l.getAttribute('href')||'').find(x=>/youtube\.com\/(shorts|watch)/.test(x))||'';
+    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb,short:/\/shorts\//.test(alt)||undefined};
   }).filter(Boolean);
 }
 function tmin(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):0}
@@ -870,7 +871,8 @@ async function discoverFeed(url){
   return'';
 }
 function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
-const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}));
+const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb,short:x.short||undefined}));
+const isShortEntry=e=>!!(e&&(e.short||/\/shorts\//.test(e.url||'')));
 /* What to fetch and how to read it, for a source — shared by the one-by-one path and the batch path. */
 function feedSpec(it){
   if(it.kind==='youtube'&&it.channelId)return{url:ytFeedUrl(it.channelId),parse:raw=>ytEntries(parseYtText(raw))};
@@ -938,12 +940,12 @@ function setupServerRefresh(brief,toastFn){
 /* The snapshot only changes when the GitHub job runs (a few times a day), so a
    short in-memory memo keeps the every-minute background pass from pulling the
    whole file again and again. A manual Refresh bypasses it. */
-let snapMemo={at:0,val:null};
+let snapMemo={at:0,val:null},snapInflight=null;
 async function fetchFeedsSnapshot(fresh){
   if(!fresh&&snapMemo.val&&Date.now()-snapMemo.at<3*60000)return snapMemo.val;
-  const val=await fetchFeedsSnapshotNow();
-  if(val)snapMemo={at:Date.now(),val};
-  return val;
+  if(snapInflight)return snapInflight; // two callers at once share one download
+  snapInflight=fetchFeedsSnapshotNow().then(val=>{if(val)snapMemo={at:Date.now(),val};return val}).finally(()=>{snapInflight=null});
+  return snapInflight;
 }
 async function fetchFeedsSnapshotNow(){
   try{
@@ -1768,6 +1770,8 @@ function loadStore(){
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
+  // Once: videos that only came in to hold a transcript (no like, folder or tags) leave Home; Save brings one back
+  if(!d.settings.routineOnlyV1){d.articles.forEach(a=>{if(a.isVideo&&!a.isEdition&&!a.liked&&!a.folderId&&!a.tags.length&&((a.transcript&&String(a.transcript).trim())||(a.editions&&Object.keys(a.editions).length)))a.routineOnly=true});d.settings.routineOnlyV1=true}
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
   d.siteHistory=Array.isArray(d.siteHistory)?d.siteHistory:[]; // browser visit log (most visited / history)
@@ -2152,7 +2156,7 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
    (or searches the library), sections Read · Follow · Library · Folders that fold, live counts, and an
    Edit mode to reorder or hide items. Browse · Focus · Edit · Settings sit in a bottom row. */
 function sidebarCounts(d){
-  const arts=d.articles||[];
+  const arts=(d.articles||[]).filter(a=>!a.routineOnly);
   const unread=arts.filter(a=>!a.archived&&!a.isPost&&(a.progress||0)<0.97).length;
   const folders={};arts.forEach(a=>{if(a.folderId&&!a.archived)folders[a.folderId]=(folders[a.folderId]||0)+1});
   let routine=0;const b=d.brief||{};const seen=b.seen||{};const since=Date.now()-86400000;const live=new Set((b.items||[]).map(i=>i.id));
@@ -4673,7 +4677,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
     const e=p.e,it=p.it;
     const vidId=ytIdOf(e.url)||'';
     const vid=it.kind==='youtube'||!!vidId;
-    const isShort=/\/shorts\//.test(e.url||'');
+    const isShort=isShortEntry(e);
     const thumb=entryThumb(e)||(vidId?'https://i.ytimg.com/vi/'+vidId+'/hqdefault.jpg':'');
     const ttl=cleanEntryTitle(e.title,it.name)||'Update';
     const done=isDone(p);const saved=isSaved(e);const hasTx=vidId&&txOf&&txOf(e);
@@ -4693,7 +4697,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
       h('div',{style:{position:'absolute',left:0,right:70,bottom:0,padding:'60px 16px calc(18px + '+padB+')',background:'linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0))',color:'#fff',pointerEvents:'none'}},
         h('div',{style:{display:'flex',alignItems:'baseline',gap:0,marginBottom:5,minWidth:0,whiteSpace:'nowrap',overflow:'hidden'}},
           h('span',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',flexShrink:1,minWidth:0}},it.name),
-          h('span',{style:{fontSize:12.5,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':''].join('')),
+          h('span',{style:{fontSize:12.5,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':'',isShort?'\u00a0· Short':''].join('')),
           done?h('span',{style:{fontSize:12.5,color:'#7ee29a',fontWeight:600,flexShrink:0}},'\u00a0· Done'):null),
         thumb||vidId?h('div',{style:{fontSize:15.5,fontWeight:700,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl):null,
         e.excerpt?h('div',{style:{fontSize:12.5,opacity:.8,lineHeight:1.4,marginTop:4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null),
@@ -4703,14 +4707,14 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   };
   const moreRow=(icon,label,sub,fn)=>h('button',{onClick:()=>{setMore(null);fn()},className:'act98',style:{display:'flex',alignItems:'center',gap:14,width:'100%',textAlign:'left',padding:'13px 18px',color:'#fff',borderBottom:'1px solid rgba(255,255,255,.08)'}},
     h('span',{style:{display:'flex',opacity:.85}},icon),h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:600}},label),sub?h('span',{style:{display:'block',fontSize:12,opacity:.6,marginTop:2}},sub):null));
-  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const hasTx=vidId&&txOf&&txOf(p.e);const done=isDone(p);const saved=isSaved(p.e);
+  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const short=isShortEntry(p.e);const hasTx=vidId&&txOf&&txOf(p.e);const done=isDone(p);const saved=isSaved(p.e);
     return h('div',{style:{position:'absolute',inset:0,zIndex:6}},
       h('div',{onClick:()=>setMore(null),style:{position:'absolute',inset:0,background:'rgba(0,0,0,.45)'}}),
       h('div',{style:{position:'absolute',left:0,right:0,bottom:0,background:'#1c1c1f',borderRadius:'16px 16px 0 0',paddingBottom:padBottom?'calc(8px + '+padB+')':'calc(8px + env(safe-area-inset-bottom))',maxHeight:'86%',overflowY:'auto'}},
         h('div',{style:{padding:'14px 18px 8px',color:'#fff',fontSize:13,opacity:.7,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},cleanEntryTitle(p.e.title,p.it.name)),
         moreRow(h('span',{style:{display:'flex',color:done?'#7ee29a':'#fff'}},Icons.check(20)),done?'Done ✓ — mark as not done':'Done',done?'Tap to put it back in your routine':'Mark it watched and move on',()=>onDone(p)),
         moreRow(Icons.download(20),saved?'Saved ✓':'Save',saved?'Already in your library':'Keep it in your library',()=>{if(!saved)onSave(p);else toastFn&&toastFn('Already saved')}),
-        vidId&&onTool?h(Fragment,null,
+        vidId&&onTool&&!short?h(Fragment,null,
           moreRow(SVG_TX(20),hasTx?'Transcript':'Get transcript',hasTx?'Edit, copy, translate or replace it':'Opens youtubetotranscript for this video — copy, come back, Paste',()=>onTool(p,'transcript')),
           moreRow(SVG_PAPER(20),'Read as newspaper',hasTx?'The AI newspaper edition — read, highlight, download':'Add the transcript first',()=>onTool(p,'newspaper')),
           moreRow(Icons.ai(20),'AI summary','Key points and takeaway',()=>onTool(p,'summary')),
@@ -4813,8 +4817,27 @@ function srcOf(it){
   if(it.kind==='youtube'||/(^|\/\/|\.)(youtube\.com|youtu\.be)/i.test(String(it.url||'')))return'youtube';
   const p=window.InstaSocial&&window.InstaSocial.platformOf(it);return p||'web';
 }
+/* Groups: YouTube and Web share brief.groups without a platform; every social platform
+   (Instagram, X, Telegram, Threads, Reddit, Bluesky, Mastodon…) has its own groups, marked g.platform. */
+function platOfItem(it){const s=srcOf(it);return s==='youtube'||s==='web'?null:s}
+function migratePlatGroups(b){
+  const groups=(b.groups||[]).slice(),items=(b.items||[]).slice(),made={};
+  (b.groups||[]).forEach(g=>{if(g.platform)return;
+    [...new Set(items.filter(it=>it.groupId===g.id).map(platOfItem).filter(Boolean))].forEach(p=>{const ng={id:uid(),name:g.name,platform:p};groups.push(ng);made[p+'|'+g.id]=ng.id})});
+  return{...b,platGroupsV1:true,groups,items:items.map(it=>{const k=made[platOfItem(it)+'|'+it.groupId];return k?{...it,groupId:k}:it})};
+}
+/* a social item put in a shared group lands in its platform's group of the same name (made if missing) */
+function platGroupFix(b,it){
+  const p=platOfItem(it);if(!p||!it.groupId)return{b,it};const gs=b.groups||[];const g=gs.find(x=>x.id===it.groupId);
+  if(!g||(g.platform||null)===p)return{b,it};
+  const ex=gs.find(x=>x.platform===p&&x.name===g.name);if(ex)return{b,it:{...it,groupId:ex.id}};
+  const ng={id:uid(),name:g.name,platform:p};return{b:{...b,groups:gs.concat([ng])},it:{...it,groupId:ng.id}};
+}
 function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry,onVideoTool,txOf,overlayOpen,onMakePaper}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
+  useEffect(()=>{if(!brief.platGroupsV1)onBrief(b=>b.platGroupsV1?b:migratePlatGroups(b))},[brief.platGroupsV1]);
+  const groupsFor=p=>groups.filter(g=>(g.platform||null)===(p||null));
+  const inOwnGroup=it=>!!it.groupId&&groupsFor(platOfItem(it)).some(g=>g.id===it.groupId);
   const snoozedNow=id=>{const u=brief.snoozed&&brief.snoozed[id];return!!(u&&u>Date.now())};
   const [view,setViewS]=useState(()=>{try{return localStorage.getItem('insta_routine_view')||'today'}catch(e){return'today'}});
   const [rsrc,setRsrcS]=useState(()=>{try{return localStorage.getItem('insta_routine_src')||'youtube'}catch(e){return'youtube'}});
@@ -5018,7 +5041,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const openEntry=e=>{if(e&&e.url){markSeen([e.url]);openExternalUrl(e.url)}};
   /* ---- Shorts: a group's updates as a vertical swipe feed ---- */
   const [shorts,setShorts]=useState(null); // {gid, max}
-  const groupItems=gid=>gid==='_other'?vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId)):vis.filter(i=>i.groupId===gid);
+  const groupItems=gid=>gid==='_other'?vis.filter(i=>!inOwnGroup(i)):vis.filter(i=>i.groupId===gid);
   const shortsPosts=gid=>{
     const out=[];
     for(const it of groupItems(gid)){
@@ -5074,14 +5097,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     return out.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   };
   const playlistPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)&&!seenMap[p.e.url]).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
-  const paperPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
+  const paperPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)&&!isShortEntry(p.e)).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
   const doneEarlier=p=>{if(seenMap[p.e.url])unSeen(p.e.url);else{markSeen([p.e.url]);vibrate(8)}};
   const shortsBtn=gid=>groupItems(gid).some(hasFeed)?h('button',{onClick:()=>shorts&&shorts.gid===gid?setShorts(null):openShorts(gid),className:'act95','aria-label':'Shorts',
     style:{display:'flex',alignItems:'center',gap:4,flexShrink:0,padding:'5px 10px',borderRadius:14,background:shorts&&shorts.gid===gid?T.fg:hexA(T.accent,.12),color:shorts&&shorts.gid===gid?T.bg:T.accent,fontSize:12,fontWeight:700}},Icons.play(11,true),'Shorts'):null;
   const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
   const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
   const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
-  const moveGroup=(idx,dir)=>onBrief(b=>{const gs=[...(b.groups||[])];const dst=idx+dir;if(dst<0||dst>=gs.length)return b;const[mv]=gs.splice(idx,1);gs.splice(dst,0,mv);return{...b,groups:gs}});
+  const moveGroup=(id,dir,within)=>onBrief(b=>{const gs=[...(b.groups||[])];const ids=within.map(g=>g.id);const k=ids.indexOf(id),nb=ids[k+dir];if(k<0||!nb)return b;
+    const i=gs.findIndex(g=>g.id===id),j=gs.findIndex(g=>g.id===nb);if(i<0||j<0)return b;[gs[i],gs[j]]=[gs[j],gs[i]];return{...b,groups:gs}});
   const saveItem=f=>{
     const raw=(f.url||'').trim();if(!raw){toastFn('Enter a link or handle');return}
     const patch={kind:f.kind,channelId:f.channelId||'',handle:'',feedUrl:'',url:''};
@@ -5100,8 +5124,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     if(f.kind==='telegram'&&!patch.handle)toastFn('Couldn\'t read that Telegram handle');
     // Add/patch the item immediately — never block the sheet on the network.
     let itemId=f.id;
-    if(f.id)onBrief(b=>({...b,items:b.items.map(x=>x.id===f.id?{...x,...patch}:x)}));
-    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>({...b,items:b.items.concat([ni])}))}
+    if(f.id)onBrief(b=>{const cur=b.items.find(x=>x.id===f.id);if(!cur)return b;const r=platGroupFix(b,{...cur,...patch});return{...r.b,items:r.b.items.map(x=>x.id===f.id?r.it:x)}});
+    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>{const r=platGroupFix(b,ni);return{...r.b,items:r.b.items.concat([r.it])}})}
     setEdit(null);
     // Resolve a YouTube channel id (if needed) and fetch the first feed batch in
     // the background, patching the item once they arrive.
@@ -5199,8 +5223,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   /* ---- tabs ------------------------------------------------------------ */
   const q=query.trim().toLowerCase();
   const matchQ=it=>!q||(((it.name||'')+' '+domainOf(it.url)).toLowerCase().indexOf(q)>=0);
-  const ungrouped=vis.filter(i=>!i.groupId||!groups.some(g=>g.id===i.groupId));
-  const tabOrder=['catchup','all'].concat(groups.map(g=>g.id)).concat(ungrouped.length?['_other']:[]);
+  const mPlat=mEff!=='all'&&mEff!=='youtube'&&mEff!=='web'?mEff:null;
+  const mGroups=mEff==='all'?groups:groupsFor(mPlat); // YouTube/Web: shared groups; a social app: its own
+  const platLabel=p=>((SRC_DEF.find(x=>x[0]===p)||[0,p])[1]);
+  const gLabel=g=>g.platform&&mEff==='all'?g.name+' · '+platLabel(g.platform):g.name;
+  const ungrouped=vis.filter(i=>!inOwnGroup(i));
+  const tabOrder=['catchup','all'].concat(mGroups.map(g=>g.id)).concat(ungrouped.length?['_other']:[]);
   const activeTab=tabOrder.indexOf(tab)>=0?tab:'all';
   activeTabRef.current=activeTab;
   const setTabP=v=>{setTab(v);setDay(null);try{v==='catchup'?localStorage.removeItem(BRIEF_TAB_KEY):localStorage.setItem(BRIEF_TAB_KEY,v)}catch(e){}};
@@ -5240,10 +5268,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         style:{display:'flex',alignItems:'center',gap:7,padding:'2px 0',borderRadius:8,background:'transparent',border:'none',minWidth:0,overflow:'hidden',flex:1}},
         h('span',{style:{display:'flex',color:T.sub,flexShrink:0,transform:isOpen?'rotate(90deg)':'none',transition:'transform 160ms'}},Icons.chevR(12)),
         h('span',{style:{width:8,height:8,borderRadius:4,flexShrink:0,background:g?groupColor(g.id):T.sub}}),
-        h('span',{style:{fontSize:15,fontWeight:650,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,textAlign:'left'}},g?g.name:'Other'),
+        h('span',{style:{fontSize:15,fontWeight:650,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',flex:1,minWidth:0,textAlign:'left'}},g?gLabel(g):'Other'),
         groupNew?h('span',{style:{fontSize:11,fontWeight:700,color:T.accent,background:hexA(T.accent,.16),borderRadius:999,padding:'2px 8px',flexShrink:0}},groupNew+' new'):h('span',{style:{fontSize:11,color:T.sub,flexShrink:0}},String(list.length))),
       shortsBtn(key),
-      h('button',{onClick:()=>setEdit({groupId:g?g.id:null,kind:'link',name:'',url:''}),className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
+      h('button',{onClick:()=>{const pp=(g&&g.platform)||mPlat;setEdit({groupId:g?g.id:null,kind:pp?(pp==='telegram'?'telegram':'social'):'link',platform:pp&&pp!=='telegram'?pp:undefined,name:'',url:''})},className:'act90','aria-label':'Add item',style:{display:'flex',flexShrink:0,color:T.accent,padding:4,borderRadius:6}},Icons.plus(18)));
   };
 
   /* Rail entries read as one continuous list — a colour dot, the name, and a
@@ -5258,7 +5286,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const tipTimer=useRef(0);
   const showTip=(e,text,ms)=>{const r=e.currentTarget.getBoundingClientRect();clearTimeout(tipTimer.current);setTip({text,top:r.top+r.height/2,left:r.right+8});if(ms)tipTimer.current=setTimeout(()=>setTip(null),ms)};
   const hideTip=()=>{clearTimeout(tipTimer.current);setTip(null)};
-  const railTags=uniqueLetters(['Past days','All'].concat(groups.map(g=>g.name),['Other']));
+  const railTags=uniqueLetters(['Past days','All'].concat(mGroups.map(g=>g.name),['Other']));
   const railBtn=(id,label,opts)=>{
     const on=activeTab===id,o=opts||{};
     if(!railOpen)return h('button',{key:id,ref:on?activeRef:null,onClick:()=>setTabP(id),className:'act95','aria-label':label,onMouseEnter:e=>showTip(e,o.tip||label),onMouseLeave:hideTip,onFocus:e=>showTip(e,o.tip||label),onBlur:hideTip,onTouchStart:e=>showTip(e,o.tip||label,1400),
@@ -5283,9 +5311,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         borderTop:railOpen?'1px solid '+T.hair:'none',transition:'width 160ms'}},
       railBtn('catchup','Past days',{color:T.sub,alert:missedTotal||0,tag:railTags[0],tip:'Past days'}),
       railBtn('all','All',{color:T.sub,count:vis.length,tag:railTags[1]}),
-      groups.map((g,gi)=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
-        return railBtn(g.id,g.name,{color:groupColor(g.id),alert:n||0,count:n?null:list.length,tag:railTags[2+gi]})}),
-      ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length,tag:railTags[2+groups.length]}):null,
+      mGroups.map((g,gi)=>{const list=vis.filter(i=>i.groupId===g.id),n=groupNewCount(list);
+        return railBtn(g.id,gLabel(g),{color:groupColor(g.id),alert:n||0,count:n?null:list.length,tag:railTags[2+gi]})}),
+      ungrouped.length?railBtn('_other','Other',{color:T.sub,count:ungrouped.length,tag:railTags[2+mGroups.length]}):null,
       railOpen?h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
         style:{display:'flex',alignItems:'center',gap:7,padding:'9px 8px 9px 11px',color:T.sub,fontSize:12,fontWeight:600}},Icons.plus(14),'New group')
         :h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
@@ -5318,7 +5346,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const storyRow=h('div',{ref:storyRef,className:'sx','data-noswipe':'1',style:{display:'flex',gap:7,overflowX:'auto',padding:'6px 14px 4px'}},
     tabChip('catchup','Past days',{icon:Icons.clock(14),n:missedTotal}),
     tabChip('all','All',{n:newCount}),
-    groups.map(g=>tabChip(g.id,g.name,{color:groupColor(g.id),n:groupNewCount(vis.filter(i=>i.groupId===g.id))})),
+    mGroups.map(g=>tabChip(g.id,gLabel(g),{color:groupColor(g.id),n:groupNewCount(vis.filter(i=>i.groupId===g.id))})),
     ungrouped.length?tabChip('_other','Other',{color:T.sub,n:groupNewCount(ungrouped)}):null,
     h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
       style:{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',width:34,height:34,borderRadius:17,border:'1px dashed '+T.hair,color:T.sub}},Icons.plus(15)));
@@ -5430,7 +5458,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
 
   /* ---- routine list views ---------------------------------------------- */
   const allView=()=>{
-    const sections=groups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
+    const sections=mGroups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
     if(ungrouped.length)sections.push({g:null,list:ungrouped});
     const rendered=sections.map(({g,list})=>{
       const key=g?g.id:'_other';
@@ -5501,7 +5529,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     const dayObj=pday?(catchDays.find(d=>d.key===pday)||null):null;
     const inGrp=it=>grp==='all'||(grp==='_other'?(!it.groupId||!groups.some(x=>x.id===it.groupId)):it.groupId===grp);
     const todayAll=todayPosts('all').filter(p=>!p.card);
-    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it));
+    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it))
+      .map((p,i)=>[p,i]).sort((a,b)=>(isShortEntry(a[0].e)-isShortEntry(b[0].e))||(a[1]-b[1])).map(x=>x[0]);
     const srcNew=k=>todayAll.filter(p=>p.isNew&&srcOf(p.it)===k).length;
     const isSocSrc=!['youtube','web'].includes(srcK);
     const accounts=isSocSrc?visAll.filter(it=>srcOf(it)===srcK&&inGrp(it)).map(it=>{
@@ -5600,7 +5629,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
             h('img',{src:'https://i.ytimg.com/vi/'+vid+'/mqdefault.jpg',alt:'',loading:'lazy',style:{width:72,height:40,borderRadius:6,objectFit:'cover',flexShrink:0,background:T.thumbBg}}),
             h('span',{style:{flex:1,minWidth:0}},
               h('span',{style:{display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',fontSize:14,fontWeight:600,lineHeight:1.3}},cleanEntryTitle(p.e.title,p.it.name)||'Video'),
-              h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},[p.it.name,p.e.publishedMs?fmtAgo(p.e.publishedMs):'',seenMap[u]?'watched':''].filter(Boolean).join(' · '))))}),
+              h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},[p.it.name,p.e.publishedMs?fmtAgo(p.e.publishedMs):'',isShortEntry(p.e)?'Short':'',seenMap[u]?'watched':''].filter(Boolean).join(' · '))))}),
         h('div',{style:{position:'sticky',bottom:0,background:T.sheet,borderTop:'1px solid '+T.hair,padding:'12px 18px 4px'}},
           ytPl.link?h('div',null,
             h('div',{style:{fontSize:12,color:T.sub,marginBottom:6}},n+' video'+(n===1?'':'s')+' · your playlist link'),
@@ -5703,15 +5732,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     manage?h(Sheet,{T,title:'Groups',maxH:'90%',onClose:()=>setManage(false)},
       h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
         h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 12px',lineHeight:1.45}},'Groups are the tabs down the left of the routine screen. Reorder them here to change the order they appear in.'),
-        groups.map((g,idx)=>h('div',{key:g.id,style:{display:'flex',alignItems:'center',gap:6,padding:'9px 10px',marginBottom:8,borderRadius:11,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+groupColor(g.id)}},
+        mGroups.map((g,idx)=>h('div',{key:g.id,style:{display:'flex',alignItems:'center',gap:6,padding:'9px 10px',marginBottom:8,borderRadius:11,background:T.card,border:'1px solid '+T.hair,borderLeft:'4px solid '+groupColor(g.id)}},
           h('div',{style:{flex:1,minWidth:0}},
-            h('div',{style:{fontSize:14.5,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},g.name),
+            h('div',{style:{fontSize:14.5,fontWeight:600,color:T.fg,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},gLabel(g)),
             h('div',{style:{fontSize:11.5,color:T.sub}},(n=>n+' source'+(n===1?'':'s'))(vis.filter(i=>i.groupId===g.id).length))),
-          h('button',{onClick:()=>moveGroup(idx,-1),disabled:idx===0,className:'act90','aria-label':'Move up',style:{display:'flex',color:T.sub,padding:5,opacity:idx===0?.3:1,transform:'rotate(-90deg)'}},Icons.chevR(16)),
-          h('button',{onClick:()=>moveGroup(idx,1),disabled:idx===groups.length-1,className:'act90','aria-label':'Move down',style:{display:'flex',color:T.sub,padding:5,opacity:idx===groups.length-1?.3:1,transform:'rotate(90deg)'}},Icons.chevR(16)),
+          h('button',{onClick:()=>moveGroup(g.id,-1,mGroups),disabled:idx===0,className:'act90','aria-label':'Move up',style:{display:'flex',color:T.sub,padding:5,opacity:idx===0?.3:1,transform:'rotate(-90deg)'}},Icons.chevR(16)),
+          h('button',{onClick:()=>moveGroup(g.id,1,mGroups),disabled:idx===mGroups.length-1,className:'act90','aria-label':'Move down',style:{display:'flex',color:T.sub,padding:5,opacity:idx===mGroups.length-1?.3:1,transform:'rotate(90deg)'}},Icons.chevR(16)),
           h('button',{onClick:()=>{setGName(g.name);setGrp({rename:g.id})},className:'act90','aria-label':'Rename group',style:{display:'flex',color:T.sub,padding:5}},Icons.pencil(16)),
           h('button',{onClick:()=>{if(activeTab===g.id)setTabP('all');onBrief(b=>({...b,items:b.items.map(i=>i.groupId===g.id?{...i,groupId:null}:i),groups:b.groups.filter(x=>x.id!==g.id)}))},className:'act90','aria-label':'Delete group',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(16)))),
-        groups.length?null:h('div',{style:{fontSize:13.5,color:T.sub,padding:'6px 2px 12px',lineHeight:1.5}},'No groups yet. Create one, then move channels and sites into it.'),
+        mGroups.length?null:h('div',{style:{fontSize:13.5,color:T.sub,padding:'6px 2px 12px',lineHeight:1.5}},mPlat?'No '+platLabel(mPlat)+' groups yet. Create one, then move accounts into it.':'No groups yet. Create one, then move channels and sites into it.'),
         h('button',{onClick:()=>{setManage(false);setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:4,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:14,lineHeight:1.5}},'Deleting a group keeps its channels — they move to "Other".'))):null,
 
@@ -5730,8 +5759,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
 
     moveIt?h(Sheet,{T,title:'Move to group',onClose:()=>setMoveIt(null)},
       h(ARow,{T,icon:Icons.x(21),label:'No group (Other)',onClick:()=>{setItemGroup(moveIt.id,null);setMoveIt(null)}}),
-      groups.map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
-      groups.length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with + Group at the bottom of the rail.')):null,
+      groupsFor(platOfItem(moveIt)).map(g=>h(ARow,{key:g.id,T,icon:Icons.folder(21),label:g.name,onClick:()=>{setItemGroup(moveIt.id,g.id);setMoveIt(null)}})),
+      groupsFor(platOfItem(moveIt)).length?null:h('div',{style:{padding:'14px 20px',color:T.sub,fontSize:13.5}},'No groups yet — create one with + Group at the bottom of the rail.')):null,
 
     grp?h(Sheet,{T,title:grp.rename?'Rename group':'New group',onClose:()=>setGrp(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
@@ -5739,7 +5768,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=gName.trim()||'Group';
           if(grp.rename)onBrief(b=>({...b,groups:b.groups.map(g=>g.id===grp.rename?{...g,name:nm}:g)}));
-          else{const ng={id:uid(),name:nm};onBrief(b=>({...b,groups:b.groups.concat([ng])}));setTabP(ng.id)}
+          else{const ng=mPlat?{id:uid(),name:nm,platform:mPlat}:{id:uid(),name:nm};onBrief(b=>({...b,groups:b.groups.concat([ng])}));setTabP(ng.id)}
           setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
 
     edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
@@ -6038,7 +6067,9 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
       h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Dismiss')));
 
   const options=h(Fragment,null,
-    sec(has?'Get it again':'Get the transcript'),
+    sec((has?'Get it again':'Get it')+' on a website — copy, come back, Paste'),
+    TRANSCRIBE_SITES.map(site=>h(ARow,{key:site.id,T,icon:Icons.external(20),label:site.name,sub:site.sub,onClick:()=>doSite(site)})),
+    sec('Or transcribe it here'),
     jobBox,
     S.ghToken
       ?h(ARow,{T,icon:Icons.headphones(20),label:jobOpen?whisperLabel(S)+' — running':whisperLabel(S),sub:'Model '+modelName+(txOnMac(S)?' · free, any length · keeps going if you leave':' · YouTube often blocks GitHub\'s servers'),onClick:jobOpen?()=>toastFn('Already transcribing this video'):doWhisper})
@@ -6052,9 +6083,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
             h('button',{disabled:!ghDraft.trim(),onClick:()=>{update(d=>({...d,settings:{...d.settings,ghToken:ghDraft.trim()}}));setGhDraft('');toastFn('GitHub connected')},className:'act95',
               style:{padding:'0 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:600,opacity:ghDraft.trim()?1:.4}},'Save'))),
     h(ARow,{T,icon:Icons.ai(20),label:'Gemini',sub:S.geminiKey?'Fills the box in the spoken language · keep the app open':'Needs a free Gemini key (Settings → AI)',onClick:doGemini}),
-    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}),
-    sec('On a website — copy it back and tap Paste'),
-    TRANSCRIBE_SITES.map(site=>h(ARow,{key:site.id,T,icon:Icons.external(20),label:site.name,sub:site.sub,onClick:()=>doSite(site)})));
+    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}));
 
   return h(Sheet,{T,onClose,title:'Transcript',maxH:'94%',z:80},
     h('div',{style:{padding:'0 20px 12px',fontSize:13,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.title),
@@ -7963,7 +7992,9 @@ function TurnSettings({K,turn,onTurn,topBar,wrap,label}){
 }
 
 /* ============================== list helpers ============================== */
+/* routineOnly: a My Routine video kept only to hold its transcript, editions and notes — not part of the library until you tap Save */
 function inScope(a,scope){
+  if(a.routineOnly)return false;
   switch(scope.type){
     case 'home':return !a.archived&&!a.folderId;
     case 'liked':return a.liked;
@@ -8402,7 +8433,7 @@ function App(){
      fetch; other links go through the normal fetch, falling back to a stub. */
   const savedKeys=useMemo(()=>{
     const s=new Set();
-    data.articles.forEach(a=>{if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
+    data.articles.forEach(a=>{if(a.routineOnly)return;if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
     return s;
   },[data.articles]);
   const isEntrySaved=url=>{if(!url)return false;const v=ytIdOf(url);return savedKeys.has(url)||(v?savedKeys.has('yt:'+v):false)};
@@ -8410,6 +8441,8 @@ function App(){
     const url=e&&e.url;if(!url)return;
     if(isEntrySaved(url)){toastFn('Already in Home');return}
     const vid=ytIdOf(url);
+    const held=vid?findVideo(vid):null;
+    if(held&&held.routineOnly){update(d=>({...d,articles:d.articles.map(a=>a.id===held.id?{...a,routineOnly:false,addedAt:Date.now()}:a)}));toastFn('Saved to Home');return}
     if(vid){
       const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
       const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
@@ -8435,9 +8468,8 @@ function App(){
     const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
     const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
       html:'',text:'',excerpt:sourceName?('Video by '+sourceName):'Saved video',words:0,readMin:0,isVideo:true,videoId:vid,publishedAt:e.publishedMs||0,
-      addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]};
+      addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[],routineOnly:true};
     update(d=>({...d,articles:[article,...d.articles]}));
-    toastFn('Saved to Home with its transcript');
     return article.id;
   };
   const txOfEntry=e=>{const vid=ytIdOf(e&&e.url);if(!vid)return false;const a=data.articles.find(x=>!x.isEdition&&x.videoId===vid);return!!(a&&a.transcript&&String(a.transcript).trim())};
@@ -8671,7 +8703,7 @@ function App(){
         :sc==='source'?((a.source||'')+' '+(a.author||''))
         :sc==='tags'?(a.tags||[]).join(' ')
         :((a.title||'')+' '+(a.author||'')+' '+(a.source||'')+' '+(a.tags||[]).join(' ')+' '+(a.text||''));
-      arr=data.articles.filter(a=>hay(a).toLowerCase().includes(q));
+      arr=data.articles.filter(a=>!a.routineOnly&&hay(a).toLowerCase().includes(q));
     }
     else{
       arr=data.articles.filter(a=>inScope(a,scope));
@@ -8694,7 +8726,8 @@ function App(){
   },[data,scope,q,searchScope,S.sort,S.typeFilter,S.readFilter,S.lenFilter,S.srcFilter]);
   const unreadCount=useMemo(()=>data.articles.filter(a=>inScope(a,scope)&&(a.progress||0)<0.97).length,[data.articles,scope]);
   // publishers present in the library, for the source filter picker
-  const libSources=useMemo(()=>{const m=new Map();data.articles.forEach(a=>{const name=(a.source||'').trim();if(!name)return;const k=name.toLowerCase();const e=m.get(k);if(e)e.count++;else m.set(k,{key:k,name,count:1})});return[...m.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name))},[data.articles]);
+  const libData=useMemo(()=>({...data,articles:data.articles.filter(a=>!a.routineOnly)}),[data]);
+  const libSources=useMemo(()=>{const m=new Map();libData.articles.forEach(a=>{const name=(a.source||'').trim();if(!name)return;const k=name.toLowerCase();const e=m.get(k);if(e)e.count++;else m.set(k,{key:k,name,count:1})});return[...m.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name))},[data.articles]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -8714,12 +8747,12 @@ function App(){
     const bf=f&&(data.blogFeeds||{})[f.id];
     if(bf&&bf.entries)bf.entries.slice().sort((p,q)=>(q.publishedMs||0)-(p.publishedMs||0)).forEach(e=>push({kind:'blog',url:e.url,title:e.title,image:e.thumb||'',label:f.name,date:e.publishedMs}));
     const lib=x=>({kind:'lib',id:x.id,url:x.url,title:x.title,image:x.image||(x.videoId?'https://i.ytimg.com/vi/'+x.videoId+'/mqdefault.jpg':''),label:x.source||domainOf(x.url),date:x.addedAt});
-    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&x.source&&x.source===reading.source).forEach(x=>push(lib(x)));
-    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&(x.progress||0)<0.97).sort((p,q)=>(q.addedAt||0)-(p.addedAt||0)).forEach(x=>push(lib(x)));
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&!x.routineOnly&&x.source&&x.source===reading.source).forEach(x=>push(lib(x)));
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&!x.routineOnly&&(x.progress||0)<0.97).sort((p,q)=>(q.addedAt||0)-(p.addedAt||0)).forEach(x=>push(lib(x)));
     return out;
   },[reading&&reading.id,data.articles,data.blogFeeds,data.feeds]);
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
-  const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
+  const allTags=useMemo(()=>{const s=new Set();libData.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
@@ -8845,8 +8878,8 @@ function App(){
           ?h(window.InstaStats.TimeGroups,{T,list,row,closed:hgClosed,setClosed:setHgClosed}):list.map(row);})());
   }
   /* premium Home: insights above the library (week / month comparisons) */
-  if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
-    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
+  if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data:libData,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
+    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:libData.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
@@ -9017,7 +9050,7 @@ function App(){
     edition&&byId(edition.id)&&window.InstaEdition?h(window.InstaEdition.EditionReader,{key:edition.id,T,S,a:byId(edition.id),patch:p=>patchArticle(edition.id,p),toastFn,initialPanel:edition.panel,
       onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
-      articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),brief:data.brief,
+      articles:sortArticles(data.articles.filter(a=>!a.archived&&!a.routineOnly),'newest'),brief:data.brief,
       initialView:aiOpen.routine?'claudeRoutine':null,
       update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
