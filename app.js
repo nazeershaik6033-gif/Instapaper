@@ -1915,10 +1915,10 @@ function ARow({T,icon,label,sub,danger,onClick,right,active}){
 }
 
 /* AssistiveTouch-style quick-action grid (the restyled "+" popup) */
-function TouchGrid({onClose,actions,anchorBottom}){
+function TouchGrid({onClose,actions,anchorBottom,center}){
   return h('div',{style:{position:'fixed',inset:0,zIndex:75}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:'rgba(0,0,0,.3)'}}),
-    h('div',{className:'ppin',style:{position:'fixed',right:14,bottom:anchorBottom,
+    h('div',{className:'ppin',style:{position:'fixed',right:center?0:14,left:center?0:'auto',margin:center?'0 auto':0,transformOrigin:center?'bottom center':'bottom right',bottom:anchorBottom,
       width:'min(78vw,300px)',background:'rgba(40,40,44,.92)',backdropFilter:'blur(22px)',WebkitBackdropFilter:'blur(22px)',
       border:'1px solid rgba(255,255,255,.08)',borderRadius:24,padding:'16px 8px 12px',boxShadow:'0 16px 50px rgba(0,0,0,.5)',
       display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'2px'}},
@@ -2063,22 +2063,33 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
     h('span',{style:{fontSize:16.5,fontWeight:active?650:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name));
 }
 
-/* Bottom navigation: a slim full-width frosted bar docked to the very bottom of the screen (through the
-   home-indicator area), icons only with the + in the middle; it slides away while you scroll down */
+/* Bottom navigation: a frosted capsule floating above the bottom edge, icons only with the + in the middle.
+   A highlight pill glides (with a little squash-and-stretch) to the active tab; the + glows, springs when
+   pressed and spins into an × while the Add menu is open. Always visible. */
 const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['browse','Browse',s=>Icons.globe(s)],['more','More',s=>Icons.menu(s)]];
-function FloatingNav({T,active,hidden,onTab,overVideo}){
-  const dark=overVideo||(typeof isDarkTheme==='function'&&isDarkTheme(T.id));
-  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:0,zIndex:35,
-      display:'flex',justifyContent:'space-around',alignItems:'center',padding:'5px 6px calc(4px + '+SAFE_B+')',
-      background:dark?'rgba(22,22,26,.82)':hexA(T.bg,.86),backdropFilter:'saturate(180%) blur(22px)',WebkitBackdropFilter:'saturate(180%) blur(22px)',
-      borderTop:'0.5px solid '+(dark?'rgba(255,255,255,.12)':T.hair),
-      transform:hidden?'translateY(100%)':'none',transition:'transform 300ms cubic-bezier(.2,.9,.2,1)'}},
-    NAV_ITEMS.map(([k,l,ic])=>{const on=active===k;const plus=k==='plus';
-      return h('button',{key:k,onClick:()=>{vibrate(6);onTab(k)},'aria-label':l,'aria-current':on?'page':undefined,className:'act90',
-        style:{flex:1,height:42,display:'flex',alignItems:'center',justifyContent:'center',color:on?(overVideo?'#fff':T.fg):(overVideo?'rgba(255,255,255,.65)':T.sub)}},
-        plus?h('span',{style:{width:44,height:32,borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',background:overVideo?'#fff':T.fg,color:overVideo?'#000':T.bg}},ic(20))
-          :h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{width:48,height:32,borderRadius:16,display:'flex',alignItems:'center',justifyContent:'center',background:on?(dark?'rgba(255,255,255,.14)':'rgba(0,0,0,.06)'):'transparent'}},ic(k==='brief'?19:22)));
-    }));
+const NAV_LIFT=74; /* px from the safe-area edge to just above the capsule — for content and the mini player */
+function FloatingNav({T,active,onTab,overVideo,plusOpen}){
+  const dark=overVideo||isDarkTheme(T.id);
+  const idx=NAV_ITEMS.findIndex(n=>n[0]===active);
+  const fg=overVideo?'#ffffff':T.fg, onFg=overVideo?'#000000':T.bg;
+  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(8px + '+SAFE_BF+')',zIndex:plusOpen?76:35,
+      display:'flex',justifyContent:'center',padding:'0 14px',pointerEvents:'none'}},
+    h('div',{style:{pointerEvents:'auto',width:'100%',maxWidth:420,padding:6,borderRadius:30,
+        background:dark?'rgba(30,30,34,.74)':hexA(T.bg,.8),backdropFilter:'saturate(180%) blur(24px)',WebkitBackdropFilter:'saturate(180%) blur(24px)',
+        border:'0.5px solid '+(dark?'rgba(255,255,255,.13)':'rgba(0,0,0,.08)'),
+        boxShadow:'0 10px 34px rgba(0,0,0,'+(dark?.5:.14)+'), inset 0 0.5px 0 rgba(255,255,255,'+(dark?.08:.6)+')'}},
+      h('div',{style:{position:'relative',display:'flex'}},
+        idx>=0&&idx!==2?h('div',{'aria-hidden':true,className:'navpill',style:{position:'absolute',top:0,bottom:0,left:0,width:'20%',transform:'translateX('+(idx*100)+'%)',pointerEvents:'none'}},
+          h('span',{key:idx,className:'navgoo',style:{position:'absolute',top:0,bottom:0,left:3,right:3,borderRadius:23,background:dark?'rgba(255,255,255,.14)':hexA(T.fg,.07)}})):null,
+        NAV_ITEMS.map(([k,l,ic],i)=>{const on=i===idx;const plus=k==='plus';
+          return h('button',{key:k,onClick:()=>{vibrate(plus?10:6);onTab(k)},'aria-label':plus&&plusOpen?'Close':l,'aria-current':on?'page':undefined,'aria-expanded':plus?!!plusOpen:undefined,
+            className:plus?'navplusb':'act90',
+            style:{position:'relative',flex:1,height:46,display:'flex',alignItems:'center',justifyContent:'center',color:on?fg:(overVideo?'rgba(255,255,255,.62)':T.sub),transition:'color 260ms'}},
+            plus?h('span',{className:'navplus',style:{width:48,height:48,margin:'-1px 0',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:fg,color:onFg,
+                boxShadow:'0 4px 16px '+hexA(fg,dark?.34:.3)+', 0 0 0 3px '+hexA(fg,plusOpen?.14:0)}},
+                h('span',{style:{display:'flex',transform:plusOpen?'rotate(135deg)':'none',transition:'transform 520ms cubic-bezier(.3,1.5,.5,1)'}},ic(22)))
+              :h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{display:'flex'}},ic(k==='brief'?19:22)));
+        }))));
 }
 function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
@@ -2789,7 +2800,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
 const RATES=[0.8,0.9,1,1.1,1.25,1.5,1.75,2];
 
 function MiniPlayer({T,ui,title,onToggle,onNextArticle,onStop,onOpen,lift}){
-  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?60:12)+'px + '+SAFE_BF+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
+  return h('div',{className:'shn',style:{position:'fixed',left:10,right:10,bottom:'calc('+(lift?NAV_LIFT:12)+'px + '+SAFE_BF+')',zIndex:50,background:'#26262a',color:'#f2f2f3',borderRadius:14,display:'flex',alignItems:'center',padding:'8px 8px',boxShadow:'0 8px 30px rgba(0,0,0,.4)',gap:4}},
     h('button',{onClick:onToggle,className:'act90',style:Object.assign({},iconBtnS,{color:'#fff'})},ui.playing?Icons.pause(22):Icons.play(22,true)),
     h('div',{onClick:onOpen,style:{flex:1,minWidth:0,cursor:'pointer'}},
       h('div',{style:{fontSize:13.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},title),
@@ -5330,7 +5341,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     const chipD=(label,onClick,extra,aria)=>h('button',{onClick,'aria-label':aria||label,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:36,padding:'0 13px',borderRadius:18,fontSize:13.5,fontWeight:700,textShadow:'0 1px 2px rgba(0,0,0,.4)'},extra||{})},label);
     const layer=h('div',{'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},
       h(RoutineShorts,{key:'today-'+tab+(dayObj?dayObj.key:''),T,title:tab==='earlier'?(dayObj?dayObj.label:'Earlier'):tab==='all'?'Today':(g?g.name:'Other'),color:g?groupColor(g.id):T.accent,
-        posts,max:false,embedded:true,header:false,height:'100%',padTop:tab==='earlier'?128:96,padBottom:'calc(52px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
+        posts,max:false,embedded:true,header:false,height:'100%',padTop:tab==='earlier'?128:96,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
         isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
       h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(6px + '+SAFE_T+') 0 18px',background:'linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.35) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
@@ -8586,7 +8597,7 @@ function App(){
                     l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
         })():null):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
-      h('div',{ref:listScrollRef,onScroll:onListScroll,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?56:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
+      h('div',{ref:listScrollRef,onScroll:onListScroll,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?NAV_LIFT:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
         h('div',{key:scope.type+':'+(scope.id||''),className:'pgin'},body)),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
@@ -8610,8 +8621,8 @@ function App(){
     !showTabs&&!selecting&&!reading&&scope.type!=='turn'&&scope.type!=='brief'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
       style:{position:'fixed',right:18,bottom:'calc('+((ttsUI?94:24)+(showTabs?62:0))+'px + '+SAFE_BF+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
 
-    showTabs?h(FloatingNav,{T,active:['home','brief'].includes(scope.type)?scope.type:'more',hidden:chromeHidden&&scope.type!=='brief',overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
-      onTab:k=>{if(k==='plus'){setSheet({type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}
+    showTabs?h(FloatingNav,{T,active:['home','brief'].includes(scope.type)?scope.type:'more',plusOpen:!!(sheet&&sheet.type==='plus'),overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
+      onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
         setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
@@ -8631,7 +8642,7 @@ function App(){
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
-    sheet&&sheet.type==='plus'?h(TouchGrid,{onClose:()=>setSheet(null),anchorBottom:'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
+    sheet&&sheet.type==='plus'?h(TouchGrid,{onClose:()=>setSheet(null),center:showTabs,anchorBottom:showTabs?'calc('+(NAV_LIFT+(ttsUI?72:8))+'px + '+SAFE_B+')':'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
       {icon:Icons.link(24),label:'Save a link',onClick:()=>setAddS({prefill:''})},
       {icon:Icons.note(24),label:'Note to self',onClick:()=>setSheet({type:'quickNote'})},
       {icon:Icons.camera(24),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
