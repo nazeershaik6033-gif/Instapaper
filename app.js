@@ -88,7 +88,7 @@ async function openRouterChat(key,model,messages,maxTokens,onWait){
     res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
       method:'POST',
       headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
-      body:JSON.stringify({model,messages,max_tokens:maxTokens||2048,temperature:0.4})
+      body:JSON.stringify({model,messages:messages.map(m=>Array.isArray(m.content)?{...m,content:m.content.map(p=>p.type==='image'?{type:'image_url',image_url:{url:'data:'+p.mime+';base64,'+p.data}}:{type:'text',text:p.text||''})}:m),max_tokens:maxTokens||2048,temperature:0.4})
     },120000);
     if(res.status===429&&attempt<2){ // free tiers burst-limit easily — back off and retry
       const wait=(attempt+1)*6;
@@ -125,7 +125,8 @@ const GEMINI_MODELS=[
 ];
 async function geminiChat(key,model,messages,maxTokens,onWait){
   const sys=messages.filter(m=>m.role==='system').map(m=>m.content).join('\n');
-  const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',parts:[{text:m.content}]}));
+  const contents=messages.filter(m=>m.role!=='system').map(m=>({role:m.role==='assistant'?'model':'user',
+    parts:Array.isArray(m.content)?m.content.map(p=>p.type==='image'?{inline_data:{mime_type:p.mime,data:p.data}}:{text:p.text||''}):[{text:m.content}]}));
   const body={contents,generationConfig:{maxOutputTokens:maxTokens||2048,temperature:0.4}};
   if(sys)body.systemInstruction={parts:[{text:sys}]};
   let res;
@@ -1923,17 +1924,19 @@ const AddIcons={
   camera:s=>Svg({size:s},...duo('M3.8 9c0-1.3 1.1-2.4 2.4-2.4h1.5l1.4-2h5.8l1.4 2h1.5c1.3 0 2.4 1.1 2.4 2.4v8.4c0 1.3-1.1 2.4-2.4 2.4H6.2c-1.3 0-2.4-1.1-2.4-2.4V9Z'),h('circle',{cx:12,cy:13,r:3.3,stroke:'currentColor',strokeWidth:1.7,fill:'none'})),
   photos:s=>Svg({size:s},P('M7.5 3.8h9.8c1.6 0 2.9 1.3 2.9 2.9v9.8'),...duo('M3.8 9.8c0-1.3 1.1-2.4 2.4-2.4h7.8c1.3 0 2.4 1.1 2.4 2.4v8c0 1.3-1.1 2.4-2.4 2.4H6.2c-1.3 0-2.4-1.1-2.4-2.4v-8Z'),P('M4 17.4l3.6-3.4 2.6 2.4 1.8-1.6 4.1 3.6'),h('circle',{cx:12.4,cy:11.2,r:1.2,fill:'currentColor'})),
   files:s=>Svg({size:s},...duo('M6.2 2.8h6.6l5 5v11.4c0 1.1-.9 2-2 2H6.2c-1.1 0-2-.9-2-2V4.8c0-1.1.9-2 2-2Z'),P('M12.6 3v3.6c0 .7.6 1.2 1.2 1.2h3.8'),P('M7.8 12.4h6.4M7.8 15.8h4.4')),
+  scan:s=>Svg({size:s},P('M4 8.2V6.4C4 5.1 5.1 4 6.4 4h1.8M15.8 4h1.8C18.9 4 20 5.1 20 6.4v1.8M20 15.8v1.8c0 1.3-1.1 2.4-2.4 2.4h-1.8M8.2 20H6.4C5.1 20 4 18.9 4 17.6v-1.8'),...duo('M7.6 8.2h8.8v7.6H7.6z'),P('M9.6 10.6h4.8M9.6 13.4h3.2')),
+  docs:s=>Svg({size:s},...duo('M5 5.6C5 4.7 5.7 4 6.6 4h7.2L19 9.2v9.2c0 .9-.7 1.6-1.6 1.6H6.6c-.9 0-1.6-.7-1.6-1.6V5.6Z'),P('M13.6 4.2V8c0 .7.5 1.2 1.2 1.2h4'),h('circle',{cx:11,cy:14,r:2.6,stroke:'currentColor',strokeWidth:1.7,fill:'none'}),P('M13 16l2.2 2.2')),
   folder:s=>Svg({size:s},...duo('M3.6 7.2c0-1.3 1.1-2.4 2.4-2.4h3.3l2.1 2.2h6.6c1.3 0 2.4 1.1 2.4 2.4v7.6c0 1.3-1.1 2.4-2.4 2.4H6c-1.3 0-2.4-1.1-2.4-2.4V7.2Z'),P('M12 10.6v5M9.5 13.1h5'))
 };
-function TouchGrid({T,onClose,actions,anchorBottom,center}){
+function TouchGrid({T,onClose,actions,anchorBottom,center,cols}){
   const dark=isDarkTheme(T.id);
   return h('div',{style:{position:'fixed',inset:0,zIndex:75}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:dark?'rgba(0,0,0,.45)':'rgba(0,0,0,.18)'}}),
     h('div',{className:'ppin',style:{position:'fixed',right:center?0:14,left:center?0:'auto',margin:center?'0 auto':0,transformOrigin:center?'bottom center':'bottom right',bottom:anchorBottom,
-      width:'min(84vw,316px)',background:dark?'rgba(34,34,38,.86)':hexA(T.bg,.86),color:T.fg,backdropFilter:'saturate(180%) blur(28px)',WebkitBackdropFilter:'saturate(180%) blur(28px)',
+      width:cols===4?'min(94vw,372px)':'min(84vw,316px)',background:dark?'rgba(34,34,38,.86)':hexA(T.bg,.86),color:T.fg,backdropFilter:'saturate(180%) blur(28px)',WebkitBackdropFilter:'saturate(180%) blur(28px)',
       border:'0.5px solid '+(dark?'rgba(255,255,255,.12)':'rgba(0,0,0,.08)'),borderRadius:26,padding:'14px 8px 10px',
       boxShadow:'0 18px 50px rgba(0,0,0,'+(dark?.55:.18)+'), inset 0 0.5px 0 rgba(255,255,255,'+(dark?.08:.7)+')',
-      display:'grid',gridTemplateColumns:'repeat(3,1fr)',rowGap:4}},
+      display:'grid',gridTemplateColumns:'repeat('+(cols||3)+',1fr)',rowGap:4}},
       actions.map((a,i)=>h('button',{key:i,onClick:()=>{onClose();a.onClick()},className:'act90 trt addtile',
         style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,padding:'8px 2px',color:T.fg,animationDelay:(40+i*35)+'ms'}},
         h('span',{style:{width:54,height:54,borderRadius:18,background:dark?'rgba(255,255,255,.09)':hexA(T.fg,.06),border:'0.5px solid '+(dark?'rgba(255,255,255,.08)':hexA(T.fg,.06)),
@@ -2120,6 +2123,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'headlines',icon:Icons.newspaper(22),label:'Headlines',active:is('headlines'),onClick:()=>go('headlines')},
     {key:'blogs',icon:Icons.rss(22),label:'Blogs',active:is('blogs'),onClick:()=>{try{localStorage.setItem('insta_blogs_cat','all')}catch(e){}go('blogs')}},
     {key:'books',icon:Icons.notes(22),label:'Books',active:false,onClick:()=>{showBooksShelf();go('blogs')}},
+    {key:'scans',icon:Icons.file(22),label:'Scans & Docs',active:false,onClick:()=>{onClose();window.dispatchEvent(new Event('insta-scans-open'))}},
     {key:'browse',icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}},
     {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
@@ -2349,6 +2353,7 @@ function ArticleSheet({T,a,reading,onAction,onClose}){
     !a.isVideo&&a.text?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Translate · Rewrite · Ask',onClick:act('ai')}):null,
     a.isVideo?h(ARow,{T,icon:Icons.ai(21),label:'AI assist',sub:'Summarize · Ask · Listen',onClick:act('ai')}):null,
     h(ARow,{T,icon:Icons.share(21),label:'Share…',onClick:act('share')}),
+    !a.isVideo&&(a.html||a.text)?h(ARow,{T,icon:Icons.download(21),label:'Export as Markdown',sub:'A .md file with title, tags and fields',onClick:act('md')}):null,
     a.url?h(ARow,{T,icon:Icons.copy(21),label:'Copy link',onClick:act('copy')}):null,
     a.url?h(ARow,{T,icon:Icons.globe(21),label:'Open original',onClick:act('open')}):null,
     h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:act('delete')}));
@@ -2693,7 +2698,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
   const doRetry=async()=>{setRetrying(true);try{await onRetry()}catch(e){toastFn('Still couldn\'t download this page')}setRetrying(false)};
 
   const tb=(icon,onClick,opts)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:(opts&&opts.color)||T.fg})},icon);
-  const heroDupe=a.image&&a.html&&a.html.indexOf(escapeHtml(a.image))>-1;
+  const heroDupe=(a.image&&a.html&&a.html.indexOf(escapeHtml(a.image))>-1)||!!a.scan; /* a scan's image is only a list thumbnail */
   const metaBits=[a.source,a.author?'by '+a.author:'',a.publishedAt?'on '+fmtDate(a.publishedAt):''].filter(Boolean).join(' · ');
   /* Magazine layout (modelled on the Dribbble "Blog page" article): a centred header with a source
      pill, a big bold title, the summary and an author line, a rounded hero, magazine typography and
@@ -2744,6 +2749,7 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
       h('div',{style:{maxWidth:660,margin:'0 auto',padding:'0 22px'}},
         mag?magHeader:h('h1',{style:{fontFamily:fontCss(S.font),fontSize:Math.min(S.fontSize+8,30),fontWeight:700,lineHeight:1.25,margin:'0 0 10px',color:T.fg,userSelect:'text',WebkitUserSelect:'text'}},a.title),
         mag?null:metaBits?h('div',{style:{fontSize:13,color:T.meta,marginBottom:22,lineHeight:1.5}},metaBits):h('div',{style:{height:10}}),
+        a.fields&&window.InstaOCR?h(window.InstaOCR.FieldsCard,{T,a}):null,
         a.isVideo?h('div',null,
           h('div',{style:{position:'relative',paddingTop:'56.25%',borderRadius:10,overflow:'hidden',background:'#000',marginBottom:18}},
             h('iframe',{src:'https://www.youtube-nocookie.com/embed/'+a.videoId+'?playsinline=1',allow:'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture',allowFullScreen:true,style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0}})),
@@ -4093,6 +4099,8 @@ function PhotosView({T,S,media,albums,onPick,onPickToAlbum,onUpdate,onDelete,onA
       h('div',{style:{padding:'6px 20px 12px',borderBottom:'1px solid '+T.hair,fontSize:14.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},actM.caption||actM.name),
       h(ARow,{T,icon:Icons.pin(21,actM.pinned),label:actM.pinned?'Unpin':'Pin to top',onClick:()=>{onUpdate(actM.id,m=>({pinned:!m.pinned}));setActM(null)}}),
       h(ARow,{T,icon:Icons.heart(21,actM.favorite),label:actM.favorite?'Remove favourite':'Add to favourites',onClick:()=>{onUpdate(actM.id,m=>({favorite:!m.favorite}));setActM(null)}}),
+      (isImg||/pdf/i.test(actM.mime||''))&&window.InstaOCR?h(ARow,{T,icon:Icons.file(21),label:'Extract text (OCR)',sub:'Turn it into a searchable article',onClick:()=>{const mm=actM;setActM(null);
+        window.dispatchEvent(new CustomEvent('insta-ocr-open',{detail:{files:[new File([mm.blob],mm.name||'scan',{type:mm.mime||'image/jpeg'})]}}))}}):null,
       h(ARow,{T,icon:Icons.folder(21),label:'Move to album…',onClick:()=>{const mm=actM;setActM(null);setMoveM(mm)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:isImg?'Edit (caption · crop · rotate)':'Edit caption',onClick:()=>{const mm=actM;setActM(null);setEditM(mm)}}),
       h(ARow,{T,icon:Icons.trash(21),label:'Delete',danger:true,onClick:()=>{onDelete(actM.id);setActM(null)}})):null,
@@ -7854,6 +7862,8 @@ function App(){
   const [readingId,setReadingId]=useState(null);
   const [sidebar,setSidebar]=useState(false);
   const [bookId,setBookId]=useState(null); // open book (books.js reader)
+  const [ocrO,setOcrO]=useState(null); // scan flow (ocr.js): {files?}
+  const [scansO,setScansO]=useState(false); // Scans & Docs hub
   const [menuOpen,setMenuOpen]=useState(false);
   const [addS,setAddS]=useState(null);
   const [settingsOpen,setSettingsOpen]=useState(false);
@@ -7983,6 +7993,17 @@ function App(){
     setAlbums(prev=>prev.map(a=>{if(a.id!==id)return a;updated={...a,name};return updated}));
     if(updated)try{await idbPut('albums',updated)}catch(e){}
   },[]);
+  /* a finished scan: the article goes to the library, its page images to Photos → "Scans" */
+  const saveScan=useCallback(async(article,blobs)=>{
+    update(d=>({...d,articles:[article,...d.articles]}));
+    if(blobs&&blobs.length){
+      const al=albums.find(x=>x.name==='Scans');const albumId=al?al.id:await addAlbum('Scans');const recs=[];
+      for(let i=0;i<blobs.length;i++){const rec={id:uid(),kind:'image',mime:'image/jpeg',name:(article.title||'Scan').slice(0,40)+' p'+(i+1)+'.jpg',caption:article.title+(blobs.length>1?' · page '+(i+1):''),
+        albumId,favorite:false,pinned:false,addedAt:Date.now()+i,blob:blobs[i],scanFor:article.id};try{await idbPut('media',rec);recs.push(rec)}catch(e){}}
+      if(recs.length)setMedia(prev=>[...recs.reverse(),...prev]);
+    }
+    toastFn('Saved “'+article.title+'”');
+  },[albums,addAlbum,toastFn]);
   const deleteAlbum=useCallback(async id=>{ // album removed; its photos stay (albumId cleared)
     setAlbums(prev=>prev.filter(a=>a.id!==id));
     try{await idbDel('albums',id)}catch(e){}
@@ -8005,6 +8026,11 @@ function App(){
     }catch(e){}
   },[]);
 
+  useEffect(()=>{ // scan / knowledge-base entry points raised from anywhere (Photos, sidebar, Books)
+    const o=e=>setOcrO((e&&e.detail)||{});const s=()=>setScansO(true);
+    window.addEventListener('insta-ocr-open',o);window.addEventListener('insta-scans-open',s);
+    return()=>{window.removeEventListener('insta-ocr-open',o);window.removeEventListener('insta-scans-open',s)};
+  },[]);
   useEffect(()=>{ // a book tapped in the library opens the full-screen reader
     const f=e=>{const id=e&&e.detail&&e.detail.id;if(id)setBookId(id)};
     window.addEventListener('insta-book-open',f);return()=>window.removeEventListener('insta-book-open',f);
@@ -8270,6 +8296,7 @@ function App(){
       case 'listen':setSheet(null);startTts([id]);break;
       case 'speed':setSheet(null);setSpeedId(id);break;
       case 'share':setSheet(null);shareText(a.title,'',a.url||'');break;
+      case 'md':setSheet(null);if(window.InstaOCR)window.InstaOCR.exportOne(a);break;
       case 'copy':setSheet(null);copyText(a.url);toastFn('Link copied');break;
       case 'open':setSheet(null);openExternalUrl(a.url);break;
       case 'delete':setSheet({type:'confirm',kind:'delete',ids:[id]});break;
@@ -8657,6 +8684,11 @@ function App(){
       onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
       onExit:()=>setScope({type:'home'})}):null,
 
+    scansO&&window.InstaOCR?h(window.InstaOCR.ScansHub,{T,S,articles:data.articles,folders:data.folders||[],toastFn,
+      onClose:()=>setScansO(false),onOpen:id=>{setScansO(false);openArticle(id)},onUpdate:(id,p)=>patchArticle(id,p),
+      onDelete:id=>setSheet({type:'confirm',kind:'delete',ids:[id]}),onNewScan:files=>setOcrO({files})}):null,
+    ocrO&&window.InstaOCR?h(window.InstaOCR.OcrFlow,{T,S,folders:data.folders||[],initial:ocrO,toastFn,onSave:saveScan,
+      onClose:id=>{setOcrO(null);if(id&&!scansO)setTimeout(()=>openArticle(id),60)}}):null,
     bookId&&window.InstaBooks?h(window.InstaBooks.BookReader,{key:bookId,T,S,bookId,toastFn,onClose:()=>setBookId(null)}):null,
     reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,more:readMore,
       onOpenMore:m=>{if(m.kind==='lib')openArticle(m.id);else addBriefItem({title:m.title,url:m.url,source:m.label,publishedAt:m.date})},
@@ -8691,13 +8723,15 @@ function App(){
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
-    sheet&&sheet.type==='plus'?h(TouchGrid,{T,onClose:()=>setSheet(null),center:showTabs,anchorBottom:showTabs?'calc('+(NAV_LIFT+(ttsUI?72:8))+'px + '+SAFE_B+')':'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
+    sheet&&sheet.type==='plus'?h(TouchGrid,{T,cols:4,onClose:()=>setSheet(null),center:showTabs,anchorBottom:showTabs?'calc('+(NAV_LIFT+(ttsUI?72:8))+'px + '+SAFE_B+')':'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
       {icon:AddIcons.link(25),label:'Save a link',onClick:()=>setAddS({prefill:''})},
       {icon:AddIcons.note(25),label:'Note to self',onClick:()=>setSheet({type:'quickNote'})},
+      {icon:AddIcons.scan(25),label:'Scan text',onClick:()=>setOcrO({})},
       {icon:AddIcons.camera(25),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
       {icon:AddIcons.photos(25),label:'Photo library',onClick:()=>pickFiles('image/*')},
       {icon:AddIcons.files(25),label:'Files & books',onClick:()=>pickFiles('')},
-      {icon:AddIcons.folder(25),label:'New folder',onClick:()=>setSheet({type:'folder'})}
+      {icon:AddIcons.folder(25),label:'New folder',onClick:()=>setSheet({type:'folder'})},
+      {icon:AddIcons.docs(25),label:'Scans & Docs',onClick:()=>setScansO(true)}
     ]}):null,
 
     sheet&&sheet.type==='quickNote'?h(QuickNoteSheet,{T,onClose:()=>setSheet(null),onSave:saveQuickNote}):null,

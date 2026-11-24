@@ -581,6 +581,60 @@ async function pdfThumb(doc){
     await pg.render({canvasContext:c.getContext('2d'),viewport:v}).promise;return c.toDataURL('image/jpeg',.78)}catch(e){return null}
 }
 
+/* ---------- where a book's file lives ----------
+   stored: 'file' (a copy in the app) · 'text' (only the extracted text is kept) · 'linked' (read from a
+   folder you linked, on browsers that allow it — Chrome on Mac/Windows/Android; not Safari on iPhone) */
+const STORE_MODE_KEY='insta_books_store';
+const storeMode=()=>{try{return localStorage.getItem(STORE_MODE_KEY)||'copy'}catch(e){return'copy'}};
+const canLinkFolder=()=>typeof window.showDirectoryPicker==='function';
+async function folderRec(){try{return await dbGet('files','__folder')}catch(e){return null}}
+async function folderPerm(rec,ask){
+  if(!rec||!rec.handle)return false;
+  try{let p=await rec.handle.queryPermission({mode:'read'});if(p!=='granted'&&ask)p=await rec.handle.requestPermission({mode:'read'});return p==='granted'}catch(e){return false}
+}
+async function linkedFile(path,ask){
+  const rec=await folderRec();if(!rec)throw new Error('The linked folder isn’t connected any more — link it again in Books → Storage');
+  if(!(await folderPerm(rec,ask)))throw new Error('Allow access to the linked folder to open this book');
+  const parts=String(path).split('/');let dir=rec.handle;
+  for(const seg of parts.slice(0,-1))dir=await dir.getDirectoryHandle(seg);
+  return(await dir.getFileHandle(parts[parts.length-1])).getFile();
+}
+async function getBookFile(book,ask){
+  if(book.stored==='linked'&&book.linked)return linkedFile(book.linked,ask!==false);
+  const f=await dbGet('files',book.id);
+  if(!f||!f.blob)throw new Error(book.stored==='text'?'Only the text of this book is kept — re-link the original file from its ⋯ menu to see pages and pictures':'The book file is missing');
+  return f.blob;
+}
+async function scanFolder(dir,onFound){
+  const out=[];
+  const walk=async(d,prefix,depth)=>{for await(const [name,hd] of d.entries()){
+    if(name.startsWith('.'))continue;
+    if(hd.kind==='directory'&&depth<3)await walk(hd,prefix+name+'/',depth+1);
+    else if(hd.kind==='file'&&isBookFile({name}))out.push({path:prefix+name,handle:hd})}};
+  await walk(dir,'',0);
+  await Store.load();const known=new Set((Store.list||[]).filter(b=>b.linked).map(b=>b.linked));
+  const fresh=out.filter(x=>!known.has(x.path));
+  for(let i=0;i<fresh.length;i++){onFound&&onFound(i,fresh.length,fresh[i].path);try{const f=await fresh[i].handle.getFile();await importFiles([f],null,{linked:fresh[i].path})}catch(e){}}
+  return{total:out.length,added:fresh.length};
+}
+async function linkFolder(){
+  const dir=await window.showDirectoryPicker({mode:'read'});
+  await dbPut('files',{id:'__folder',handle:dir,name:dir.name,at:Date.now()});
+  return dir;
+}
+/* text of every PDF page (or its OCR text) → a reflowable book, for "keep text only" */
+async function pdfTextModel(doc,ocrPages){
+  const raw=[];
+  for(let i=0;i<doc.numPages;i++){
+    const pt=await pdfPageText(doc,i);let t=pt.nl||'';
+    if(t.replace(/\s+/g,'').length<10&&ocrPages&&ocrPages[i])t=ocrPages[i];
+    const paras=t.split(/\n\s*\n|\n(?=[A-Z0-9“"‘(\[•\-–—])/).map(x=>x.replace(/\s*\n\s*/g,' ').trim()).filter(Boolean);
+    raw.push({title:'Page '+(i+1),html:'<h3 class="bkc">Page '+(i+1)+'</h3>'+paras.map(x=>'<p>'+esc(x)+'</p>').join('')});
+  }
+  const chars=raw.reduce((n,c)=>n+c.html.replace(/<[^>]+>/g,'').length,0);
+  return{model:finalize(raw,raw.map((c,i)=>({title:c.title,ch:i})),{}),chars};
+}
+
 /* ---------- parse dispatcher + cache ---------- */
 const memParsed=new Map();
 async function parseFile(format,blob,name){
@@ -595,25 +649,28 @@ async function getModel(book){
   if(memParsed.has(book.id))return memParsed.get(book.id);
   let rec=null;try{rec=await dbGet('parsed',book.id)}catch(e){}
   if(rec&&rec.v===PARSE_V&&rec.model){memParsed.set(book.id,rec.model);return rec.model}
-  const f=await dbGet('files',book.id);if(!f||!f.blob)throw new Error('The book file is missing');
-  const r=await parseFile(book.format,f.blob,book.name);
+  const blob=await getBookFile(book);
+  const r=await parseFile(book.format,blob,book.name);
   try{await dbPut('parsed',{id:book.id,v:PARSE_V,model:r.model})}catch(e){}
   memParsed.set(book.id,r.model);return r.model;
 }
 
 /* ---------- import ---------- */
-async function importFiles(fileList,onProgress){
+async function importFiles(fileList,onProgress,opts){
+  opts=opts||{};const textOnly=!opts.linked&&(opts.textOnly!=null?opts.textOnly:storeMode()==='text');
   await Store.load();
   const files=Array.from(fileList||[]).filter(isBookFile);const added=[],failed=[];
   for(let i=0;i<files.length;i++){
     const f=files[i],format=bookFormat(f);
     onProgress&&onProgress(i,files.length,f.name);
     try{
-      const id=bid();let title=baseName(f.name),author='',cover=null,pages=0,model=null;
+      const id=bid();let title=baseName(f.name),author='',cover=null,pages=0,model=null,pdfScanned=false;
       if(format==='pdf'){
         const doc=await openPdf(f).catch(e=>{throw e});pages=doc.numPages;
         try{const m=await doc.getMetadata();const t=m&&m.info&&m.info.Title;if(t&&String(t).trim().length>2)title=String(t).trim();const a=m&&m.info&&m.info.Author;if(a)author=String(a).trim()}catch(e){}
-        cover=await pdfThumb(doc);try{doc.destroy()}catch(e){}
+        cover=await pdfThumb(doc);
+        if(textOnly){const r=await pdfTextModel(doc);if(r.chars>pages*40)model=r.model;else pdfScanned=true}
+        try{doc.destroy()}catch(e){}
       }else{
         const r=await parseFile(format,f,f.name);model=r.model;
         if(r.title)title=r.title;author=r.author||'';
@@ -628,14 +685,36 @@ async function importFiles(fileList,onProgress){
       const now=Date.now();
       const book={id,title,author,format,name:f.name,size:f.size,addedAt:now,openedAt:0,cover,shelf:'toread',fav:false,
         pos:{ch:0,frac:0},progress:0,pages,chapters:model?model.chapters.length:pages,total:model?model.chapters.reduce((s,c)=>s+Math.max(c.n,300),0):0,
-        bookmarks:[],highlights:[],readSec:0,speed:null};
-      await dbPut('files',{id,blob:f});
+        bookmarks:[],highlights:[],readSec:0,speed:null,
+        stored:opts.linked?'linked':(textOnly&&model?'text':'file'),linked:opts.linked||null,textOnly:format==='pdf'&&textOnly&&!!model};
+      if(book.stored==='file')await dbPut('files',{id,blob:f});
+      if(pdfScanned&&textOnly)failed.push({name:f.name,error:'Scanned PDF — kept a full copy (open it and use “Make searchable” to read its text)'});
       if(model){try{await dbPut('parsed',{id,v:PARSE_V,model})}catch(e){}memParsed.set(id,model)}
       await dbPut('books',book);Store.add(book);added.push(book);
     }catch(e){failed.push({name:f.name,error:(e&&e.message)||'Couldn’t open this file'})}
   }
   return{added,failed};
 }
+
+/* storage actions (library + book menu) */
+async function makeTextOnly(b){
+  if(b.format==='pdf'){
+    const blob=await getBookFile(b);const doc=await openPdf(blob);docOcr.set(doc,b.ocrPages||{});
+    let r;try{r=await pdfTextModel(doc,b.ocrPages)}finally{try{doc.destroy()}catch(e){}}
+    if(r.chars<(b.pages||1)*40)throw new Error('This PDF is scanned — open it and tap “Make searchable” first, then keep text only');
+    await dbPut('parsed',{id:b.id,v:PARSE_V,model:r.model});memParsed.set(b.id,r.model);
+    await dbDel('files',b.id);Store.patch(b.id,{stored:'text',textOnly:true});return'Kept the text — the PDF copy was removed';
+  }
+  await getModel(b);await dbDel('files',b.id);Store.patch(b.id,{stored:'text'});
+  return'Kept the text — the file copy was removed';
+}
+async function relinkBook(b,file){
+  if(bookFormat(file)!==b.format&&!(b.format==='mobi'&&bookFormat(file)==='mobi'))throw new Error('That’s a '+(FORMAT_LABEL[bookFormat(file)]||'different')+' file — pick the original '+FORMAT_LABEL[b.format]);
+  if(b.size&&Math.abs(file.size-b.size)>Math.max(2048,b.size*.02)&&!confirm('“'+file.name+'” looks different from the original. Use it anyway?'))return null;
+  await dbPut('files',{id:b.id,blob:file});Store.patch(b.id,{stored:'file',textOnly:false,size:file.size,name:file.name,linked:null});
+  return'Original file re-linked';
+}
+const STORED_LABEL={file:'Full copy in the app',text:'Text only (no file copy)',linked:'Read from your linked folder'};
 
 /* ============================== UI helpers ============================== */
 const BI={ /* book-specific icons (Svg/P come from app.js) */
@@ -686,6 +765,12 @@ function BooksLibrary({T,query,toastFn}){
   const [busy,setBusy]=useState(null);
   const [act,setAct]=useState(null);
   const [statsOpen,setStatsOpen]=useState(false);
+  const [storageOpen,setStorageOpen]=useState(false);
+  useEffect(()=>{ /* a linked folder (Chrome on desktop/Android): pick up new books silently */
+    let dead=false;(async()=>{const rec=await folderRec();if(!rec||!(await folderPerm(rec,false))||dead)return;
+      try{const r=await scanFolder(rec.handle);if(r.added&&!dead)toastFn&&toastFn(r.added+' new '+(r.added===1?'book':'books')+' from “'+rec.name+'”')}catch(e){}})();
+    return()=>{dead=true};
+  },[]);
   const inputRef=useRef(null);
   const stats=useMemo(()=>loadStats(),[books]);
   const today=stats.days[dayKey()]||{sec:0,pages:0};
@@ -730,6 +815,9 @@ function BooksLibrary({T,query,toastFn}){
       SHELVES.map(([k,l])=>h('button',{key:k,onClick:()=>setShelf(k),className:'act95',style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'7px 13px',borderRadius:999,fontSize:13,fontWeight:600,
         background:shelf===k?T.fg:'transparent',color:shelf===k?T.bg:T.fg,border:'1px solid '+(shelf===k?T.fg:T.hair)}},l,
         h('span',{style:{fontSize:11,fontWeight:750,opacity:.6}},count(k))))),
+    h('div',{style:{display:'flex',justifyContent:'flex-end',margin:'-6px 0 10px'}},
+      h('button',{onClick:()=>setStorageOpen(true),className:'act95',style:{display:'flex',alignItems:'center',gap:6,fontSize:12.5,fontWeight:650,color:T.sub}},Icons.folder(15),
+        'Storage · '+(()=>{const n=books.reduce((s2,b)=>s2+((b.stored==='file'||!b.stored)?(b.size||0):0),0);return n>=1048576?(n/1048576).toFixed(1)+' MB':Math.round(n/1024)+' KB'})())),
     busy?h('div',{className:'fdin',style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:12,background:T.card,marginBottom:14,fontSize:13}},
       h(Spinner,{T,size:15}),h('span',{style:{flex:1,minWidth:0,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'Adding '+(busy.n>1?(busy.i+1)+' of '+busy.n+' · ':'')+busy.name)):null,
     /* grid */
@@ -744,9 +832,12 @@ function BooksLibrary({T,query,toastFn}){
     !list.length&&books.length?h('div',{style:{textAlign:'center',color:T.sub,fontSize:13.5,padding:'26px 10px 0'}},q?'No books match “'+query.trim()+'”.':'Nothing on this shelf yet.'):null,
     !books.length?h('div',{style:{textAlign:'center',color:T.sub,fontSize:13.5,lineHeight:1.5,padding:'22px 18px 0'}},'Your books stay on this device and work offline. Pick up where you left off, bookmark pages, highlight passages and watch your reading streak grow.'):null,
     h('div',{style:{height:'calc(30px + env(safe-area-inset-bottom))'}}),
-    act?h(BookActions,{T,book:act,onClose:()=>setAct(null),toastFn,onOpen:()=>{setAct(null);open(act)}}):null,
-    statsOpen?h(StatsSheet,{T,books,onClose:()=>setStatsOpen(false)}):null);
+    /* sheets render on <body>: the library lives inside an animated (transformed) page, which would trap position:fixed */
+    act?toBody(h(BookActions,{T,book:act,onClose:()=>setAct(null),toastFn,onOpen:()=>{setAct(null);open(act)}})):null,
+    statsOpen?toBody(h(StatsSheet,{T,books,onClose:()=>setStatsOpen(false)})):null,
+    storageOpen?toBody(h(StorageSheet,{T,books,onClose:()=>setStorageOpen(false),toastFn})):null);
 }
+const toBody=el=>window.ReactDOM&&ReactDOM.createPortal?ReactDOM.createPortal(el,document.body):el;
 function useLongPressLite(cb){
   const t=useRef(null),fired=useRef(false);
   const start=()=>{fired.current=false;clearTimeout(t.current);t.current=setTimeout(()=>{fired.current=true;try{navigator.vibrate&&navigator.vibrate(8)}catch(e){}cb()},480)};
@@ -769,9 +860,10 @@ function BookCard({T,b,onOpen,onAct}){
 }
 function BookActions({T,book,onClose,onOpen,toastFn}){
   const b=Store.get(book.id)||book;
-  const [confirm,setConfirm]=useState(false);
+  const [confirm,setConfirm]=useState(false);const [busy,setBusy]=useState(false);const relinkRef=useRef(null);
+  const run=async fn=>{setBusy(true);try{const m=await fn();if(m)toastFn&&toastFn(m);onClose()}catch(e){toastFn&&toastFn((e&&e.message)||'Something went wrong')}setBusy(false)};
   const move=s=>{Store.patch(b.id,{shelf:s,finishedAt:s==='finished'?Date.now():b.finishedAt,progress:s==='finished'?1:b.progress});toastFn&&toastFn('Moved to '+(SHELVES.find(x=>x[0]===s)||[])[1]);onClose()};
-  const share=async()=>{try{const f=await dbGet('files',b.id);if(!f)return;const file=new File([f.blob],b.name||(b.title+'.'+b.format),{type:f.blob.type||'application/octet-stream'});
+  const share=async()=>{try{const blob=await getBookFile(b);const file=new File([blob],b.name||(b.title+'.'+b.format),{type:blob.type||'application/octet-stream'});
     if(navigator.canShare&&navigator.canShare({files:[file]})){await navigator.share({files:[file],title:b.title});return}
     const u=URL.createObjectURL(file);const a=document.createElement('a');a.href=u;a.download=file.name;document.body.appendChild(a);a.click();a.remove();setTimeout(()=>URL.revokeObjectURL(u),4000)}catch(e){}};
   return h(Sheet,{T,onClose,title:null,z:90},
@@ -780,14 +872,62 @@ function BookActions({T,book,onClose,onOpen,toastFn}){
       h('div',{style:{minWidth:0,flex:1}},
         h('div',{style:{fontSize:16.5,fontWeight:700,lineHeight:1.25}},b.title),
         h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},[b.author,FORMAT_LABEL[b.format],b.size?(b.size/1048576).toFixed(1)+' MB':''].filter(Boolean).join(' · ')),
-        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},pct(b.progress)+' read · '+fmtDur(b.readSec)+' spent reading'))),
+        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:3}},pct(b.progress)+' read · '+fmtDur(b.readSec)+' spent reading'),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:3}},STORED_LABEL[b.stored||'file']))),
+    h('input',{ref:relinkRef,type:'file',accept:ACCEPT,style:{display:'none'},onChange:e=>{const f=e.target.files&&e.target.files[0];e.target.value='';if(f)run(()=>relinkBook(b,f))}}),
     h(ARow,{T,icon:BI.book(21),label:b.progress?'Continue reading':'Start reading',onClick:onOpen}),
     SHELVES.filter(([k])=>k!=='all'&&k!=='fav'&&k!==b.shelf).map(([k,l])=>h(ARow,{key:k,T,icon:k==='finished'?Icons.checkCircle(21):k==='reading'?Icons.play(21):Icons.clock(21),label:'Move to '+l,onClick:()=>move(k)})),
     h(ARow,{T,icon:BI.bookmark(21,b.fav),label:b.fav?'Remove from Favourites':'Add to Favourites',onClick:()=>{Store.patch(b.id,{fav:!b.fav});onClose()}}),
     h(ARow,{T,icon:Icons.pencil(21),label:'Rename',onClick:()=>{const t=prompt('Book title',b.title);if(t&&t.trim()){Store.patch(b.id,{title:t.trim()});onClose()}}}),
     b.progress?h(ARow,{T,icon:Icons.refresh(21),label:'Start over',sub:'Reset progress to the beginning',onClick:()=>{Store.patch(b.id,{pos:{ch:0,frac:0},progress:0,shelf:'toread'});onClose()}}):null,
-    h(ARow,{T,icon:Icons.share(21),label:'Share or save the file',onClick:share}),
+    (b.stored||'file')==='file'?h(ARow,{T,icon:Icons.file(21),label:busy?'Working…':'Keep text only',sub:'Remove the file copy; keep text, progress and highlights',onClick:()=>run(()=>makeTextOnly(b))}):null,
+    b.stored==='text'?h(ARow,{T,icon:Icons.link(21),label:busy?'Working…':'Re-link the original file',sub:'Pick it from Files to bring back pages and pictures',onClick:()=>relinkRef.current&&relinkRef.current.click()}):null,
+    b.stored!=='text'?h(ARow,{T,icon:Icons.share(21),label:'Share or save the file',onClick:share}):null,
     h(ARow,{T,icon:Icons.trash(21),label:confirm?'Tap again to delete for good':'Delete book',danger:true,onClick:()=>{if(!confirm){setConfirm(true);return}Store.remove(b.id);memParsed.delete(b.id);toastFn&&toastFn('Book deleted');onClose()}}));
+}
+function StorageSheet({T,books,onClose,toastFn}){
+  const [est,setEst]=useState(null);const [mode,setModeS]=useState(storeMode);const [busy,setBusy]=useState(null);const [folder,setFolder]=useState(undefined);
+  const relinkRef=useRef(null),relinkFor=useRef(null);
+  useEffect(()=>{try{navigator.storage.estimate().then(setEst).catch(()=>{})}catch(e){}folderRec().then(r=>setFolder(r||null))},[books&&books.length]);
+  const setMode=m=>{setModeS(m);try{localStorage.setItem(STORE_MODE_KEY,m)}catch(e){}};
+  const mb=n=>n>=1073741824?(n/1073741824).toFixed(1)+' GB':n>=1048576?(n/1048576).toFixed(1)+' MB':Math.max(1,Math.round(n/1024))+' KB';
+  const fileBytes=b=>b.stored==='file'||!b.stored?(b.size||0):0;
+  const total=books.reduce((s,b)=>s+fileBytes(b),0);
+  const list=[...books].sort((a,b)=>fileBytes(b)-fileBytes(a));
+  const run=async(b,fn)=>{setBusy(b.id);try{const m=await fn();if(m)toastFn&&toastFn(m)}catch(e){toastFn&&toastFn((e&&e.message)||'Something went wrong')}setBusy(null)};
+  const link=async()=>{try{const dir=await linkFolder();setFolder({name:dir.name});setBusy('folder');const r=await scanFolder(dir);toastFn&&toastFn(r.added?r.added+' books added from “'+dir.name+'”':'Linked “'+dir.name+'” — no new books found')}catch(e){if(e&&e.name!=='AbortError')toastFn&&toastFn((e&&e.message)||'Couldn’t link the folder')}setBusy(null)};
+  const rescan=async()=>{const rec=await folderRec();if(!rec)return;if(!(await folderPerm(rec,true))){toastFn&&toastFn('Allow access to the folder to rescan');return}
+    setBusy('folder');try{const r=await scanFolder(rec.handle);toastFn&&toastFn(r.added?r.added+' new books added':'No new books in the folder')}catch(e){toastFn&&toastFn('Couldn’t read the folder')}setBusy(null)};
+  const seg=(opts,val,on)=>h('div',{style:{display:'flex',gap:4,background:T.card,borderRadius:11,padding:3}},
+    opts.map(([v,l])=>h('button',{key:v,onClick:()=>on(v),className:'act95',style:{flex:1,padding:'8px 4px',borderRadius:8,fontSize:13,fontWeight:650,background:val===v?T.bg:'transparent',color:val===v?T.fg:T.sub,boxShadow:val===v?'0 1px 3px rgba(0,0,0,.12)':'none'}},l)));
+  const lab=t=>h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,margin:'18px 0 8px'}},t);
+  return h(Sheet,{T,onClose,title:'Storage',z:90,maxH:'90%'},
+    h('input',{ref:relinkRef,type:'file',accept:ACCEPT,style:{display:'none'},onChange:e=>{const f=e.target.files&&e.target.files[0];e.target.value='';const b=relinkFor.current;if(f&&b)run(b,()=>relinkBook(b,f))}}),
+    h('div',{style:{padding:'0 18px 20px'}},
+      h('div',{style:{display:'flex',gap:10}},
+        [[mb(total),'book files in the app'],[est&&est.usage?mb(est.usage):'—','used by this app'],[est&&est.quota?mb(est.quota):'—','available']].map(([v,l])=>
+          h('div',{key:l,style:{flex:1,background:T.card,borderRadius:14,padding:'11px 12px'}},h('div',{style:{fontSize:16,fontWeight:750}},v),h('div',{style:{fontSize:11,color:T.sub,marginTop:2}},l)))),
+      lab('New books'),
+      seg([['copy','Keep a copy'],['text','Text only']],mode,setMode),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginTop:8}},mode==='text'?'Only the text, your progress, bookmarks and highlights are kept — no duplicate of the file. Pictures and PDF pages need the original: re-link it from the book’s ⋯ menu when you want them.':'The whole file is copied into the app so books open offline with every picture and page.'),
+      lab('Linked folder'),
+      canLinkFolder()?(folder?h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'11px 12px',borderRadius:14,background:T.card}},
+          h('span',{style:{display:'flex',color:T.sub}},Icons.folder(20)),h('div',{style:{flex:1,minWidth:0,fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name),
+          h('button',{onClick:rescan,disabled:busy==='folder',className:'act95',style:{fontSize:13,fontWeight:650,color:T.accent,padding:'4px 6px'}},busy==='folder'?'Scanning…':'Rescan'),
+          h('button',{onClick:async()=>{await dbDel('files','__folder');setFolder(null);toastFn&&toastFn('Folder unlinked — its books stay listed but need the folder to open')},className:'act95',style:{fontSize:13,fontWeight:650,color:T.danger,padding:'4px 6px'}},'Unlink'))
+        :h('button',{onClick:link,className:'act95',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'12px',borderRadius:14,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:650}},Icons.folder(18),'Link a folder of books'))
+        :h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,padding:'11px 12px',borderRadius:14,background:T.card}},'Safari on iPhone doesn’t let web apps keep a link to a Files folder — every file you pick is handed over as a copy. Choose “Text only” above to avoid duplicates, and re-link the original when you need pages or pictures. On a Mac, PC or Android phone (Chrome), you can link a folder here and books are read straight from it.'),
+      canLinkFolder()?h('div',{style:{fontSize:12,color:T.sub,lineHeight:1.5,marginTop:8}},'Books in the folder are read in place — nothing is copied except the text for quick opening. New files appear when you rescan.'):null,
+      lab('Books'),
+      list.map(b=>h('div',{key:b.id,style:{display:'flex',alignItems:'center',gap:12,padding:'10px 0',borderBottom:'0.5px solid '+T.hair}},
+        h('div',{style:{width:32,flexShrink:0}},h(Cover,{book:b,radius:3})),
+        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},b.title),
+          h('div',{style:{fontSize:12,color:T.sub,marginTop:2}},FORMAT_LABEL[b.format]+' · '+(fileBytes(b)?mb(fileBytes(b)):'no file copy')+' · '+(b.stored==='linked'?'linked':b.stored==='text'?'text only':'full copy'))),
+        busy===b.id?h(Spinner,{T,size:16}):
+        b.stored==='text'?h('button',{onClick:()=>{relinkFor.current=b;relinkRef.current.click()},className:'act95',style:{fontSize:12.5,fontWeight:650,color:T.accent,padding:'6px 4px',flexShrink:0}},'Re-link file'):
+        b.stored==='linked'?null:
+        h('button',{onClick:()=>run(b,()=>makeTextOnly(b)),className:'act95',style:{fontSize:12.5,fontWeight:650,color:T.accent,padding:'6px 4px',flexShrink:0}},'Keep text only'))),
+      !books.length?h('div',{style:{fontSize:13,color:T.sub,padding:'10px 0'}},'No books yet.'):null));
 }
 function StatsSheet({T,books,onClose}){
   const s=loadStats();const days=[];const d=new Date();d.setDate(d.getDate()-6);
@@ -826,7 +966,7 @@ function loadPrefs(){try{return{...DEF_PREFS,...(JSON.parse(localStorage.getItem
 /* image keys → object URLs for one open book */
 function makeSession(book,model){
   const urls=new Map();let zipP=null;
-  const getZip=()=>zipP||(zipP=dbGet('files',book.id).then(f=>readZip(f.blob)));
+  const getZip=()=>zipP||(zipP=getBookFile(book,false).then(b=>readZip(b)));
   return{
     img(key){
       if(urls.has(key))return urls.get(key);
@@ -888,13 +1028,16 @@ function chapterTexts(model){
 }
 /* PDF text, per page, with the position of every text run (for search + highlight boxes) */
 const pdfTexts=new WeakMap();
+const docOcr=new WeakMap(); /* doc → {pageIndex: OCR text} for scanned PDFs */
 function pdfPageText(doc,i){
   let m=pdfTexts.get(doc);if(!m){m=new Map();pdfTexts.set(doc,m)}
   if(m.has(i))return m.get(i);
   const p=(async()=>{const pg=await doc.getPage(i+1);const tc=await pg.getTextContent();const vp=pg.getViewport({scale:1});
-    let text='';const items=[];
-    for(const it of tc.items){if(typeof it.str!=='string')continue;items.push({it,start:text.length});text+=it.str;if(it.hasEOL)text+=' '}
-    return{text,items,vp}})().catch(()=>({text:'',items:[],vp:null}));
+    let text='',nl='';const items=[];
+    for(const it of tc.items){if(typeof it.str!=='string')continue;items.push({it,start:text.length});text+=it.str;nl+=it.str;if(it.hasEOL){text+=' ';nl+='\n'}}
+    const ocr=docOcr.get(doc);
+    if(text.replace(/\s+/g,'').length<10&&ocr&&ocr[i])return{text:ocr[i],nl:ocr[i],items:[],vp,ocr:true}; /* scanned page: use its OCR text */
+    return{text,nl,items,vp}})().catch(()=>({text:'',nl:'',items:[],vp:null}));
   m.set(i,p);return p;
 }
 let _mctx=null;
@@ -1266,16 +1409,17 @@ function BookReader({T:appT,S,bookId,onClose,toastFn}){
   const [ai,setAi]=useState(null); /* {preset} */
   const [img,setImg]=useState(null);
   const srTok=useRef(0),srT=useRef(null),selRef=useRef(null);
+  const [scanned,setScanned]=useState(false);const [ocrJob,setOcrJob]=useState(null);const ocrStop=useRef(false);
   const apiRef=useRef({});const session=useRef(null);const startRef=useRef(null);
   const lastAct=useRef(Date.now());const lastG=useRef(null);const speedAcc=useRef(0);
-  const isPdf=book&&book.format==='pdf';
+  const isPdf=book&&book.format==='pdf'&&!book.textOnly;
   if(book&&!startRef.current)startRef.current={...(book.pos||{ch:0,frac:0})};
   /* open */
   useEffect(()=>{
     if(!book)return;let dead=false;
     Store.patch(book.id,b=>({openedAt:Date.now(),shelf:b.shelf==='toread'?'reading':b.shelf}));
     (async()=>{try{
-      if(isPdf){const f=await dbGet('files',book.id);if(!f)throw new Error('The book file is missing');const d=await openPdf(f.blob);if(dead){d.destroy();return}
+      if(isPdf){const blob=await getBookFile(book);const d=await openPdf(blob);if(dead){d.destroy();return}docOcr.set(d,book.ocrPages||{});
         const toc=await pdfToc(d);setPdf({doc:d,toc});if(!book.pages)Store.patch(book.id,{pages:d.numPages,chapters:d.numPages})}
       else{const m=await getModel(book);if(dead)return;session.current=makeSession(book,m);setModel(m);
         const total=m.chapters.reduce((s,c)=>s+Math.max(c.n,300),0);if(book.total!==total)Store.patch(book.id,{total,chapters:m.chapters.length})}
@@ -1284,6 +1428,30 @@ function BookReader({T:appT,S,bookId,onClose,toastFn}){
     return()=>{dead=true;clearTimeout(t);if(session.current)session.current.close();Store.flush(book.id)};
   },[bookId]);
   useEffect(()=>()=>{if(pdf)try{pdf.doc.destroy()}catch(e){}},[pdf]);
+  useEffect(()=>{ /* a PDF whose first pages carry no text layer is a scan */
+    if(!pdf)return;let dead=false;(async()=>{const a=await pdfPageText(pdf.doc,0);const n=pdf.doc.numPages;
+      const raw=x=>x.ocr||x.text.replace(/\s+/g,'').length<10;
+      if(!dead&&raw(a)){const b2=n>1?await pdfPageText(pdf.doc,Math.min(1,n-1)):a;if(!dead&&raw(b2))setScanned(true)}})();
+    return()=>{dead=true;ocrStop.current=true};
+  },[pdf]);
+  const runPdfOcr=async()=>{
+    const O=window.InstaOCR;if(!O||!pdf)return;const doc=pdf.doc,n=doc.numPages;ocrStop.current=false;
+    let langs=['eng'];try{langs=JSON.parse(localStorage.getItem('insta_ocr_langs'))||['eng']}catch(e){}
+    const done=(Store.get(book.id)||{}).ocrPages||{};const todo=[];for(let i=0;i<n;i++)if(!done[i])todo.push(i);
+    setOcrJob({i:0,n:todo.length,p:0});
+    try{
+      for(let k=0;k<todo.length;k++){if(ocrStop.current)break;const i=todo[k];setOcrJob({i:k,n:todo.length,p:0});
+        const pg=await doc.getPage(i+1);const v0=pg.getViewport({scale:1});const v=pg.getViewport({scale:Math.min(2.6,2000/Math.max(v0.width,v0.height))});
+        const c=document.createElement('canvas');c.width=Math.round(v.width);c.height=Math.round(v.height);const x=c.getContext('2d');x.fillStyle='#fff';x.fillRect(0,0,c.width,c.height);
+        await pg.render({canvasContext:x,viewport:v}).promise;
+        const r=await O.ocrCanvas(c,langs,p=>setOcrJob(j=>j&&{...j,p}));
+        const m=docOcr.get(doc)||{};m[i]=r.text;docOcr.set(doc,m);const pc=pdfTexts.get(doc);if(pc)pc.delete(i);
+        Store.patch(book.id,b=>({ocrPages:{...(b.ocrPages||{}),[i]:r.text}}),true);
+      }
+      if(!ocrStop.current){Store.flush(book.id);toastFn&&toastFn('Done — this PDF is now searchable and works with Ask AI')}
+    }catch(e){toastFn&&toastFn((e&&e.message)||'Text recognition failed')}
+    setOcrJob(null);
+  };
   /* weights for book-wide progress */
   const weights=useMemo(()=>{if(!model)return null;const w=model.chapters.map(c=>Math.max(c.n,300));const before=[];let s=0;w.forEach((x,i)=>{before[i]=s;s+=x});return{w,before,total:s}},[model]);
   const globalOf=p=>{if(!p)return 0;if(isPdf){const n=(pdf&&pdf.doc.numPages)||book.pages||1;return Math.min(1,(p.ch+(p.frac||0))/n)}
@@ -1430,6 +1598,16 @@ function BookReader({T:appT,S,bookId,onClose,toastFn}){
         [[BI.toc(21),'Contents',()=>setPanel('toc')],isPdf?[BI.grid(20),'Pages',()=>apiRef.current.overview&&apiRef.current.overview()]:null,[Icons.search(20),'Search',()=>setSr({q:'',matches:[],cur:-1,busy:false,list:true})],[Icons.ai(20),'Ask AI',()=>setAi({preset:null})],[BI.aa(21),'Text',()=>setPanel('aa')]]
           .filter(Boolean).map(([ic,l,fn])=>h('button',{key:l,onClick:fn,'aria-label':l==='Text'?'Text & layout':l,className:'act90',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:3,minWidth:56,padding:'4px 2px',color:T.fg}},ic,
             h('span',{style:{fontSize:10.5,fontWeight:550,color:T.sub}},l))))):null,
+    isPdf&&pdf&&(ocrJob||(scanned&&chrome&&!sr&&Object.keys(book.ocrPages||{}).length<nPages))?h('div',{className:'fdin',style:{position:'absolute',left:12,right:12,top:'calc(56px + env(safe-area-inset-top))',zIndex:4,
+        display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:14,background:hexA(T.bg,.96),boxShadow:'0 6px 22px rgba(0,0,0,.16)',border:'0.5px solid '+T.hair,fontFamily:UIF,
+        backdropFilter:'blur(18px)',WebkitBackdropFilter:'blur(18px)'}},
+      ocrJob?h(Fragment,null,h(Spinner,{T,size:16}),
+          h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:13.5,fontWeight:650}},'Reading page '+(ocrJob.i+1)+' of '+ocrJob.n+'…'),
+            h('div',{style:{height:3,borderRadius:2,background:T.hair,marginTop:6,overflow:'hidden'}},h('div',{style:{height:'100%',width:(((ocrJob.i+(ocrJob.p||0))/Math.max(1,ocrJob.n))*100)+'%',background:T.accent,transition:'width 300ms'}}))),
+          h('button',{onClick:()=>{ocrStop.current=true},className:'act95',style:{fontSize:13,fontWeight:650,color:T.danger}},'Stop'))
+        :h(Fragment,null,h('span',{style:{display:'flex',color:T.accent}},window.InstaOCR?window.InstaOCR.ScanIcon(20):Icons.file(20)),
+          h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:13.5,fontWeight:650}},'Scanned PDF'),h('div',{style:{fontSize:12,color:T.sub}},Object.keys(book.ocrPages||{}).length?'Text read on '+Object.keys(book.ocrPages).length+' of '+nPages+' pages':'Read its text so you can search, select and Ask AI')),
+          h('button',{onClick:runPdfOcr,className:'act95',style:{padding:'8px 12px',borderRadius:999,background:T.fg,color:T.bg,fontSize:13,fontWeight:650,flexShrink:0}},Object.keys(book.ocrPages||{}).length?'Continue':'Make searchable'))):null,
     /* selection toolbar */
     sel?h('div',{className:'fdin',style:{position:'fixed',zIndex:8,left:Math.max(10,Math.min(window.innerWidth-292,sel.x-141)),top:Math.min(window.innerHeight-120,sel.y+14),width:282,
         display:'flex',alignItems:'center',gap:4,padding:6,borderRadius:14,background:'#26262a',color:'#f2f2f3',boxShadow:'0 10px 30px rgba(0,0,0,.4)',fontFamily:UIF}},
@@ -1644,5 +1822,5 @@ function AaPanel({T,prefs,setPrefs,isPdf,onClose}){
         seg([['justify','Justified'],['left','Left']],prefs.align,v=>setPrefs({align:v})))));
 }
 
-window.InstaBooks={isBookFile,importFiles,BooksLibrary,BookReader,ACCEPT,useBooks,Store};
+window.InstaBooks={isBookFile,importFiles,BooksLibrary,BookReader,ACCEPT,useBooks,Store,openPdf,loadPdfJs};
 })();
