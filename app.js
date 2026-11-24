@@ -2144,50 +2144,116 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
               :h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{display:'flex'}},ic(k==='brief'?19:22)));
         }))));
 }
-function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings,z}){
+/* Sidebar: a floating frosted card (~270px). Header with today's summary, a search that filters the menu
+   (or searches the library), sections Read · Follow · Library · Folders that fold, live counts, and an
+   Edit mode to reorder or hide items. Browse · Focus · Edit · Settings sit in a bottom row. */
+function sidebarCounts(d){
+  const arts=d.articles||[];
+  const unread=arts.filter(a=>!a.archived&&!a.isPost&&(a.progress||0)<0.97).length;
+  const folders={};arts.forEach(a=>{if(a.folderId&&!a.archived)folders[a.folderId]=(folders[a.folderId]||0)+1});
+  let routine=0;const b=d.brief||{};const seen=b.seen||{};const since=Date.now()-86400000;const live=new Set((b.items||[]).map(i=>i.id));
+  Object.keys(b.feeds||{}).forEach(id=>{if(!live.has(id))return;const c=b.feeds[id];(c&&c.entries||[]).forEach(e=>{if(e&&e.url&&(e.publishedMs||0)>=since&&!seen[e.url])routine++})});
+  let blogs=0;const bs=d.blogSeen||{};(d.feeds||[]).forEach(f=>{const c=(d.blogFeeds||{})[f.id];const s=bs[f.id]||0;if(c&&c.entries)c.entries.forEach(e=>{if((e.publishedMs||0)>s)blogs++})});
+  let books=0;try{books=((window.InstaBooks&&window.InstaBooks.Store.list)||[]).filter(x=>x.shelf==='reading').length}catch(e){}
+  return{unread,folders,routine,blogs,books,liked:arts.filter(a=>a.liked).length};
+}
+const SIDE_KEY='insta_sidebar_v2';
+const loadSide=()=>{try{return Object.assign({folded:[],hidden:[],order:{}},JSON.parse(localStorage.getItem(SIDE_KEY)||'{}'))}catch(e){return{folded:[],hidden:[],order:{}}}};
+const bookIcon=s=>Svg({size:s},P('M4.5 5.2c0-.7.6-1.2 1.3-1.2H11c.6 0 1 .4 1 1v14.6c0-.8-.7-1.4-1.5-1.4H5.8c-.7 0-1.3-.6-1.3-1.3V5.2Z'),P('M19.5 5.2c0-.7-.6-1.2-1.3-1.2H13c-.6 0-1 .4-1 1v14.6c0-.8.7-1.4 1.5-1.4h4.7c.7 0 1.3-.6 1.3-1.3V5.2Z'));
+const FOLDER_DOTS=['#f2a33a','#5b8def','#34c759','#bf5af2','#ff6482','#30b0c7','#ffcc00','#8e8e93'];
+function SideRow({T,icon,dot,label,count,active,onClick,onLongPress,edit,hidden,onUp,onDown,onToggle}){
+  const lp=useLongPress(onLongPress||(()=>{}));
+  const tap=()=>{if(edit)return;if(onLongPress&&lp.firedRef.current.fired)return;onClick&&onClick()};
+  const on=active&&!edit;
+  return h('div',{style:{display:'flex',alignItems:'center',gap:4,opacity:edit&&hidden?.4:1}},
+    h('button',Object.assign({onClick:tap,className:'act98','aria-current':on?'page':undefined,
+      style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:12,height:40,padding:'0 11px',borderRadius:12,textAlign:'left',
+        background:on?T.fg:'transparent',color:on?T.bg:T.fg,transition:'background 140ms'}},onLongPress&&!edit?{onTouchStart:lp.onTouchStart,onTouchMove:lp.onTouchMove,onTouchEnd:lp.onTouchEnd,onMouseDown:lp.onMouseDown,onMouseUp:lp.onMouseUp,onMouseLeave:lp.onMouseLeave,onContextMenu:e=>{e.preventDefault();onLongPress()}}:{}),
+      dot?h('span',{style:{width:9,height:9,borderRadius:3,background:dot,flexShrink:0,margin:'0 5px'}}):h('span',{style:{display:'flex',flexShrink:0,opacity:on?1:.85}},icon),
+      h('span',{style:{flex:1,minWidth:0,fontSize:15,fontWeight:on?650:450,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label),
+      count&&!edit?h('span',{style:{fontSize:12,fontWeight:700,color:on?T.bg:T.sub,opacity:on?.75:1,flexShrink:0}},count>999?'999+':count):null),
+    edit?h(Fragment,null,
+      h('button',{onClick:onUp,'aria-label':'Move up',className:'act90',style:{width:28,height:32,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub,transform:'rotate(-90deg)'}},Icons.chevR(15)),
+      h('button',{onClick:onDown,'aria-label':'Move down',className:'act90',style:{width:28,height:32,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub,transform:'rotate(90deg)'}},Icons.chevR(15)),
+      h('button',{onClick:onToggle,'aria-label':hidden?'Show':'Hide',className:'act90',style:{width:32,height:32,display:'flex',alignItems:'center',justifyContent:'center',color:hidden?T.sub:T.accent,fontSize:16}},hidden?'○':'●')):null);
+}
+function Sidebar({T,scope,folders,counts,onScope,onClose,onFolderLongPress,onBrowse,onSettings,z}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
   const go=(t,id)=>{onScope({type:t,id});onClose()};
   const [q,setQ]=useState('');
-  const m=s=>!q.trim()||(s||'').toLowerCase().includes(q.trim().toLowerCase());
-  const NAV=[
-    {key:'search',icon:Icons.search(22),label:'Search',active:is('search'),onClick:()=>go('search')},
-    {key:'home',icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')},
-    {key:'brief',icon:Icons.play(20),label:'My Routine',active:is('brief'),onClick:()=>go('brief')},
-    {key:'headlines',icon:Icons.newspaper(22),label:'Headlines',active:is('headlines'),onClick:()=>go('headlines')},
-    {key:'blogs',icon:Icons.rss(22),label:'Blogs',active:is('blogs'),onClick:()=>{try{localStorage.setItem('insta_blogs_cat','all')}catch(e){}go('blogs')}},
-    {key:'books',icon:Icons.notes(22),label:'Books',active:false,onClick:()=>{showBooksShelf();go('blogs')}},
-    {key:'scans',icon:Icons.file(22),label:'Scans & Docs',active:false,onClick:()=>{onClose();window.dispatchEvent(new Event('insta-scans-open'))}},
-    {key:'browse',icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}},
-    {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
-    {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
-    {key:'photos',icon:Icons.image(22),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
-    {key:'notes',icon:Icons.notes(22),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
-    {key:'threads',icon:Icons.thread(22),label:'Threads',active:is('threads'),onClick:()=>go('threads')},
-    {key:'tags',icon:Icons.tag(22),label:'Tags',active:is('tags'),onClick:()=>go('tags')},
-    {key:'turn',icon:Icons.compass(22),label:'Focus Timer',active:is('turn'),onClick:()=>go('turn')},
-    {key:'settings',icon:Icons.gear(22),label:'Settings',active:false,onClick:()=>{onClose();onSettings()}}
-  ];
-  const navF=NAV.filter(n=>m(n.label));
-  const foldersF=folders.filter(f=>m(f.name));
-  const noMatch=q.trim()&&!navF.length&&!foldersF.length;
+  const [lay,setLayS]=useState(loadSide);const [edit,setEdit]=useState(false);
+  const setLay=f=>setLayS(prev=>{const n=f(prev);try{localStorage.setItem(SIDE_KEY,JSON.stringify(n))}catch(e){}return n});
+  const c=counts||{};
+  const ITEMS={
+    home:{icon:Icons.home(20),label:'Home',active:is('home'),count:c.unread,onClick:()=>go('home')},
+    liked:{icon:Icons.heart(20),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
+    archive:{icon:Icons.archive(20),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
+    brief:{icon:Icons.play(18),label:'My Routine',active:is('brief'),count:c.routine,onClick:()=>go('brief')},
+    headlines:{icon:Icons.newspaper(20),label:'Headlines',active:is('headlines'),onClick:()=>go('headlines')},
+    blogs:{icon:Icons.rss(20),label:'Blogs',active:is('blogs'),count:c.blogs,onClick:()=>{try{localStorage.setItem('insta_blogs_cat','all')}catch(e){}go('blogs')}},
+    books:{icon:bookIcon(20),label:'Books',active:false,count:c.books,onClick:()=>{showBooksShelf();go('blogs')}},
+    scans:{icon:Icons.file(20),label:'Scans & Docs',active:false,onClick:()=>{onClose();window.dispatchEvent(new Event('insta-scans-open'))}},
+    photos:{icon:Icons.image(20),label:'Photos',active:is('photos'),onClick:()=>go('photos')},
+    notes:{icon:Icons.notes(20),label:'Notes',active:is('notes'),onClick:()=>go('notes')},
+    threads:{icon:Icons.thread(20),label:'Threads',active:is('threads'),onClick:()=>go('threads')},
+    tags:{icon:Icons.tag(20),label:'Tags',active:is('tags'),onClick:()=>go('tags')}
+  };
+  const SECTIONS=[['read','Read',['home','liked','archive']],['follow','Follow',['brief','headlines','blogs']],['library','Library',['books','scans','photos','notes','threads','tags']]];
+  const ordered=(sec,keys)=>{const o=(lay.order[sec]||[]).filter(k=>keys.includes(k));return o.concat(keys.filter(k=>!o.includes(k)))};
+  const fOrder=ordered('folders',folders.map(f=>f.id));
+  const move=(sec,keys,k,d)=>setLay(p=>{const arr=ordered(sec,keys);const i=arr.indexOf(k),j=i+d;if(j<0||j>=arr.length)return p;[arr[i],arr[j]]=[arr[j],arr[i]];return{...p,order:{...p.order,[sec]:arr}}});
+  const toggleHide=k=>setLay(p=>({...p,hidden:p.hidden.includes(k)?p.hidden.filter(x=>x!==k):p.hidden.concat(k)}));
+  const toggleFold=s=>setLay(p=>({...p,folded:p.folded.includes(s)?p.folded.filter(x=>x!==s):p.folded.concat(s)}));
+  const ql=q.trim().toLowerCase();const match=l=>!ql||l.toLowerCase().includes(ql);
+  const secHead=(id,label,n)=>h('button',{onClick:()=>!ql&&toggleFold(id),className:'act98','aria-expanded':!lay.folded.includes(id),
+    style:{display:'flex',alignItems:'center',width:'100%',padding:'12px 11px 4px',fontSize:11,fontWeight:700,letterSpacing:'.09em',textTransform:'uppercase',color:T.sub}},
+    h('span',{style:{flex:1,textAlign:'left'}},label),
+    lay.folded.includes(id)&&!ql&&n?h('span',{style:{fontSize:11,fontWeight:700,marginRight:8,letterSpacing:0}},n):null,
+    h('span',{style:{display:'flex',transform:lay.folded.includes(id)&&!ql?'rotate(0deg)':'rotate(90deg)',transition:'transform 160ms'}},Icons.chevR(13)));
+  const sections=SECTIONS.map(([sid,slabel,keys])=>{
+    const list=ordered(sid,keys).filter(k=>(edit||!lay.hidden.includes(k))&&match(ITEMS[k].label));
+    if(!list.length)return null;const folded=lay.folded.includes(sid)&&!ql&&!edit;
+    const n=list.reduce((m,k)=>m+(ITEMS[k].count||0),0);
+    return h('div',{key:sid},secHead(sid,slabel,n),folded?null:list.map(k=>h(SideRow,Object.assign({key:k,T,edit,hidden:lay.hidden.includes(k),onUp:()=>move(sid,keys,k,-1),onDown:()=>move(sid,keys,k,1),onToggle:()=>toggleHide(k)},ITEMS[k]))));
+  });
+  const fList=fOrder.map(id=>folders.find(f=>f.id===id)).filter(f=>f&&(edit||!lay.hidden.includes('f:'+f.id))&&match(f.name));
+  const fFolded=lay.folded.includes('folders')&&!ql&&!edit;
+  const anyMatch=sections.some(Boolean)||fList.length;
+  const tool=(icon,label,fn,on)=>h('button',{onClick:fn,'aria-label':label,className:'act90',style:{flex:1,display:'flex',flexDirection:'column',alignItems:'center',gap:3,padding:'6px 0',color:on?T.accent:T.fg,fontSize:10.5,fontWeight:600}},
+    h('span',{style:{display:'flex',opacity:.85}},icon),label);
+  const sum=[c.unread?c.unread+' unread':null,c.routine?c.routine+' new today':null].filter(Boolean).join(' · ')||'All caught up';
+  const dark=typeof isDarkTheme==='function'&&isDarkTheme(T.id);
   return h('div',{style:{position:'fixed',inset:0,zIndex:z||60}},
-    h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:T.overlay}}),
-    h('div',{className:'slid',style:{position:'absolute',top:0,bottom:0,left:0,width:'min(82vw, 330px)',background:T.bg,color:T.fg,display:'flex',flexDirection:'column',boxShadow:'8px 0 40px rgba(0,0,0,.25)'}},
-      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',padding:'calc(8px + '+SAFE_T+') 10px 6px'}},
-        h('button',{onClick:onClose,className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.menu(24))),
-      h('div',{style:{flexShrink:0,padding:'2px 14px 8px'}},
-        h('div',{style:{display:'flex',alignItems:'center',gap:9,background:T.search,borderRadius:11,padding:'9px 12px'}},
-          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(17)),
-          h('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Search menu',autoCapitalize:'none',autoCorrect:'off',
-            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0}}),
-          q?h('button',{onClick:()=>setQ(''),className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(16)):null)),
-      h('div',{className:'sy',style:{flex:1,overflowY:'auto'}},
-        navF.map(n=>h(SidebarItem,{key:n.key,T,icon:n.icon,label:n.label,active:n.active,onClick:n.onClick})),
-        foldersF.map(f=>h(FolderItem,{key:f.id,T,folder:f,active:is('folder',f.id),onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f)})),
-        noMatch?h('div',{style:{padding:'18px 22px',color:T.sub,fontSize:14}},'No matches'):null,
-        h('div',{style:{height:'calc(20px + '+SAFE_B+')'}})
-      )
-    ));
+    h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:'rgba(0,0,0,.28)'}}),
+    h('nav',{'aria-label':'Menu',className:'slid',style:{position:'absolute',left:10,top:'calc(10px + '+SAFE_T+')',bottom:'calc(10px + '+SAFE_B+')',width:'min(80vw, 272px)',
+        borderRadius:24,background:dark?'rgba(34,34,38,.92)':hexA(T.bg,.92),backdropFilter:'saturate(180%) blur(26px)',WebkitBackdropFilter:'saturate(180%) blur(26px)',
+        border:'0.5px solid '+(dark?'rgba(255,255,255,.1)':'rgba(0,0,0,.06)'),boxShadow:'0 20px 60px rgba(0,0,0,.28)',color:T.fg,display:'flex',flexDirection:'column',overflow:'hidden'}},
+      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:11,padding:'16px 14px 10px'}},
+        h('span',{style:{width:36,height:36,borderRadius:11,background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'Georgia,serif',fontWeight:800,fontSize:19,flexShrink:0}},'I'),
+        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:16,fontWeight:750,letterSpacing:'-.01em'}},'Instapaper'),
+          h('div',{style:{fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},sum)),
+        edit?h('button',{onClick:()=>setEdit(false),className:'act95',style:{padding:'6px 12px',borderRadius:14,background:T.fg,color:T.bg,fontSize:13,fontWeight:700}},'Done'):null),
+      edit?h('div',{style:{flexShrink:0,padding:'0 14px 8px',fontSize:12,color:T.sub,lineHeight:1.45}},'Use the arrows to reorder and ● / ○ to show or hide. Folded sections open while editing.'):
+      h('div',{style:{flexShrink:0,padding:'0 10px 4px'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:8,background:T.search||T.card,borderRadius:12,padding:'8px 11px'}},
+          h('span',{style:{color:T.sub,display:'flex'}},Icons.search(16)),
+          h('input',{value:q,onChange:e=>setQ(e.target.value),onKeyDown:e=>{if(e.key==='Enter'&&q.trim())go('search')},placeholder:'Search',autoCapitalize:'none',autoCorrect:'off',enterKeyHint:'search',
+            style:{flex:1,border:'none',background:'transparent',color:T.fg,fontSize:15.5,minWidth:0,outline:'none'}}),
+          q?h('button',{onClick:()=>setQ(''),'aria-label':'Clear',className:'act90',style:{color:T.sub,display:'flex',padding:2}},Icons.x(15)):null)),
+      h('div',{className:'sy',style:{flex:1,overflowY:'auto',padding:'0 8px 10px'}},
+        ql?h(SideRow,{T,icon:Icons.search(19),label:'Search library for “'+q.trim()+'”',onClick:()=>go('search')}):null,
+        sections,
+        folders.length&&(fList.length||!ql)?h('div',null,
+          secHead('folders','Folders',fList.reduce((m,f)=>m+((c.folders||{})[f.id]||0),0)),
+          fFolded?null:fList.map((f,i)=>h(SideRow,{key:f.id,T,dot:FOLDER_DOTS[i%FOLDER_DOTS.length],label:f.name,count:(c.folders||{})[f.id],active:is('folder',f.id),
+            onClick:()=>go('folder',f.id),onLongPress:()=>onFolderLongPress(f),edit,hidden:lay.hidden.includes('f:'+f.id),
+            onUp:()=>move('folders',folders.map(x=>x.id),f.id,-1),onDown:()=>move('folders',folders.map(x=>x.id),f.id,1),onToggle:()=>toggleHide('f:'+f.id)}))):null,
+        ql&&!anyMatch?h('div',{style:{padding:'8px 12px',color:T.sub,fontSize:13.5}},'No menu items match — tap above to search your library.'):null),
+      h('div',{style:{flexShrink:0,display:'flex',borderTop:'0.5px solid '+T.hair,padding:'4px 6px 6px'}},
+        tool(Icons.globe(19),'Browse',()=>{onClose();onBrowse()}),
+        tool(Icons.compass(19),'Focus',()=>go('turn'),is('turn')),
+        tool(Icons.pencil(18),edit?'Done':'Edit',()=>{setEdit(e=>!e);setQ('')},edit),
+        tool(Icons.gear(19),'Settings',()=>{onClose();onSettings()}))));
 }
 
 /* ============================== collapsible group header ============================== */
@@ -8807,7 +8873,7 @@ function App(){
       onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
         setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
-    sidebar?h(Sidebar,{T,scope,folders:data.folders,z:browserO?95:60, /* opened from the browser's ☰ it sits on top; picking a section leaves the browser */
+    sidebar?h(Sidebar,{T,scope,folders:data.folders,counts:sidebarCounts(data),z:browserO?95:60, /* opened from the browser's ☰ it sits on top; picking a section leaves the browser */
       onScope:s=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
       onBrowse:()=>{if(!browserO)setBrowserO({url:''})},
       onSettings:()=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setSettingsOpen(true)},
