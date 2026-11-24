@@ -4796,6 +4796,7 @@ function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpe
 }
 
 /* My Routine sources: every item belongs to exactly one — YouTube, a social app, or Web (blogs, news, sites) */
+const YT_PL_MAX=50; // watch_videos takes up to 50 ids
 const SRC_DEF=[['youtube','YouTube'],['instagram','Instagram'],['x','X'],['telegram','Telegram'],['threads','Threads'],['reddit','Reddit'],['bluesky','Bluesky'],['mastodon','Mastodon'],['web','Web']];
 const SRC_ICON={
   youtube:s=>Svg({size:s},h('rect',{x:3,y:6,width:18,height:12.5,rx:3.6,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.4 9.6v5.3l4.4-2.65-4.4-2.65Z',fill:'currentColor'})),
@@ -4822,6 +4823,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const [mSrc,setMSrcS]=useState(()=>{try{return localStorage.getItem('insta_routine_msrc')||'all'}catch(e){return'all'}});
   const setMSrc=k=>{setMSrcS(k);try{localStorage.setItem('insta_routine_msrc',k)}catch(e){}};
   const [pday,setPday]=useState(null);const [filterOpen,setFilterOpen]=useState(false);
+  const [ytPl,setYtPl]=useState(null); // YouTube playlist picker: {sel:[urls], link}
   const visAll=items.filter(i=>!snoozedNow(i.id));
   const mEff=mSrc!=='all'&&visAll.some(i=>srcOf(i)===mSrc)?mSrc:'all';
   const vis=view==='today'||mEff==='all'?visAll:visAll.filter(i=>srcOf(i)===mEff);
@@ -5575,9 +5577,45 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       fRow('Today',srcNew(srcK)?srcNew(srcK)+' new':null,!dayObj,()=>{setPday(null);setFilterOpen(false)},null,'today'),
       catchDays.map(d=>{const n=dayNew(d);return fRow(d.label,n?n+' new':null,!!dayObj&&dayObj.key===d.key,()=>{setPday(d.key);setFilterOpen(false)},null,d.key)}),
       h('div',{style:{height:'calc(10px + env(safe-area-inset-bottom))'}})):null;
+    /* YouTube playlist: tick videos (this source, group and day; oldest first, the order they play in),
+       then one watch_videos link makes YouTube build an unnamed playlist you can save there */
+    const ytCands=srcK==='youtube'?posts.filter(p=>ytIdOf(p.e.url)).slice().sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0)):[];
+    const ytPlEl=ytPl?(()=>{
+      const sel=new Set(ytPl.sel);const n=sel.size;
+      const setSel=urls=>setYtPl({sel:urls,link:''});
+      const flip=u=>setYtPl(pr=>{if(!pr)return pr;if(pr.sel.includes(u))return{sel:pr.sel.filter(x=>x!==u),link:''};
+        if(pr.sel.length>=YT_PL_MAX){toastFn('YouTube playlists made this way hold up to '+YT_PL_MAX+' videos');return pr}return{sel:pr.sel.concat([u]),link:''}});
+      const make=()=>{const ids=ytCands.filter(p=>sel.has(p.e.url)).map(p=>ytIdOf(p.e.url));if(!ids.length)return;
+        setYtPl({sel:ytPl.sel,link:'https://www.youtube.com/watch_videos?video_ids='+ids.join(',')})};
+      const qchip=(label,fn,on)=>h('button',{key:label,onClick:fn,className:'act95',style:{padding:'6px 12px',borderRadius:15,fontSize:13,fontWeight:600,border:'1px solid '+(on?T.accent:T.hair),color:on?T.accent:T.fg,background:'transparent'}},label);
+      const unw=ytCands.filter(p=>!seenMap[p.e.url]).slice(0,YT_PL_MAX).map(p=>p.e.url);
+      const allU=ytCands.slice(0,YT_PL_MAX).map(p=>p.e.url);
+      const same=(a,b)=>a.length===b.length&&a.every(x=>b.includes(x));
+      return h(Sheet,{T,onClose:()=>setYtPl(null),title:'YouTube playlist',z:82,maxH:'90%'},
+        h('div',{style:{padding:'0 18px 10px',fontSize:13,color:T.sub,lineHeight:1.45}},'Tick the videos to include. They play oldest first. The link opens YouTube, where you can save the playlist to your account.'),
+        h('div',{style:{display:'flex',gap:8,padding:'0 18px 10px'}},
+          qchip('Unwatched',()=>setSel(unw),n>0&&same(ytPl.sel,unw)),qchip('All',()=>setSel(allU),n>0&&same(ytPl.sel,allU)),qchip('None',()=>setSel([]),n===0)),
+        ytCands.map(p=>{const u=p.e.url,on=sel.has(u),vid=ytIdOf(u);
+          return h('button',{key:u,onClick:()=>flip(u),role:'checkbox','aria-checked':on,className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'9px 18px',color:T.fg,borderTop:'1px solid '+T.hair}},
+            h('span',{style:{width:22,height:22,borderRadius:6,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(on?T.accent:T.sub),background:on?T.accent:'transparent',color:'#fff'}},on?Icons.check(14):null),
+            h('img',{src:'https://i.ytimg.com/vi/'+vid+'/mqdefault.jpg',alt:'',loading:'lazy',style:{width:72,height:40,borderRadius:6,objectFit:'cover',flexShrink:0,background:T.thumbBg}}),
+            h('span',{style:{flex:1,minWidth:0}},
+              h('span',{style:{display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',fontSize:14,fontWeight:600,lineHeight:1.3}},cleanEntryTitle(p.e.title,p.it.name)||'Video'),
+              h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},[p.it.name,p.e.publishedMs?fmtAgo(p.e.publishedMs):'',seenMap[u]?'watched':''].filter(Boolean).join(' · '))))}),
+        h('div',{style:{position:'sticky',bottom:0,background:T.sheet,borderTop:'1px solid '+T.hair,padding:'12px 18px 4px'}},
+          ytPl.link?h('div',null,
+            h('div',{style:{fontSize:12,color:T.sub,marginBottom:6}},n+' video'+(n===1?'':'s')+' · your playlist link'),
+            h('div',{onClick:()=>{copyText(ytPl.link);toastFn('Link copied')},style:{fontSize:12.5,color:T.fg,background:T.card,borderRadius:10,padding:'9px 11px',wordBreak:'break-all',maxHeight:62,overflow:'hidden',fontFamily:'ui-monospace,Menlo,monospace'}},ytPl.link),
+            h('div',{style:{display:'flex',gap:8,marginTop:10}},
+              h('button',{onClick:()=>openExternalUrl(ytPl.link),className:'act95',style:{flex:1,padding:'12px',borderRadius:12,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:650}},'Open in YouTube'),
+              h('button',{onClick:()=>{copyText(ytPl.link);toastFn('Link copied')},className:'act95',style:{padding:'12px 16px',borderRadius:12,background:T.card,color:T.fg,fontSize:14.5,fontWeight:600}},'Copy'),
+              h('button',{onClick:()=>shareText('YouTube playlist','',ytPl.link),className:'act95',style:{padding:'12px 16px',borderRadius:12,background:T.card,color:T.fg,fontSize:14.5,fontWeight:600}},'Share'))):
+          h('button',{onClick:make,disabled:!n,className:'act95',style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650,opacity:n?1:.4}},n?'Make playlist link · '+n+' video'+(n===1?'':'s'):'Tick at least one video')));
+    })():null;
     const menuEl=todayMenu?h(Sheet,{T,onClose:()=>setTodayMenu(false),z:80},
       h('div',{style:{padding:'4px 20px 10px',fontSize:13,color:T.sub}},curSlot.name+' · '+statusText+(nextSlot&&!refreshing?' · Next: '+nextSlot.name+' '+fmtClock(nextSlot.time):'')),
       srcK==='youtube'&&plN?h(ARow,{T,icon:Icons.play(21,true),label:'Play today’s videos',sub:plN+' unwatched, back to back',onClick:()=>{setTodayMenu(false);setPlaylist(playlistPosts())}}):null,
+      srcK==='youtube'&&ytCands.length?h(ARow,{T,icon:Icons.playlist(21),label:'Make a YouTube playlist',sub:'Tick videos, get one link that plays them all',onClick:()=>{setTodayMenu(false);setYtPl({sel:ytCands.filter(p=>!seenMap[p.e.url]).slice(0,YT_PL_MAX).map(p=>p.e.url),link:''})}}):null,
       srcK==='youtube'&&onMakePaper&&paperPosts().length?h(ARow,{T,icon:Icons.newspaper(21),label:'Make today’s paper',sub:'A newspaper from today’s videos',onClick:()=>{setTodayMenu(false);onMakePaper(paperPosts())}}):null,
       h(ARow,{T,icon:Icons.refresh(21),label:refreshing?'Refreshing…':'Refresh now',sub:'Fetch the latest from every source',onClick:()=>{setTodayMenu(false);refreshFeeds(true)}}),
       h(ARow,{T,icon:Icons.calendar(21),label:'Routine window · '+curSlot.name,sub:'Morning, afternoon, night',onClick:()=>{setTodayMenu(false);setSlotSheet(true)}}),
@@ -5589,7 +5627,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       ReactDOM.createPortal(layer,document.body),
       slotSheet?ReactDOM.createPortal(slotSheetEl(),document.body):null,
       filterEl?ReactDOM.createPortal(filterEl,document.body):null,
-      menuEl?ReactDOM.createPortal(menuEl,document.body):null);
+      menuEl?ReactDOM.createPortal(menuEl,document.body):null,
+      ytPlEl?ReactDOM.createPortal(ytPlEl,document.body):null);
   }
   return h('div',null,
     playlistEl,
