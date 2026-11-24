@@ -5528,7 +5528,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       if(p==='telegram'){const t=tgHandle(it.url||'')||hh;if(!t){toastFn('Couldn’t read this channel’s name');return}return linkFeed(it,{kind:'telegram',handle:t,platform:'telegram'})}
       const P=SOCIAL[p];const f=P&&P.feed&&hh?P.feed(hh):'';if(!f){toastFn('This account needs a feed link');return}
       return linkFeed(it,{kind:'rss',feedUrl:f,platform:p,socialHandle:hh})};
-    const padTop=50+(activeLine?36:0);
+    const padTop=60+(activeLine?36:0);
     const layer=h('div',{'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},
       isSocSrc&&SOC?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',
         platform:srcK,isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),
@@ -5539,7 +5539,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         posts,max:false,embedded:true,header:false,height:'100%',padTop:padTop+46,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
         isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
-      h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(6px + '+SAFE_T+') 0 16px',background:'linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.35) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
+      h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(16px + '+SAFE_T+') 0 16px',background:'linear-gradient(to bottom,rgba(0,0,0,.72),rgba(0,0,0,.35) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
         h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'0 10px',pointerEvents:'auto'}},
           h('div',{className:'sx',style:{flex:1,minWidth:0,display:'flex',gap:6,overflowX:'auto'}},
             presentSrcs.length?presentSrcs.map(srcChip):h('span',{style:{color:'#fff',fontSize:14,fontWeight:600,padding:'8px 4px'}},'My Routine')),
