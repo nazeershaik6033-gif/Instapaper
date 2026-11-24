@@ -293,19 +293,29 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
       if(!sel||sel.isCollapsed||!el||!el.contains(sel.anchorNode)){setSelBar(b=>b&&b.text?null:b);return}
       const t=String(sel).replace(/\s+/g,' ').trim();
       const pe=sel.anchorNode&&(sel.anchorNode.nodeType===1?sel.anchorNode:sel.anchorNode.parentElement);const pp=pe&&pe.closest&&pe.closest('[data-i]');
+      /* a selection can run across paragraphs: keep the selected piece of each one so every paragraph gets marked */
+      const parts=[];
+      try{const rg=sel.getRangeAt(0);
+        el.querySelectorAll('[data-i]').forEach(n=>{if(!rg.intersectsNode(n))return;const r=document.createRange();r.selectNodeContents(n);
+          if(n.contains(rg.startContainer))r.setStart(rg.startContainer,rg.startOffset);if(n.contains(rg.endContainer))r.setEnd(rg.endContainer,rg.endOffset);
+          const pt=r.toString().trim();if(pt)parts.push({para:Number(n.getAttribute('data-i')),text:pt})})}catch(e){}
+      if(parts.length>1){const full=parts.map(x=>x.text).join('\n\n');setSelBar({text:full.slice(0,8000),para:parts[0].para,parts:parts.slice(0,40)});return}
       if(t.length>2)setSelBar({text:t.slice(0,1200),para:pp?Number(pp.getAttribute('data-i')):null});
     };
     document.addEventListener('selectionchange',f);return()=>document.removeEventListener('selectionchange',f);
   },[]);
-  const addHl=(t,para)=>{patch(x=>({highlights:(x.highlights||[]).concat([{id:uid(),text:t,createdAt:Date.now(),src:'edition',lang,para:para==null?undefined:para}])}));try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Highlighted — also on your Notes page')};
+  const addHl=(t,para,parts)=>{patch(x=>({highlights:(x.highlights||[]).concat([{id:uid(),text:t,createdAt:Date.now(),src:'edition',lang,para:para==null?undefined:para,parts:parts&&parts.length>1?parts:undefined}])}));try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Highlighted — also on your Notes page')};
   const delHl=id=>{patch(x=>({highlights:(x.highlights||[]).filter(y=>y.id!==id)}));setSelBar(null)};
   const findHits=useMemo(()=>{const q=(find&&find.q||'').trim().toLowerCase();if(q.length<2)return[];const out=[];
     paras.forEach((p,pi)=>{const pl=p.toLowerCase();let i=pl.indexOf(q);while(i>=0&&out.length<999){out.push({pi,i,len:q.length});i=pl.indexOf(q,i+q.length)}});return out},[find&&find.q,paras]);
   useEffect(()=>{if(!find||!findHits.length)return;const el=scRef.current&&scRef.current.querySelector('mark.ed-cur');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},[find&&find.idx,findHits]);
   const marked=(p,pi)=>{
     const rs=[];
-    for(const hl of hls){if(hl.src==='edition'&&((hl.lang&&hl.lang!==lang)||(hl.para!=null&&hl.para!==pi)))continue;let i=p.indexOf(hl.text);if(i<0&&hl.text.length>40)i=p.indexOf(hl.text.slice(0,40));
-      if(i>=0)rs.push({s:i,e:i+Math.min(hl.text.length,p.length-i),hl:hl.id})}
+    for(const hl of hls){if(hl.src==='edition'&&hl.lang&&hl.lang!==lang)continue;
+      for(const sg of (hl.parts&&hl.parts.length?hl.parts:[{para:hl.para,text:hl.text}])){
+        if(hl.src==='edition'&&sg.para!=null&&sg.para!==pi)continue;const st=String(sg.text||'');if(!st)continue;
+        let i=p.indexOf(st);if(i<0&&st.length>40)i=p.indexOf(st.slice(0,40));
+        if(i>=0)rs.push({s:i,e:i+Math.min(st.length,p.length-i),hl:hl.id})}}
     findHits.forEach((m,k)=>{if(m.pi===pi)rs.push({s:m.i,e:m.i+m.len,find:true,cur:k===(find&&find.idx)})});
     if(!rs.length)return p;
     const cuts=new Set([0,p.length]);rs.forEach(r=>{cuts.add(r.s);cuts.add(r.e)});const pts=[...cuts].sort((x,y)=>x-y);const out=[];
@@ -321,7 +331,14 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   const [note,setNote]=useState(noteObj?noteObj.note||'':'');
   const saveNote=v=>patch(x=>{const hs=(x.highlights||[]).filter(y=>y.kind!==NK);if(!v.trim())return{highlights:hs};const old=(x.highlights||[]).find(y=>y.kind===NK);
     return{highlights:hs.concat([{id:old?old.id:uid(),kind:NK,text:'📝 My notes',note:v,createdAt:old?old.createdAt:Date.now(),updatedAt:Date.now()}])}});
-  const addToNotes=t=>{const v=(note.trim()?note.replace(/\s+$/,'')+'\n\n':'')+'• '+String(t).trim();setNote(v);saveNote(v);try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Added to notes')};
+  const addToNotes=t=>{const v=(note.trim()?note.replace(/\s+$/,'')+'\n\n':'')+'• '+String(t).trim();setNote(v);saveNote(v);try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Copied to notes')};
+  const noteRef=useRef(null);
+  const [hlSort,setHlSort]=useState(()=>{try{return localStorage.getItem('insta_ed_hlsort')||'new'}catch(e){return'new'}});
+  const flipHlSort=()=>setHlSort(v=>{const n=v==='new'?'old':'new';try{localStorage.setItem('insta_ed_hlsort',n)}catch(e){}return n});
+  const copyAll=()=>{const nt=note.trim();const hs=hls.slice().sort((x,y)=>(x.createdAt||0)-(y.createdAt||0));
+    if(!nt&&!hs.length){toastFn('Nothing to copy yet');return}
+    copyText([(view.headline||a.title||'').trim(),nt?'Notes\n'+nt:'',hs.length?'Highlights\n'+hs.map(x=>'“'+x.text.trim()+'”').join('\n\n'):''].filter(Boolean).join('\n\n'));
+    toastFn(nt&&hs.length?'Notes & highlights copied':nt?'Notes copied':'Highlights copied')};
   const noteT=useRef(null);const editNote=v=>{setNote(v);clearTimeout(noteT.current);noteT.current=setTimeout(()=>saveNote(v),700)};
   const jumpHl=x=>{setNh(null);setTimeout(()=>{const root=scRef.current;if(!root)return;const m=root.querySelector('mark[data-hl="'+x.id+'"]');
     const el=m||(x.para!=null?root.querySelector('[data-i="'+x.para+'"]'):null);if(el){el.scrollIntoView({behavior:'smooth',block:'center'});if(m){m.classList.add('ed-flash');setTimeout(()=>m.classList.remove('ed-flash'),1400)}}else toastFn('That highlight is in another language edition')},60)};
@@ -445,7 +462,7 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
       words.toLocaleString()+' words · '+Math.round(prog*100)+'% read · '+(prog>=.99?'done':Math.max(1,Math.round(words*(1-prog)/230))+' min left')):null,
     selBar?h('div',{style:{position:'absolute',left:8,right:8,bottom:'calc(14px + env(safe-area-inset-bottom))',zIndex:4,display:'flex',gap:7,justifyContent:'center',alignItems:'center',flexWrap:'wrap',fontFamily:"'Inter',system-ui"}},
       selBar.text?h(Fragment,null,
-        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>addHl(selBar.text,selBar.para),className:'act95',style:{padding:'10px 16px',borderRadius:20,background:ink,color:bg,fontWeight:650,fontSize:14,boxShadow:'0 6px 20px rgba(0,0,0,.25)'}},'Highlight'),
+        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>addHl(selBar.text,selBar.para,selBar.parts),className:'act95',style:{padding:'10px 16px',borderRadius:20,background:ink,color:bg,fontWeight:650,fontSize:14,boxShadow:'0 6px 20px rgba(0,0,0,.25)'}},'Highlight'),
         h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>addToNotes(selBar.text),className:'act95',style:{padding:'10px 14px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:650,fontSize:14,boxShadow:'0 6px 20px rgba(0,0,0,.12)'}},'+ Notes'),
         h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>{copyText(selBar.text);toastFn('Copied')},className:'act95',style:{padding:'10px 14px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:600,fontSize:14}},'Copy'),
         h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>openGoogleTranslate(selBar.text,lang==='orig'?((GT_LANGS.find(x=>x[0]===((S&&S.aiLang)||'Telugu'))||['','te'])[1]):'en'),'aria-label':'Translate in Google Translate',className:'act95',
@@ -506,22 +523,29 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
           h('button',{onClick:finishGt,disabled:!gt.parts.every(p2=>p2.out),className:'act95',style:{padding:'11px 18px',borderRadius:22,background:ink,color:bg,fontWeight:700,fontSize:14.5,opacity:gt.parts.every(p2=>p2.out)?1:.4}},'Save '+gt.lang+' edition')))):null,
     nh?h('div',{style:{position:'absolute',inset:0,zIndex:6,background:bg,color:ink,display:'flex',flexDirection:'column',fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
       h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'calc(6px + env(safe-area-inset-top)) 8px 8px'}},
-        tbtn(Icons.back(21),'Back to the edition',()=>{saveNote(note);setNh(null)}),h('div',{style:{flex:1,fontSize:17,fontWeight:700}},'Notes & highlights')),
+        tbtn(Icons.back(21),'Back to the edition',()=>{saveNote(note);setNh(null)}),h('div',{style:{flex:1,fontSize:17,fontWeight:700}},'Notes & highlights'),
+        tbtn(Icons.copy(20),'Copy notes and all highlights',copyAll)),
       h('div',{style:{display:'flex',gap:4,margin:'0 14px 10px',padding:3,borderRadius:12,border:'1px solid '+rule}},
         [['notes','Notes'],['hl','Highlights · '+hls.length]].map(([k,l])=>h('button',{key:k,onClick:()=>setNh(k),style:{flex:1,padding:'8px 6px',borderRadius:9,fontSize:14,fontWeight:650,background:nh===k?ink:'transparent',color:nh===k?bg:ink}},l))),
       nh==='notes'?h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'0 14px calc(14px + env(safe-area-inset-bottom))',minHeight:0}},
-          h('textarea',{value:note,onChange:e=>editNote(e.target.value),onBlur:()=>saveNote(note),placeholder:'Thoughts, takeaways, things to look up… Select text in the edition and tap “Add to notes” to collect quotes here.',
+          h('textarea',{ref:noteRef,value:note,onChange:e=>editNote(e.target.value),onBlur:()=>saveNote(note),placeholder:'Thoughts, takeaways, things to look up… Select text in the edition and tap “Add to notes” to collect quotes here.',
             style:{flex:1,width:'100%',boxSizing:'border-box',padding:14,borderRadius:14,border:'1px solid '+rule,background:'transparent',color:ink,fontFamily:font,fontSize:Math.max(16,size-1),lineHeight:1.55,resize:'none'}}),
           h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:10}},
-            h('span',{style:{fontSize:12,opacity:.6,flex:1}},(note.trim()?note.trim().split(/\s+/).length:0)+' words · saved automatically'),
+            h('span',{style:{fontSize:12,opacity:.6,flex:1,minWidth:0,whiteSpace:'nowrap',overflow:'hidden',textOverflow:'ellipsis'}},(note.trim()?note.trim().split(/\s+/).length:0)+' words · saved'),
+            [['top',Icons.toTop(17),'Scroll to top'],['bottom',Icons.toBottom(17),'Scroll to bottom']].map(([k,ic,l])=>h('button',{key:k,onClick:()=>{const t=noteRef.current;if(t)t.scrollTo({top:k==='top'?0:t.scrollHeight,behavior:'smooth'})},'aria-label':l,title:l,className:'act90',
+              style:{display:'flex',alignItems:'center',justifyContent:'center',width:32,height:32,borderRadius:16,border:'1px solid '+rule,color:ink,flexShrink:0}},ic)),
             chip(false,'Copy',()=>{copyText(note);toastFn('Notes copied')},'cp'),chip(false,'Share',()=>shareText((view.headline||a.title)+' — notes',note,''),'sh')))
       :h('div',{style:{flex:1,overflowY:'auto',padding:'0 14px calc(20px + env(safe-area-inset-bottom))'}},
-          hls.length?hls.slice().reverse().map(x=>h('div',{key:x.id,style:{padding:'12px 0',borderBottom:'1px solid '+rule}},
-            h('button',{onClick:()=>jumpHl(x),style:{display:'block',width:'100%',textAlign:'left',color:ink,fontFamily:font,fontSize:15.5,lineHeight:1.5}},h('span',{style:{background:'rgba(255,214,10,.35)',borderRadius:2,padding:'1px 2px',WebkitBoxDecorationBreak:'clone'}},x.text)),
+          hls.length>1?h('div',{style:{display:'flex',justifyContent:'flex-end',paddingBottom:4}},
+            h('button',{onClick:flipHlSort,className:'act95',style:{display:'flex',alignItems:'center',gap:5,fontSize:12.5,fontWeight:650,color:ink,opacity:.75,padding:'4px 0'}},Icons.sort(14),hlSort==='new'?'Newest first':'Oldest first')):null,
+          hls.length?hls.slice().sort((x,y)=>hlSort==='new'?(y.createdAt||0)-(x.createdAt||0):(x.createdAt||0)-(y.createdAt||0)).map(x=>h('div',{key:x.id,style:{padding:'12px 0',borderBottom:'1px solid '+rule}},
+            h('button',{onClick:()=>jumpHl(x),style:{display:'block',width:'100%',textAlign:'left',color:ink,fontFamily:font,fontSize:15.5,lineHeight:1.5}},
+              (x.parts&&x.parts.length?x.parts.map(pt=>pt.text):[x.text]).map((t,k)=>h('span',{key:k,style:{display:'block',marginTop:k?10:0}},h('span',{style:{background:'rgba(255,214,10,.35)',borderRadius:2,padding:'1px 2px',WebkitBoxDecorationBreak:'clone',boxDecorationBreak:'clone'}},t)))),
             h('div',{style:{display:'flex',alignItems:'center',gap:14,marginTop:8,fontSize:12.5}},
               h('span',{style:{opacity:.55,flex:1}},(x.lang&&x.lang!=='orig'?x.lang+' · ':'')+(x.createdAt?new Date(x.createdAt).toLocaleDateString([],{day:'numeric',month:'short'}):'')),
               h('button',{onClick:()=>jumpHl(x),style:{color:accent,fontWeight:650}},'Go to'),
               h('button',{onClick:()=>addToNotes(x.text),style:{color:ink,fontWeight:650,opacity:.8}},'+ Notes'),
+              h('button',{onClick:()=>{copyText(x.text);toastFn('Copied')},'aria-label':'Copy highlight',title:'Copy',style:{color:ink,opacity:.7,display:'flex'}},Icons.copy(15)),
               h('button',{onClick:()=>delHl(x.id),'aria-label':'Remove highlight',style:{color:ink,opacity:.55,display:'flex'}},Icons.x(15)))))
           :h('div',{style:{textAlign:'center',opacity:.65,fontSize:14,lineHeight:1.55,padding:'40px 20px'}},'No highlights yet. Select text in the edition and tap Highlight.'))):null);
   return ReactDOM.createPortal(node,document.body);
@@ -541,10 +565,10 @@ function EditionsShelf({T,articles,onOpen,papers,onOpenPaper}){
       h('div',{style:{fontSize:12,color:T.sub}},((papers||[]).length?papers.length+' daily paper'+(papers.length>1?'s':'')+' · ':'')+list.length+' edition'+(list.length===1?'':'s'))),
     h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
       PapersShelfCards({T,papers,onOpen:onOpenPaper}),
-      list.map(({a,ed})=>h('button',{key:a.id,onClick:()=>onOpen(a.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:'#f3eee2',color:'#1c1a16',borderRadius:6,padding:'10px 12px 12px',boxShadow:'0 2px 10px rgba(0,0,0,.12)',border:'1px solid #d9cfb6'}},
-        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double #1c1a16',paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
+      list.map(({a,ed})=>h('button',{key:a.id,onClick:()=>onOpen(a.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px 12px',border:'1px solid '+T.hair}},
+        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
         h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:15,lineHeight:1.2,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(ed&&ed.headline)||a.title),
-        h('div',{style:{fontSize:11,opacity:.7,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out'))))));
+        h('div',{style:{fontSize:11,color:T.sub,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out'))))));
 }
 
 
@@ -745,8 +769,8 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
 }
 function PapersShelfCards({T,papers,onOpen}){
   const SERIF="'Playfair Display'"+INDIC;
-  return(papers||[]).slice(0,10).map(p=>h('button',{key:'p'+p.id,onClick:()=>onOpen(p.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:'#1c1a16',color:'#f3eee2',borderRadius:6,padding:'10px 12px 12px',boxShadow:'0 2px 10px rgba(0,0,0,.18)'}},
-    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double #f3eee2',paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
+  return(papers||[]).slice(0,10).map(p=>h('button',{key:'p'+p.id,onClick:()=>onOpen(p.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.fg,color:T.bg,borderRadius:10,padding:'10px 12px 12px'}},
+    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.bg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
     h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',opacity:.7}},new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' · '+p.stories.length+' stories'),
     h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||'')));
 }

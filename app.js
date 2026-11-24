@@ -1850,7 +1850,11 @@ const Icons={
   tag:s=>Svg({size:s},P('M4 5.5C4 4.7 4.7 4 5.5 4h5.2c.4 0 .8.2 1.1.4l7.7 7.7c.6.6.6 1.6 0 2.2l-5.2 5.2c-.6.6-1.6.6-2.2 0L4.4 11.8a1.6 1.6 0 0 1-.4-1.1V5.5Z'),h('circle',{cx:8.6,cy:8.6,r:1.3,fill:'currentColor'})),
   folder:s=>Svg({size:s},P('M3.5 7c0-1 .8-1.8 1.8-1.8h4l2 2.2h7.4c1 0 1.8.8 1.8 1.8v8c0 1-.8 1.8-1.8 1.8H5.3c-1 0-1.8-.8-1.8-1.8V7Z'),P('M3.5 10h17')),
   plus:s=>Svg({size:s},P('M12 4.5v15M4.5 12h15')),
-  gear:s=>Svg({size:s},h('circle',{cx:12,cy:12,r:3.2,stroke:'currentColor',strokeWidth:1.7}),P('M12 3.2v2.2M12 18.6v2.2M20.8 12h-2.2M5.4 12H3.2M18.2 5.8l-1.6 1.6M7.4 16.6l-1.6 1.6M18.2 18.2l-1.6-1.6M7.4 7.4 5.8 5.8')),
+  gear:s=>Svg({size:s},P('M12.22 2.5h-.44a1.9 1.9 0 0 0-1.9 1.9v.17a1.9 1.9 0 0 1-.95 1.64l-.41.24a1.9 1.9 0 0 1-1.9 0l-.14-.08a1.9 1.9 0 0 0-2.6.7l-.21.36a1.9 1.9 0 0 0 .7 2.6l.14.09a1.9 1.9 0 0 1 .95 1.63v.49a1.9 1.9 0 0 1-.95 1.65l-.14.08a1.9 1.9 0 0 0-.7 2.6l.21.36a1.9 1.9 0 0 0 2.6.7l.14-.08a1.9 1.9 0 0 1 1.9 0l.41.24a1.9 1.9 0 0 1 .95 1.64v.17a1.9 1.9 0 0 0 1.9 1.9h.44a1.9 1.9 0 0 0 1.9-1.9v-.17a1.9 1.9 0 0 1 .95-1.64l.41-.24a1.9 1.9 0 0 1 1.9 0l.14.08a1.9 1.9 0 0 0 2.6-.7l.21-.37a1.9 1.9 0 0 0-.7-2.6l-.14-.08a1.9 1.9 0 0 1-.95-1.65v-.48a1.9 1.9 0 0 1 .95-1.65l.14-.08a1.9 1.9 0 0 0 .7-2.6l-.21-.36a1.9 1.9 0 0 0-2.6-.7l-.14.08a1.9 1.9 0 0 1-1.9 0l-.41-.24a1.9 1.9 0 0 1-.95-1.64V4.4a1.9 1.9 0 0 0-1.9-1.9Z'),h('circle',{cx:12,cy:12,r:2.9,stroke:'currentColor',strokeWidth:1.7})),
+  toTop:s=>Svg({size:s},P('M6 4.5h12M12 20V9M7.5 13.5 12 9l4.5 4.5')),
+  toBottom:s=>Svg({size:s},P('M6 19.5h12M12 4v11M7.5 10.5 12 15l4.5-4.5')),
+  collapseAll:s=>Svg({size:s},P('M7 4.5 12 9l5-4.5M7 19.5 12 15l5 4.5')),
+  expandAll:s=>Svg({size:s},P('M7 8.5 12 4l5 4.5M7 15.5l5 4.5 5-4.5')),
   back:s=>Svg({size:s},P('M14.5 5.5 8 12l6.5 6.5')),
   chevR:s=>Svg({size:s},P('M9.5 5.5 16 12l-6.5 6.5')),
   share:s=>Svg({size:s},P('M12 3.5v11M8.2 7 12 3.3 15.8 7'),P('M6.5 11H5.8C4.8 11 4 11.8 4 12.8v6c0 1 .8 1.8 1.8 1.8h12.4c1 0 1.8-.8 1.8-1.8v-6c0-1-.8-1.8-1.8-1.8h-.7')),
@@ -1983,7 +1987,7 @@ function PrimaryBtn({T,label,onClick,danger,disabled,style}){
 
 function Toast({T,toast}){
   if(!toast)return null;
-  return h('div',{className:'fdin',style:{position:'fixed',left:0,right:0,bottom:'calc(34px + '+SAFE_BF+')',display:'flex',justifyContent:'center',zIndex:120,pointerEvents:'none'}},
+  return h('div',{className:'fdin',style:{position:'fixed',left:0,right:0,bottom:'calc(34px + '+SAFE_BF+')',display:'flex',justifyContent:'center',zIndex:2000,pointerEvents:'none'}},
     h('div',{style:{background:isDarkTheme(T.id)?'#3a3a3f':'#26262a',color:'#f2f2f3',padding:'11px 20px',borderRadius:24,fontSize:14.5,fontWeight:500,maxWidth:'82%',boxShadow:'0 6px 24px rgba(0,0,0,.3)',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},toast));
 }
 
@@ -8057,16 +8061,10 @@ function App(){
   const pendingAlbumRef=useRef(null); // when set, the next upload lands straight in this album
   const vaultSess=useRef({}); // unlocked password-vault session (memory only, never persisted)
   const listScrollRef=useRef(null); // main list scroller — used to jump to top from the wordmark
-  /* header, search row and the floating bar slide away while scrolling down and return on scroll up */
-  const [chromeHidden,setChromeHidden]=useState(false);
-  const lastY=useRef(0);
-  const setHdrP=()=>setChromeHidden(false);
-  useEffect(()=>{const el=listScrollRef.current;if(el)el.scrollTop=0;lastY.current=0;setChromeHidden(false)},[scope.type,scope.id]);
-  const onListScroll=e=>{const y=e.currentTarget.scrollTop;const dy=y-lastY.current;
-    if(y<40){if(chromeHidden)setChromeHidden(false)}
-    else if(dy>8){if(!chromeHidden)setChromeHidden(true)}
-    else if(dy<-8){if(chromeHidden)setChromeHidden(false)}
-    if(Math.abs(dy)>8||y<40)lastY.current=y};
+  /* header and filter chips stay put while the list scrolls (hiding them resized the list and made it judder) */
+  useEffect(()=>{const el=listScrollRef.current;if(el)el.scrollTop=0},[scope.type,scope.id]);
+  /* Home date groups (This week · Last week · …): which are folded; the chip row can fold or open them all */
+  const [hgClosed,setHgClosed]=useState(()=>window.InstaStats&&window.InstaStats.hgClosed?window.InstaStats.hgClosed():new Set());
   const searchRef=useRef(null); // global search field — focused when entering the Search scope
   const [searchOpenH,setSearchOpenH]=useState(false); // the header search icon expands into a full-width field
   const [findReq,setFindReq]=useState(0); // bumping this opens the Reader's find-in-article bar
@@ -8681,7 +8679,6 @@ function App(){
   const headerBtn=(icon,onClick)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg})},icon);
   // Tapping the wordmark returns Home and scrolls the list back to the top.
   const goHome=()=>{
-    setHdrP(0);
     setQuery('');
     setScope({type:'home'});
     const el=listScrollRef.current;
@@ -8701,7 +8698,7 @@ function App(){
     const pageTitle=scope.type==='tag'?'#'+scope.id:folderName||({home:'Home',brief:'My Routine',blogs:'Blogs',headlines:'Headlines',photos:'Photos',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags',videos:'Videos',search:'Search'}[scope.type]||'Instapaper');
     const searching=isArticleScope&&(searchOpenH||!!query);
     const closeSearch=()=>{setSearchOpenH(false);setQuery('');setSearchScope('all');try{document.activeElement&&document.activeElement.blur()}catch(e){}if(scope.type==='search')setScope({type:'home'})};
-    header=h('div',{style:{flexShrink:0,overflow:'hidden',height:chromeHidden&&!searching?0:44,transition:'height 260ms cubic-bezier(.2,.8,.2,1)',background:T.bg,position:'relative',zIndex:3}},
+    header=h('div',{style:{flexShrink:0,overflow:'hidden',height:44,background:T.bg,position:'relative',zIndex:3}},
       searching?h('div',{className:'fdin',style:{display:'flex',alignItems:'center',gap:8,padding:'4px 10px 4px 12px',height:44}},
         h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 11px',minWidth:0}},
           h('span',{style:{color:T.sub,display:'flex'}},Icons.search(16)),
@@ -8783,7 +8780,7 @@ function App(){
         snippet:snippetFor(a)});
         /* Home: split into This week · Last week · Earlier this month · Last month · each month */
         return scope.type==='home'&&!q&&(!S.sort||S.sort==='newest'||S.sort==='oldest')&&window.InstaStats
-          ?h(window.InstaStats.TimeGroups,{T,list,row}):list.map(row);})());
+          ?h(window.InstaStats.TimeGroups,{T,list,row,closed:hgClosed,setClosed:setHgClosed}):list.map(row);})());
   }
   /* premium Home: insights above the library (week / month comparisons) */
   if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
@@ -8792,7 +8789,7 @@ function App(){
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
       header,
-      isArticleScope&&!selecting?h('div',{style:{padding:chromeHidden?'0 16px':'0 16px 8px',flexShrink:0,maxHeight:chromeHidden?0:240,overflow:chromeHidden?'hidden':'visible',opacity:chromeHidden?0:1,transition:'max-height 260ms cubic-bezier(.2,.8,.2,1), padding 260ms, opacity 200ms'}},
+      isArticleScope&&!selecting?h('div',{style:{padding:'0 16px 8px',flexShrink:0}},
 
         q?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginTop:8}},
           [['all','Everything'],['title','Title'],['source','Source'],['tags','Tags']].map(([v,l])=>{
@@ -8811,6 +8808,10 @@ function App(){
           const curType=(TYPES.find(t=>t[0]===S.typeFilter)||TYPES[0])[1];
           const SORT_SHORT={newest:'Newest',oldest:'Oldest',longest:'Longest',shortest:'Shortest',popular:'Popular',title:'Title A–Z'};
           const curSort=SORT_SHORT[S.sort]||(SORTS.find(s=>s[0]===S.sort)||SORTS[0])[1];
+          /* fold / unfold every Home date group at once — shown only when the list is grouped */
+          const showGroupFold=scope.type==='home'&&(!S.sort||S.sort==='newest'||S.sort==='oldest')&&!!(window.InstaStats&&window.InstaStats.groupKeys)&&list.length>0;
+          const groupKeys=showGroupFold?window.InstaStats.groupKeys(list):[];
+          const allFolded=showGroupFold&&groupKeys.every(k=>hgClosed.has(k));
           return h('div',{style:{display:'flex',alignItems:'center',gap:6,marginTop:q?8:2,flexWrap:'nowrap'}},
             h('div',{style:{position:'relative',flexShrink:0}},
               h('button',{onClick:()=>{setSortMenu(false);setFilterMenu(v=>!v)},className:'act90',style:chip(S.typeFilter!=='all'||!!S.lenFilter||!!S.srcFilter)},Icons.filter(14),curType),
@@ -8829,6 +8830,9 @@ function App(){
               S.readFilter!=='read'&&unreadCount>0?h('span',{style:{minWidth:17,height:17,padding:'0 5px',borderRadius:9,background:T.accent,color:'#fff',fontSize:10.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center'}},unreadCount>99?'99+':String(unreadCount)):null),
             h('button',{onClick:()=>setSelecting({mode:'select',ids:[]}),className:'act90',style:Object.assign({},chip(false),{flexShrink:0}),title:'Select multiple'},Icons.checkCircle(14),'Select'),
             h('div',{style:{flex:1,minWidth:0}}),
+            showGroupFold?h('button',{onClick:()=>setHgClosed(()=>window.InstaStats.hgSave(new Set(allFolded?[]:groupKeys))),className:'act90',
+              'aria-label':allFolded?'Expand all groups':'Collapse all groups',title:allFolded?'Expand all':'Collapse all',
+              style:Object.assign({},chip(false),{flexShrink:0,padding:'5px 7px'})},allFolded?Icons.expandAll(14):Icons.collapseAll(14)):null,
             h('div',{style:{position:'relative',flexShrink:0}},
               h('button',{onClick:()=>{setFilterMenu(false);setSortMenu(v=>!v)},className:'act90',style:chip(true),title:'Sort'},Icons.sort(14),curSort),
               sortMenu?h(Fragment,null,
@@ -8839,7 +8843,7 @@ function App(){
                     l,v===S.sort?h('span',{style:{display:'flex',color:T.accent}},Icons.check(16)):null)))):null));
         })():null):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
-      h('div',{ref:listScrollRef,onScroll:onListScroll,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?NAV_LIFT:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
+      h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?NAV_LIFT:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
         h('div',{key:scope.type+':'+(scope.id||''),className:'pgin'},body)),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
@@ -8872,7 +8876,7 @@ function App(){
     showTabs?h(FloatingNav,{T,active:['home','brief','blogs'].includes(scope.type)?scope.type:null,plusOpen:!!(sheet&&sheet.type==='plus'),overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
       onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
-        setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
+        setScope({type:k});setQuery('');setSelecting(null)}}):null,
     sidebar?h(Sidebar,{T,scope,folders:data.folders,counts:sidebarCounts(data),z:browserO?95:60, /* opened from the browser's ☰ it sits on top; picking a section leaves the browser */
       onScope:s=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
       onBrowse:()=>{if(!browserO)setBrowserO({url:''})},
