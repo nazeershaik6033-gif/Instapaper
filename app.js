@@ -438,7 +438,7 @@ function aiChat(S,messages,maxTokens,onWait){
 }
 const aiReady=S=>S.aiProvider==='claude'?true:S.aiProvider==='gemini'?!!S.geminiKey:!!S.aiKey;
 function aiModelLabel(S){
-  if(S.aiProvider==='claude')return'Claude app';
+  if(S.aiProvider==='claude')return chatName()+' app';
   if(S.aiProvider==='gemini'){const m=GEMINI_MODELS.find(x=>x[0]===S.geminiModel);return m?m[1]:(S.geminiModel||'Gemini')}
   const m=AI_MODELS.find(x=>x[0]===S.aiModel);return m?m[1]:S.aiModel;
 }
@@ -1014,9 +1014,20 @@ function vibrate(ms){try{if(navigator.vibrate)navigator.vibrate(ms)}catch(e){}}
    Claude subscription. On iOS a claude.ai link opens the installed app (else the
    site, already signed in). We also copy the full prompt so if the composer
    doesn't auto-fill, the user can paste it in one tap. */
-function openInClaude(prompt,toastFn){
+/* Which chat app the no-key hand-offs open: Claude (default) or DeepSeek. Set from
+   Settings → AI on every App render, so the labels below always match. */
+let CHAT_APP='claude';
+const chatName=()=>CHAT_APP==='deepseek'?'DeepSeek':'Claude';
+const chatSite=()=>CHAT_APP==='deepseek'?'chat.deepseek.com':'claude.ai';
+function openInClaude(prompt,toastFn,app){
   const text=String(prompt||'').trim();if(!text)return false;
   copyText(text);
+  if((app||CHAT_APP)==='deepseek'){
+    // DeepSeek has no link that pre-fills a message: the prompt is on the clipboard, paste it there
+    openExternalUrl('https://chat.deepseek.com/');
+    if(toastFn)toastFn('Prompt copied — paste it in DeepSeek');
+    return true;
+  }
   const capped=text.length>1500?text.slice(0,1500)+'\n\n[Full prompt copied to clipboard — paste to continue]':text;
   openExternalUrl('https://claude.ai/new?q='+encodeURIComponent(capped));
   if(toastFn)toastFn('Prompt copied — opening Claude. Paste it if it doesn’t appear.');
@@ -3437,15 +3448,15 @@ function BlogsClaudeSheet({T,feeds,blogFeeds,seen,onClose,toastFn}){
     const instrParts=[];
     if(modes.summarize)instrParts.push('Summarize the key points across everything below, grouped by theme, as concise bullets.');
     if(modes.newsletter)instrParts.push('Compile everything into a polished, ready-to-send newsletter — a short friendly intro, one section per topic with a couple of sentences each, and a closing line.');
-    if(!instrParts.length){toastFn('Pick what Claude should do');return}
+    if(!instrParts.length){toastFn('Pick what '+chatName()+' should do');return}
     const lines=chosen.map((e,i)=>(i+1)+'. '+e.sourceName+' — '+(e.title||'Untitled')+'\n   '+e.url);
     const p=instrParts.join(' ')+'\n\n----- MY BLOGS — SELECTED ITEMS ('+chosen.length+') -----\n'+lines.join('\n');
     if(openInClaude(p,toastFn))onClose();
   };
-  return h(Sheet,{T,title:'Ask Claude about my blogs',onClose},
+  return h(Sheet,{T,title:'Ask '+chatName()+' about my blogs',onClose},
     h('div',{style:{padding:'0 20px calc(18px + '+SAFE_B+')'}},
-      h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'Blogs'),' updates to the ',h('strong',{style:{color:T.fg}},'Claude app'),' — no API key.'),
-      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should Claude do?'),
+      h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'Blogs'),' updates to the ',h('strong',{style:{color:T.fg}},''+chatName()+' app'),' — no API key.'),
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should '+chatName()+' do?'),
       modeRow('summarize','Summarize','Key points across everything selected'),
       modeRow('newsletter','Newsletter','Compile into a ready-to-send newsletter'),
       groupsData.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'18px 0 4px'}},
@@ -3456,8 +3467,8 @@ function BlogsClaudeSheet({T,feeds,blogFeeds,seen,onClose,toastFn}){
       groupsData.length?groupsData.map(g=>h('div',{key:g.feed.id,style:{marginBottom:8}},
         h('div',{style:{fontSize:12,fontWeight:600,color:T.meta,padding:'6px 0 2px'}},g.feed.name),
         g.entries.map(entryRow))):h('div',{style:{padding:'10px 0',fontSize:13.5,color:T.sub,lineHeight:1.5}},'No blog posts with recent updates yet — add blogs first.'),
-      h(PrimaryBtn,{T,label:'Ask Claude',disabled:!(anyMode&&selSet.size),style:{margin:'16px 0 0',width:'100%'},onClick:doAsk}),
-      h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full list is copied to your clipboard as a backup.')));
+      h(PrimaryBtn,{T,label:'Ask '+chatName()+'',disabled:!(anyMode&&selSet.size),style:{margin:'16px 0 0',width:'100%'},onClick:doAsk}),
+      h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the '+chatName()+' app if installed, otherwise '+chatSite()+'. The full list is copied to your clipboard as a backup.')));
 }
 
 /* ============================== Threads ============================== */
@@ -6058,7 +6069,9 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
     }catch(e){if(alive.current)setError((e&&e.message)||'Gemini failed')}
     if(alive.current)setBusy('');
   };
-  const doClaude=()=>{if(openInClaude('Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary.\n\n'+(a.title||'')+'\nSource: '+link,toastFn))onClose()};
+  const txPrompt='Fetch the transcript of this video yourself and transcribe everything spoken into clean, readable text with natural paragraphs. No timestamps, speaker labels, or commentary.\n\n'+(a.title||'')+'\nSource: '+link;
+  const doClaude=()=>{if(openInClaude(txPrompt,toastFn,'claude'))onClose()};
+  const doDeepSeek=()=>{if(openInClaude(txPrompt.replace('Fetch the transcript of this video yourself','Search the web for the transcript of this YouTube video (turn on Search)'),toastFn,'deepseek'))onClose()};
   const doWhisper=async()=>{
     setError('');setBusy('Starting '+whisperLabel(S)+'…');
     try{await txStart(S,a);toastFn('Started — it keeps running if you leave')}
@@ -6166,7 +6179,8 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
             h('button',{disabled:!ghDraft.trim(),onClick:()=>{update(d=>({...d,settings:{...d.settings,ghToken:ghDraft.trim()}}));setGhDraft('');toastFn('GitHub connected')},className:'act95',
               style:{padding:'0 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:600,opacity:ghDraft.trim()?1:.4}},'Save'))),
     h(ARow,{T,icon:Icons.ai(20),label:'Gemini',sub:S.geminiKey?'Fills the box in the spoken language · keep the app open':'Needs a free Gemini key (Settings → AI)',onClick:doGemini}),
-    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}));
+    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}),
+    h(ARow,{T,icon:Icons.send(20),label:'DeepSeek app',sub:'Prompt is copied — paste it in DeepSeek (turn on Search), then copy the transcript back and tap Paste',onClick:doDeepSeek}));
 
   return h(Sheet,{T,onClose,title:'Transcript',maxH:'94%',z:80},
     h('div',{style:{padding:'0 20px 12px',fontSize:13,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.title),
@@ -6587,7 +6601,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
   const doClaude=()=>{
     const cmd=claudeText.trim();
     let p=cmd||(ctx?'Summarize this article and give me the key takeaways.':'');
-    if(!p){toastFn('Type what Claude should do');return}
+    if(!p){toastFn('Type what '+chatName()+' should do');return}
     if(ctx){
       p+='\n\n----- ARTICLE -----\n'+(ctx.title||'')+(ctx.url?'\nSource: '+ctx.url:'')+'\n\n'+String(ctx.text||'').slice(0,6000);
     }
@@ -6606,7 +6620,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
   };
   /* Hand a picked set of My Routine updates (articles + videos) to the Claude
      app. The three modes combine into one instruction — e.g. Transcript +
-     Newsletter asks Claude to pull each video's transcript itself (we have no
+     Newsletter asks Claude to pull each video's transcript itself (we have no'
      API key to fetch it locally) and fold everything into a newsletter. */
   const doClaudeRoutine=()=>{
     const sel=routineSel||new Set();
@@ -6618,7 +6632,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
     if(m.transcript)instrParts.push('For any YouTube video links below, fetch the transcript yourself and base your response on the actual spoken content, not just the title.');
     if(m.summarize)instrParts.push('Summarize the key points across everything below, grouped by theme, as concise bullets.');
     if(m.newsletter)instrParts.push('Compile everything into a polished, ready-to-send newsletter — a short friendly intro, one section per topic with a couple of sentences each, and a closing line.');
-    if(!instrParts.length){toastFn('Pick what Claude should do');return}
+    if(!instrParts.length){toastFn('Pick what '+chatName()+' should do');return}
     const lines=chosen.map((e,i)=>(i+1)+'. '+(e.isVideo?'[Video] ':'')+e.sourceName+' — '+(e.title||'Untitled')+'\n   '+e.url);
     const p=instrParts.join(' ')+'\n\n----- MY ROUTINE — SELECTED ITEMS ('+chosen.length+') -----\n'+lines.join('\n');
     if(openInClaude(p,toastFn)){setRoutineSel(null);onClose()}
@@ -6655,25 +6669,25 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
   if(view==='claude'){
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.5}},'Send a command to the ',h('strong',{style:{color:T.fg}},'Claude app'),' — no API key needed, it uses your own Claude account.'),
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.5}},'Send a command to the ',h('strong',{style:{color:T.fg}},''+chatName()+' app'),' — no API key needed, it uses your own '+chatName()+' account.'),
         ctx?h('div',{style:{fontSize:12.5,color:T.accent,marginBottom:10,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'Includes this article: '+ctx.title):null,
-        h('textarea',{value:claudeText,onChange:e=>setClaudeText(e.target.value),rows:3,placeholder:ctx?'What should Claude do with this article?':'Type anything for Claude to do…',autoFocus:true,
+        h('textarea',{value:claudeText,onChange:e=>setClaudeText(e.target.value),rows:3,placeholder:ctx?'What should '+chatName()+' do with this article?':'Type anything for '+chatName()+' to do…',autoFocus:true,
           style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
         ctx?h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginTop:10}},
           CLAUDE_PRESETS.map(p=>chip(p,claudeText===p,()=>setClaudeText(p)))):null,
-        h(PrimaryBtn,{T,label:'Open in Claude',style:{margin:'14px 0 0',width:'100%'},onClick:doClaude}),
-        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full prompt is copied to your clipboard as a backup.')));
+        h(PrimaryBtn,{T,label:'Open in '+chatName()+'',style:{margin:'14px 0 0',width:'100%'},onClick:doClaude}),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the '+chatName()+' app if installed, otherwise '+chatSite()+'. The full prompt is copied to your clipboard as a backup.')));
   }else if(view==='claudeLib'){
     const n=(articles||[]).filter(a=>a&&(a.title||a.text)).length;
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.5}},'Ask ',h('strong',{style:{color:T.fg}},'Claude'),' anything about everything you\'ve saved — no API key. It receives an index of your ',h('strong',{style:{color:T.fg}},n+' saved item'+(n===1?'':'s')),' (titles, sources, links) to reason over.'),
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:10,lineHeight:1.5}},'Ask ',h('strong',{style:{color:T.fg}},''+chatName()+''),' anything about everything you\'ve saved — no API key. It receives an index of your ',h('strong',{style:{color:T.fg}},n+' saved item'+(n===1?'':'s')),' (titles, sources, links) to reason over.'),
         h('textarea',{value:claudeText,onChange:e=>setClaudeText(e.target.value),rows:3,placeholder:'e.g. Which of my saved articles cover AI policy? Build me a reading plan.',autoFocus:true,
           style:{width:'100%',padding:'12px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:15,lineHeight:1.5,resize:'none',fontFamily:UIF}}),
         h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',marginTop:10}},
           CLAUDE_LIB_PRESETS.map(p=>chip(p,claudeText===p,()=>setClaudeText(p)))),
-        h(PrimaryBtn,{T,label:'Ask Claude',disabled:!n,style:{margin:'14px 0 0',width:'100%'},onClick:doClaudeLibrary}),
-        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full library index is copied to your clipboard as a backup.')));
+        h(PrimaryBtn,{T,label:'Ask '+chatName()+'',disabled:!n,style:{margin:'14px 0 0',width:'100%'},onClick:doClaudeLibrary}),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',marginTop:10,lineHeight:1.5}},'Opens the '+chatName()+' app if installed, otherwise '+chatSite()+'. The full library index is copied to your clipboard as a backup.')));
   }else if(view==='claudeRoutine'){
     const sel=routineSel||new Set();
     const m=routineModes;
@@ -6689,9 +6703,9 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
         e.isNew?h('span',{style:{fontSize:10,fontWeight:700,color:T.accent,letterSpacing:'.03em'}},'NEW'):null));
     body=h('div',null,backBtn,
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'My Routine'),' updates to the ',h('strong',{style:{color:T.fg}},'Claude app'),' — no API key.'),
-        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should Claude do?'),
-        modeRow('transcript','Transcript','For videos — Claude fetches the transcript itself'),
+        h('div',{style:{fontSize:13,color:T.meta,marginBottom:12,lineHeight:1.5}},'Send your ',h('strong',{style:{color:T.fg}},'My Routine'),' updates to the ',h('strong',{style:{color:T.fg}},''+chatName()+' app'),' — no API key.'),
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:2}},'What should '+chatName()+' do?'),
+        modeRow('transcript','Transcript','For videos — '+chatName()+' fetches the transcript itself'),
         modeRow('summarize','Summarize','Key points across everything selected'),
         modeRow('newsletter','Newsletter','Compile into a ready-to-send newsletter'),
         routineGroups.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',margin:'18px 0 4px'}},
@@ -6702,17 +6716,17 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
         routineGroups.length?routineGroups.map(g=>h('div',{key:g.item.id,style:{marginBottom:8}},
           h('div',{style:{fontSize:12,fontWeight:600,color:T.meta,padding:'6px 0 2px'}},g.item.name),
           g.entries.map(entryRow))):h('div',{style:{padding:'10px 0',fontSize:13.5,color:T.sub,lineHeight:1.5}},'No routine items with recent updates yet — add channels, accounts, or sites in My Routine first.'),
-        h(PrimaryBtn,{T,label:'Ask Claude',disabled:!(anyMode&&sel.size),style:{margin:'16px 0 0',width:'100%'},onClick:doClaudeRoutine}),
-        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the Claude app if installed, otherwise claude.ai. The full list is copied to your clipboard as a backup.')));
+        h(PrimaryBtn,{T,label:'Ask '+chatName()+'',disabled:!(anyMode&&sel.size),style:{margin:'16px 0 0',width:'100%'},onClick:doClaudeRoutine}),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',margin:'10px 0 4px',lineHeight:1.5}},'Opens the '+chatName()+' app if installed, otherwise '+chatSite()+'. The full list is copied to your clipboard as a backup.')));
   }else if(!ready){
     const prov=S.aiProvider||'openrouter';
     const isGem=prov==='gemini';
     body=h('div',{style:{padding:'0 20px'}},
       h('div',{style:{display:'flex',gap:8,marginBottom:14,flexWrap:'wrap'}},
-        chip('Claude app',false,()=>{update(d=>({...d,settings:{...d.settings,aiProvider:'claude'}}));toastFn('AI now opens in the Claude app — no key needed')}),
+        chip(''+chatName()+' app',false,()=>{update(d=>({...d,settings:{...d.settings,aiProvider:'claude'}}));toastFn('AI now opens in the '+chatName()+' app — no key needed')}),
         chip('OpenRouter',!isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'openrouter'}}))),
         chip('Google Gemini',isGem,()=>update(d=>({...d,settings:{...d.settings,aiProvider:'gemini'}})))),
-      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:12,padding:'10px 12px',borderRadius:10,background:T.card}},'✦ Tip: pick "Claude app" above to use Summarize, Translate, Rewrite, and Ask with no API key at all — each opens ready-made in the Claude app.'),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:12,padding:'10px 12px',borderRadius:10,background:T.card}},'✦ Tip: pick "'+chatName()+' app" above to use Summarize, Translate, Rewrite, and Ask with no API key at all — each opens ready-made in the '+chatName()+' app.'),
       h('div',{style:{fontSize:14,color:T.meta,lineHeight:1.55,marginBottom:14}},
         isGem?'Connect a free Google Gemini API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ':'Connect a free OpenRouter API key to unlock AI summaries, translation (Telugu, Hindi & more), rewriting, and Q&A. Create one in seconds at ',
         isGem?h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey')
@@ -6721,9 +6735,9 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
         style:{width:'100%',padding:'13px 14px',borderRadius:11,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
       h(PrimaryBtn,{T,label:'Save key',disabled:!keyDraft.trim(),style:{margin:'14px 0 0',width:'100%'},onClick:()=>{update(d=>({...d,settings:{...d.settings,[isGem?'geminiKey':'aiKey']:keyDraft.trim()}}));toastFn('AI connected')}}),
       h('div',{style:{display:'flex',alignItems:'center',gap:10,margin:'18px 0 4px'}},h('div',{style:{flex:1,height:1,background:T.hair}}),h('span',{style:{fontSize:12,color:T.sub}},'or, no key needed'),h('div',{style:{flex:1,height:1,background:T.hair}})),
-      h(ARow,{T,icon:Icons.send(20),label:ctx?'Use the Claude app instead':'Open in Claude',sub:'Send commands to Claude with your own account',onClick:()=>{setClaudeText('');setView('claude')}}),
-      ctx?null:h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
-      ctx?null:h(ARow,{T,icon:Icons.newspaper(20),label:'Ask Claude about my routine',sub:'Transcript, summary, or newsletter',onClick:()=>{setView('claudeRoutine')}}));
+      h(ARow,{T,icon:Icons.send(20),label:ctx?'Use the '+chatName()+' app instead':'Open in '+chatName()+'',sub:'Send commands to '+chatName()+' with your own account',onClick:()=>{setClaudeText('');setView('claude')}}),
+      ctx?null:h(ARow,{T,icon:Icons.folder(20),label:'Ask '+chatName()+' about my library',sub:'Q&A across everything you\'ve saved',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
+      ctx?null:h(ARow,{T,icon:Icons.newspaper(20),label:'Ask '+chatName()+' about my routine',sub:'Transcript, summary, or newsletter',onClick:()=>{setView('claudeRoutine')}}));
   }else if(busy){
     body=h('div',{style:{padding:'30px 20px',display:'flex',flexDirection:'column',alignItems:'center',gap:14}},
       h(Spinner,{T,size:26}),
@@ -6785,9 +6799,9 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
   }else if(!ctx){
     body=h('div',null,
       error?h('div',{style:{margin:'0 20px 12px',padding:'11px 14px',borderRadius:10,background:T.card,fontSize:13,color:T.danger,lineHeight:1.45}},error):null,
-      h(ARow,{T,icon:Icons.send(20),label:'Open in Claude',sub:'Send any command to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}}),
-      h(ARow,{T,icon:Icons.folder(20),label:'Ask Claude about my library',sub:'Q&A across everything you\'ve saved — no API key',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
-      h(ARow,{T,icon:Icons.newspaper(20),label:'Ask Claude about my routine',sub:'Transcript, summary, or newsletter from what you follow',onClick:()=>{setView('claudeRoutine')}}),
+      h(ARow,{T,icon:Icons.send(20),label:'Open in '+chatName()+'',sub:'Send any command to the '+chatName()+' app — no API key',onClick:()=>{setClaudeText('');setView('claude')}}),
+      h(ARow,{T,icon:Icons.folder(20),label:'Ask '+chatName()+' about my library',sub:'Q&A across everything you\'ve saved — no API key',onClick:()=>{setClaudeText('');setView('claudeLib')}}),
+      h(ARow,{T,icon:Icons.newspaper(20),label:'Ask '+chatName()+' about my routine',sub:'Transcript, summary, or newsletter from what you follow',onClick:()=>{setView('claudeRoutine')}}),
       h(ARow,{T,icon:Icons.ai(20),label:'Ask AI anything',sub:'Chat with the built-in AI'+(ready?'':' (needs a key)'),onClick:()=>setView('ask')}),
       h(ARow,{T,icon:Icons.sun(20),label:'Add to My Routine',sub:'Follow a channel, account, or site',onClick:()=>{setRoutineText('');setRoutinePick(null);setView('addRoutine')}}));
   }else{
@@ -6803,20 +6817,20 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
       isVid?[
         h(ARow,{key:'sum',T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
         h(ARow,{key:'ask',T,icon:Icons.ai(20),label:'Ask about this video',sub:'Any question, answered from the video',onClick:()=>setView('ask')}),
-        h(ARow,{key:'cl',T,icon:Icons.send(20),label:'Open in Claude',sub:'Hand this video to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}})
+        h(ARow,{key:'cl',T,icon:Icons.send(20),label:'Open in '+chatName()+'',sub:'Hand this video to the '+chatName()+' app — no API key',onClick:()=>{setClaudeText('');setView('claude')}})
       ]:[
         h(ARow,{key:'sum',T,icon:Icons.notes(20),label:'Summarize',sub:'Key points + takeaway in '+outLang,onClick:doSummarize}),
         h(ARow,{key:'tl',T,icon:Icons.globe(20),label:'Translate',sub:'Telugu, Hindi, and many more',onClick:()=>setView('langs')}),
         h(ARow,{key:'rw',T,icon:Icons.pencil(20),label:'Rewrite',sub:'Simplify · Shorten · Change tone',onClick:()=>setView('styles')}),
         h(ARow,{key:'ask',T,icon:Icons.ai(20),label:'Ask about this article',sub:'Any question, answered from the text',onClick:()=>setView('ask')}),
-        h(ARow,{key:'cl',T,icon:Icons.send(20),label:'Open in Claude',sub:'Hand this article to the Claude app — no API key',onClick:()=>{setClaudeText('');setView('claude')}})
+        h(ARow,{key:'cl',T,icon:Icons.send(20),label:'Open in '+chatName()+'',sub:'Hand this article to the '+chatName()+' app — no API key',onClick:()=>{setClaudeText('');setView('claude')}})
       ]);
   }
 
   return h(Sheet,{T,onClose:busy?()=>{}:onClose,title:'✦ AI Assistant',maxH:'92%'},
     body,
     ready&&!busy?h('div',{style:{padding:'14px 20px 0',fontSize:11.5,color:T.sub,textAlign:'center'}},
-      usingClaude?'Opens in the Claude app — free, no API key. Change in Settings → AI.':'Model: '+aiModelLabel(S)+' — change in Settings'):null);
+      usingClaude?'Opens in the '+chatName()+' app — free, no API key. Change in Settings → AI.':'Model: '+aiModelLabel(S)+' — change in Settings'):null);
 }
 
 /* ============================== password vault panel ============================== */
@@ -7678,14 +7692,15 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
   }else if(page==='ai'){
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 0'}},
-        h('div',{style:{display:'flex',gap:8,marginBottom:12}},
-          [['claude','Claude app'],['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>
-            h('button',{key:id,onClick:()=>set({aiProvider:id}),className:'act95 trc',
-              style:{flex:1,padding:'10px 0',borderRadius:11,fontSize:13.5,fontWeight:600,background:(S.aiProvider||'openrouter')===id?T.fg:T.card,color:(S.aiProvider||'openrouter')===id?T.bg:T.meta}},label))),
+        h('div',{style:{display:'grid',gridTemplateColumns:'1fr 1fr',gap:8,marginBottom:12}},
+          [['claude','Claude app'],['deepseek','DeepSeek app'],['openrouter','OpenRouter'],['gemini','Google Gemini']].map(([id,label])=>{
+            const prov=S.aiProvider||'openrouter',on=id==='claude'?prov==='claude'&&S.chatApp!=='deepseek':id==='deepseek'?prov==='claude'&&S.chatApp==='deepseek':prov===id;
+            return h('button',{key:id,onClick:()=>set(id==='claude'||id==='deepseek'?{aiProvider:'claude',chatApp:id}:{aiProvider:id}),className:'act95 trc',
+              style:{padding:'10px 0',borderRadius:11,fontSize:13.5,fontWeight:600,background:on?T.fg:T.card,color:on?T.bg:T.meta}},label)})),
         (S.aiProvider||'openrouter')==='claude'
           ?h(Fragment,null,
-            h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.6,marginBottom:10}},'No API key needed. Summarize, Translate, Rewrite, and Ask open ready-made in the ',h('strong',null,'Claude app'),' (or claude.ai in the browser) with the article attached — answers appear in Claude, where you can keep chatting.'),
-            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the Claude app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Instapaper? Switch to OpenRouter or Gemini with a free API key.'))
+            h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.6,marginBottom:10}},'No API key needed. Summarize, Translate, Rewrite, and Ask open ready-made in the ',h('strong',null,''+chatName()+' app'),' (or '+chatSite()+' in the browser) with the article attached — answers appear in '+chatName()+', where you can keep chatting.'),
+            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the '+chatName()+' app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Instapaper? Switch to OpenRouter or Gemini with a free API key.'))
           :(S.aiProvider||'openrouter')==='gemini'
           ?h(Fragment,null,
             h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Uses Google\u2019s Gemini API directly \u2014 generous free tier. Get a key at ',h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey'),'.'),
@@ -8188,6 +8203,7 @@ function App(){
   const byId=id=>dataRef.current.articles.find(a=>a.id===id);
 
   const S=data.settings;
+  CHAT_APP=S.chatApp==='deepseek'?'deepseek':'claude'; // which app no-key AI hand-offs open
   const T0=THEMES[S.theme]||THEMES.light;
   /* Settings → Display & Motion → Higher contrast: secondary text one step darker (lighter in dark mode) */
   const T=S.contrast?Object.assign({},T0,{sub:T0.meta,meta:T0.fg}):T0;
