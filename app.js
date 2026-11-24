@@ -2095,7 +2095,7 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
               :h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{display:'flex'}},ic(k==='brief'?19:22)));
         }))));
 }
-function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings}){
+function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onSettings,z}){
   const is=(t,id)=>scope.type===t&&(id===undefined||scope.id===id);
   const go=(t,id)=>{onScope({type:t,id});onClose()};
   const [q,setQ]=useState('');
@@ -2120,7 +2120,7 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
   const navF=NAV.filter(n=>m(n.label));
   const foldersF=folders.filter(f=>m(f.name));
   const noMatch=q.trim()&&!navF.length&&!foldersF.length;
-  return h('div',{style:{position:'fixed',inset:0,zIndex:60}},
+  return h('div',{style:{position:'fixed',inset:0,zIndex:z||60}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:T.overlay}}),
     h('div',{className:'slid',style:{position:'absolute',top:0,bottom:0,left:0,width:'min(82vw, 330px)',background:T.bg,color:T.fg,display:'flex',flexDirection:'column',boxShadow:'8px 0 40px rgba(0,0,0,.25)'}},
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',padding:'calc(8px + '+SAFE_T+') 10px 6px'}},
@@ -6757,7 +6757,7 @@ function edgeSwipe(onBack){
   };
 }
 window.instaEdgeSwipe=edgeSwipe;
-function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose,agentProps}){
+function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onChangeVault,session,initialUrl,onClose,onMenu,agentProps}){
   const [input,setInput]=useState('');
   const [inApp,setInApp]=useState(null); // {url} — in-app browser + Browser Agent (browser.js)
   const [vaultOpen,setVaultOpen]=useState(false);
@@ -7022,7 +7022,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 
   return h('div',Object.assign({className:'fdin',style:{position:'fixed',inset:0,zIndex:90,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},inApp?{}:edgeSwipe(()=>{clearBrowserReturn();onClose()})),
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'calc(6px + '+SAFE_T+') 8px 6px',flexShrink:0}},
-      h('button',{onClick:()=>{clearBrowserReturn();onClose()},'aria-label':'Back to the app',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},Icons.home(22)),
+      h('button',{onClick:()=>{if(onMenu){onMenu();return}clearBrowserReturn();onClose()},'aria-label':onMenu?'Menu':'Back to the app',className:'act90',style:Object.assign({},iconBtnS,{color:T.fg})},onMenu?Icons.menu(22):Icons.home(22)),
       h('div',{style:{flex:1,display:'flex',alignItems:'center',gap:8,background:T.search,borderRadius:11,padding:'8px 12px',minWidth:0}},
         h('span',{style:{color:T.sub,display:'flex'}},Icons.search(15)),
         h('input',{value:input,onChange:e=>setInput(e.target.value),placeholder:'Search saved links or enter address',inputMode:'text',enterKeyHint:'go',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
@@ -8657,10 +8657,11 @@ function App(){
       onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
         setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
-    sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
-      onBrowse:()=>setBrowserO({url:''}),
-      onSettings:()=>setSettingsOpen(true),
-      onFolderLongPress:f=>{setSidebar(false);setSheet({type:'folder',folder:f})}}):null,
+    sidebar?h(Sidebar,{T,scope,folders:data.folders,z:browserO?95:60, /* opened from the browser's ☰ it sits on top; picking a section leaves the browser */
+      onScope:s=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
+      onBrowse:()=>{if(!browserO)setBrowserO({url:''})},
+      onSettings:()=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setSettingsOpen(true)},
+      onFolderLongPress:f=>{if(browserO){clearBrowserReturn();setBrowserO(null)}setSidebar(false);setSheet({type:'folder',folder:f})}}):null,
 
     menuOpen?h(MenuPopover,{T,settings:S,showListOps:isArticleScope,onClose:()=>setMenuOpen(false),
       onPick:(kind,v)=>{update(d=>({...d,settings:{...d.settings,[kind]:v}}));setMenuOpen(false)},
@@ -8766,6 +8767,7 @@ function App(){
       session:vaultSess,
       initialUrl:browserO.url,
       agentProps:{S,data,update,toastFn,onSaveUrl:saveFromBrowser,onSaveNote:md=>saveQuickNote(md)},
+      onMenu:()=>setSidebar(true),
       onClose:()=>{clearBrowserReturn();setBrowserO(null)}}):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);
