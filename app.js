@@ -4698,19 +4698,18 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
         thumb||vidId?h('div',{style:{fontSize:15.5,fontWeight:700,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl):null,
         e.excerpt?h('div',{style:{fontSize:12.5,opacity:.8,lineHeight:1.4,marginTop:4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null),
       h('div',{style:{position:'absolute',right:10,bottom:'calc('+(small?78:22)+'px + '+padB+')',display:'flex',flexDirection:'column',gap:small?10:14}},
-        railBtn(Icons.check(20),'Done',()=>onDone(p),done,'#2f9e44'),
-        railBtn(Icons.download(19),saved?'Saved':'Save',()=>{if(!saved)onSave(p)},saved),
-        vidId&&onTool?railBtn(hasTx?SVG_PAPER(19):SVG_TX(19),hasTx?'Read':'Text',()=>onTool(p,hasTx?'newspaper':'transcript'),hasTx):null,
-        vidId&&onTool?railBtn(Icons.ai(19),'AI',()=>onTool(p,'summary')):null,
+        /* everything lives in More: Done, Save, transcript, AI, share… */
         railBtn(Icons.dots(19),'More',()=>setMore(p))));
   };
   const moreRow=(icon,label,sub,fn)=>h('button',{onClick:()=>{setMore(null);fn()},className:'act98',style:{display:'flex',alignItems:'center',gap:14,width:'100%',textAlign:'left',padding:'13px 18px',color:'#fff',borderBottom:'1px solid rgba(255,255,255,.08)'}},
     h('span',{style:{display:'flex',opacity:.85}},icon),h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:600}},label),sub?h('span',{style:{display:'block',fontSize:12,opacity:.6,marginTop:2}},sub):null));
-  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const hasTx=vidId&&txOf&&txOf(p.e);
+  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const hasTx=vidId&&txOf&&txOf(p.e);const done=isDone(p);const saved=isSaved(p.e);
     return h('div',{style:{position:'absolute',inset:0,zIndex:6}},
       h('div',{onClick:()=>setMore(null),style:{position:'absolute',inset:0,background:'rgba(0,0,0,.45)'}}),
-      h('div',{style:{position:'absolute',left:0,right:0,bottom:0,background:'#1c1c1f',borderRadius:'16px 16px 0 0',paddingBottom:'calc(8px + env(safe-area-inset-bottom))',maxHeight:'80%',overflowY:'auto'}},
+      h('div',{style:{position:'absolute',left:0,right:0,bottom:0,background:'#1c1c1f',borderRadius:'16px 16px 0 0',paddingBottom:padBottom?'calc(8px + '+padB+')':'calc(8px + env(safe-area-inset-bottom))',maxHeight:'86%',overflowY:'auto'}},
         h('div',{style:{padding:'14px 18px 8px',color:'#fff',fontSize:13,opacity:.7,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},cleanEntryTitle(p.e.title,p.it.name)),
+        moreRow(h('span',{style:{display:'flex',color:done?'#7ee29a':'#fff'}},Icons.check(20)),done?'Done ✓ — mark as not done':'Done',done?'Tap to put it back in your routine':'Mark it watched and move on',()=>onDone(p)),
+        moreRow(Icons.download(20),saved?'Saved ✓':'Save',saved?'Already in your library':'Keep it in your library',()=>{if(!saved)onSave(p);else toastFn&&toastFn('Already saved')}),
         vidId&&onTool?h(Fragment,null,
           moreRow(SVG_TX(20),hasTx?'Transcript':'Get transcript',hasTx?'Edit, copy, translate or replace it':'Opens youtubetotranscript for this video — copy, come back, Paste',()=>onTool(p,'transcript')),
           moreRow(SVG_PAPER(20),'Read as newspaper',hasTx?'The AI newspaper edition — read, highlight, download':'Add the transcript first',()=>onTool(p,'newspaper')),
