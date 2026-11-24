@@ -692,7 +692,8 @@ function parseYtText(raw){
     const videoId=tx('yt:videoId')||tx('videoId');if(!videoId)return null;
     const tn=entry.getElementsByTagName('media:thumbnail')[0];
     const thumb=(tn&&tn.getAttribute('url'))||('https://i.ytimg.com/vi/'+videoId+'/hqdefault.jpg');
-    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb};
+    const alt=[].slice.call(entry.getElementsByTagName('link')).map(l=>l.getAttribute('href')||'').find(x=>/youtube\.com\/(shorts|watch)/.test(x))||'';
+    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb,short:/\/shorts\//.test(alt)||undefined};
   }).filter(Boolean);
 }
 function tmin(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):0}
@@ -870,7 +871,8 @@ async function discoverFeed(url){
   return'';
 }
 function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
-const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb}));
+const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb,short:x.short||undefined}));
+const isShortEntry=e=>!!(e&&(e.short||/\/shorts\//.test(e.url||'')));
 /* What to fetch and how to read it, for a source — shared by the one-by-one path and the batch path. */
 function feedSpec(it){
   if(it.kind==='youtube'&&it.channelId)return{url:ytFeedUrl(it.channelId),parse:raw=>ytEntries(parseYtText(raw))};
@@ -1768,6 +1770,8 @@ function loadStore(){
   d.articles=Array.isArray(d.articles)?d.articles:[];
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
+  // Once: videos that only came in to hold a transcript (no like, folder or tags) leave Home; Save brings one back
+  if(!d.settings.routineOnlyV1){d.articles.forEach(a=>{if(a.isVideo&&!a.isEdition&&!a.liked&&!a.folderId&&!a.tags.length&&((a.transcript&&String(a.transcript).trim())||(a.editions&&Object.keys(a.editions).length)))a.routineOnly=true});d.settings.routineOnlyV1=true}
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
   d.siteHistory=Array.isArray(d.siteHistory)?d.siteHistory:[]; // browser visit log (most visited / history)
@@ -2152,7 +2156,7 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
    (or searches the library), sections Read · Follow · Library · Folders that fold, live counts, and an
    Edit mode to reorder or hide items. Browse · Focus · Edit · Settings sit in a bottom row. */
 function sidebarCounts(d){
-  const arts=d.articles||[];
+  const arts=(d.articles||[]).filter(a=>!a.routineOnly);
   const unread=arts.filter(a=>!a.archived&&!a.isPost&&(a.progress||0)<0.97).length;
   const folders={};arts.forEach(a=>{if(a.folderId&&!a.archived)folders[a.folderId]=(folders[a.folderId]||0)+1});
   let routine=0;const b=d.brief||{};const seen=b.seen||{};const since=Date.now()-86400000;const live=new Set((b.items||[]).map(i=>i.id));
@@ -4673,7 +4677,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
     const e=p.e,it=p.it;
     const vidId=ytIdOf(e.url)||'';
     const vid=it.kind==='youtube'||!!vidId;
-    const isShort=/\/shorts\//.test(e.url||'');
+    const isShort=isShortEntry(e);
     const thumb=entryThumb(e)||(vidId?'https://i.ytimg.com/vi/'+vidId+'/hqdefault.jpg':'');
     const ttl=cleanEntryTitle(e.title,it.name)||'Update';
     const done=isDone(p);const saved=isSaved(e);const hasTx=vidId&&txOf&&txOf(e);
@@ -4693,7 +4697,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
       h('div',{style:{position:'absolute',left:0,right:70,bottom:0,padding:'60px 16px calc(18px + '+padB+')',background:'linear-gradient(to top,rgba(0,0,0,.85),rgba(0,0,0,0))',color:'#fff',pointerEvents:'none'}},
         h('div',{style:{display:'flex',alignItems:'baseline',gap:0,marginBottom:5,minWidth:0,whiteSpace:'nowrap',overflow:'hidden'}},
           h('span',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',flexShrink:1,minWidth:0}},it.name),
-          h('span',{style:{fontSize:12.5,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':''].join('')),
+          h('span',{style:{fontSize:12.5,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':'',isShort?'\u00a0· Short':''].join('')),
           done?h('span',{style:{fontSize:12.5,color:'#7ee29a',fontWeight:600,flexShrink:0}},'\u00a0· Done'):null),
         thumb||vidId?h('div',{style:{fontSize:15.5,fontWeight:700,lineHeight:1.35,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl):null,
         e.excerpt?h('div',{style:{fontSize:12.5,opacity:.8,lineHeight:1.4,marginTop:4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null),
@@ -4703,14 +4707,14 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   };
   const moreRow=(icon,label,sub,fn)=>h('button',{onClick:()=>{setMore(null);fn()},className:'act98',style:{display:'flex',alignItems:'center',gap:14,width:'100%',textAlign:'left',padding:'13px 18px',color:'#fff',borderBottom:'1px solid rgba(255,255,255,.08)'}},
     h('span',{style:{display:'flex',opacity:.85}},icon),h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:600}},label),sub?h('span',{style:{display:'block',fontSize:12,opacity:.6,marginTop:2}},sub):null));
-  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const hasTx=vidId&&txOf&&txOf(p.e);const done=isDone(p);const saved=isSaved(p.e);
+  const moreSheet=more?(()=>{const p=more;const vidId=ytIdOf(p.e.url);const short=isShortEntry(p.e);const hasTx=vidId&&txOf&&txOf(p.e);const done=isDone(p);const saved=isSaved(p.e);
     return h('div',{style:{position:'absolute',inset:0,zIndex:6}},
       h('div',{onClick:()=>setMore(null),style:{position:'absolute',inset:0,background:'rgba(0,0,0,.45)'}}),
       h('div',{style:{position:'absolute',left:0,right:0,bottom:0,background:'#1c1c1f',borderRadius:'16px 16px 0 0',paddingBottom:padBottom?'calc(8px + '+padB+')':'calc(8px + env(safe-area-inset-bottom))',maxHeight:'86%',overflowY:'auto'}},
         h('div',{style:{padding:'14px 18px 8px',color:'#fff',fontSize:13,opacity:.7,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},cleanEntryTitle(p.e.title,p.it.name)),
         moreRow(h('span',{style:{display:'flex',color:done?'#7ee29a':'#fff'}},Icons.check(20)),done?'Done ✓ — mark as not done':'Done',done?'Tap to put it back in your routine':'Mark it watched and move on',()=>onDone(p)),
         moreRow(Icons.download(20),saved?'Saved ✓':'Save',saved?'Already in your library':'Keep it in your library',()=>{if(!saved)onSave(p);else toastFn&&toastFn('Already saved')}),
-        vidId&&onTool?h(Fragment,null,
+        vidId&&onTool&&!short?h(Fragment,null,
           moreRow(SVG_TX(20),hasTx?'Transcript':'Get transcript',hasTx?'Edit, copy, translate or replace it':'Opens youtubetotranscript for this video — copy, come back, Paste',()=>onTool(p,'transcript')),
           moreRow(SVG_PAPER(20),'Read as newspaper',hasTx?'The AI newspaper edition — read, highlight, download':'Add the transcript first',()=>onTool(p,'newspaper')),
           moreRow(Icons.ai(20),'AI summary','Key points and takeaway',()=>onTool(p,'summary')),
@@ -5074,7 +5078,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     return out.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   };
   const playlistPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)&&!seenMap[p.e.url]).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
-  const paperPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
+  const paperPosts=()=>recentPosts(vis,todayStart).filter(p=>ytIdOf(p.e.url)&&!isShortEntry(p.e)).sort((a,b)=>(a.e.publishedMs||0)-(b.e.publishedMs||0));
   const doneEarlier=p=>{if(seenMap[p.e.url])unSeen(p.e.url);else{markSeen([p.e.url]);vibrate(8)}};
   const shortsBtn=gid=>groupItems(gid).some(hasFeed)?h('button',{onClick:()=>shorts&&shorts.gid===gid?setShorts(null):openShorts(gid),className:'act95','aria-label':'Shorts',
     style:{display:'flex',alignItems:'center',gap:4,flexShrink:0,padding:'5px 10px',borderRadius:14,background:shorts&&shorts.gid===gid?T.fg:hexA(T.accent,.12),color:shorts&&shorts.gid===gid?T.bg:T.accent,fontSize:12,fontWeight:700}},Icons.play(11,true),'Shorts'):null;
@@ -5501,7 +5505,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     const dayObj=pday?(catchDays.find(d=>d.key===pday)||null):null;
     const inGrp=it=>grp==='all'||(grp==='_other'?(!it.groupId||!groups.some(x=>x.id===it.groupId)):it.groupId===grp);
     const todayAll=todayPosts('all').filter(p=>!p.card);
-    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it));
+    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it))
+      .map((p,i)=>[p,i]).sort((a,b)=>(isShortEntry(a[0].e)-isShortEntry(b[0].e))||(a[1]-b[1])).map(x=>x[0]);
     const srcNew=k=>todayAll.filter(p=>p.isNew&&srcOf(p.it)===k).length;
     const isSocSrc=!['youtube','web'].includes(srcK);
     const accounts=isSocSrc?visAll.filter(it=>srcOf(it)===srcK&&inGrp(it)).map(it=>{
@@ -5600,7 +5605,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
             h('img',{src:'https://i.ytimg.com/vi/'+vid+'/mqdefault.jpg',alt:'',loading:'lazy',style:{width:72,height:40,borderRadius:6,objectFit:'cover',flexShrink:0,background:T.thumbBg}}),
             h('span',{style:{flex:1,minWidth:0}},
               h('span',{style:{display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',fontSize:14,fontWeight:600,lineHeight:1.3}},cleanEntryTitle(p.e.title,p.it.name)||'Video'),
-              h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},[p.it.name,p.e.publishedMs?fmtAgo(p.e.publishedMs):'',seenMap[u]?'watched':''].filter(Boolean).join(' · '))))}),
+              h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},[p.it.name,p.e.publishedMs?fmtAgo(p.e.publishedMs):'',isShortEntry(p.e)?'Short':'',seenMap[u]?'watched':''].filter(Boolean).join(' · '))))}),
         h('div',{style:{position:'sticky',bottom:0,background:T.sheet,borderTop:'1px solid '+T.hair,padding:'12px 18px 4px'}},
           ytPl.link?h('div',null,
             h('div',{style:{fontSize:12,color:T.sub,marginBottom:6}},n+' video'+(n===1?'':'s')+' · your playlist link'),
@@ -6038,7 +6043,9 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
       h('button',{onClick:()=>txStore.set(vid,null),style:{fontSize:12.5,color:T.sub}},'Dismiss')));
 
   const options=h(Fragment,null,
-    sec(has?'Get it again':'Get the transcript'),
+    sec((has?'Get it again':'Get it')+' on a website — copy, come back, Paste'),
+    TRANSCRIBE_SITES.map(site=>h(ARow,{key:site.id,T,icon:Icons.external(20),label:site.name,sub:site.sub,onClick:()=>doSite(site)})),
+    sec('Or transcribe it here'),
     jobBox,
     S.ghToken
       ?h(ARow,{T,icon:Icons.headphones(20),label:jobOpen?whisperLabel(S)+' — running':whisperLabel(S),sub:'Model '+modelName+(txOnMac(S)?' · free, any length · keeps going if you leave':' · YouTube often blocks GitHub\'s servers'),onClick:jobOpen?()=>toastFn('Already transcribing this video'):doWhisper})
@@ -6052,9 +6059,7 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
             h('button',{disabled:!ghDraft.trim(),onClick:()=>{update(d=>({...d,settings:{...d.settings,ghToken:ghDraft.trim()}}));setGhDraft('');toastFn('GitHub connected')},className:'act95',
               style:{padding:'0 14px',borderRadius:10,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:600,opacity:ghDraft.trim()?1:.4}},'Save'))),
     h(ARow,{T,icon:Icons.ai(20),label:'Gemini',sub:S.geminiKey?'Fills the box in the spoken language · keep the app open':'Needs a free Gemini key (Settings → AI)',onClick:doGemini}),
-    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}),
-    sec('On a website — copy it back and tap Paste'),
-    TRANSCRIBE_SITES.map(site=>h(ARow,{key:site.id,T,icon:Icons.external(20),label:site.name,sub:site.sub,onClick:()=>doSite(site)})));
+    h(ARow,{T,icon:Icons.send(20),label:'Claude app',sub:'Claude writes the transcript there; copy it back and tap Paste',onClick:doClaude}));
 
   return h(Sheet,{T,onClose,title:'Transcript',maxH:'94%',z:80},
     h('div',{style:{padding:'0 20px 12px',fontSize:13,color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.title),
@@ -7963,7 +7968,9 @@ function TurnSettings({K,turn,onTurn,topBar,wrap,label}){
 }
 
 /* ============================== list helpers ============================== */
+/* routineOnly: a My Routine video kept only to hold its transcript, editions and notes — not part of the library until you tap Save */
 function inScope(a,scope){
+  if(a.routineOnly)return false;
   switch(scope.type){
     case 'home':return !a.archived&&!a.folderId;
     case 'liked':return a.liked;
@@ -8402,7 +8409,7 @@ function App(){
      fetch; other links go through the normal fetch, falling back to a stub. */
   const savedKeys=useMemo(()=>{
     const s=new Set();
-    data.articles.forEach(a=>{if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
+    data.articles.forEach(a=>{if(a.routineOnly)return;if(a.url)s.add(a.url);if(a.videoId)s.add('yt:'+a.videoId)});
     return s;
   },[data.articles]);
   const isEntrySaved=url=>{if(!url)return false;const v=ytIdOf(url);return savedKeys.has(url)||(v?savedKeys.has('yt:'+v):false)};
@@ -8410,6 +8417,8 @@ function App(){
     const url=e&&e.url;if(!url)return;
     if(isEntrySaved(url)){toastFn('Already in Home');return}
     const vid=ytIdOf(url);
+    const held=vid?findVideo(vid):null;
+    if(held&&held.routineOnly){update(d=>({...d,articles:d.articles.map(a=>a.id===held.id?{...a,routineOnly:false,addedAt:Date.now()}:a)}));toastFn('Saved to Home');return}
     if(vid){
       const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
       const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
@@ -8435,9 +8444,8 @@ function App(){
     const title=cleanEntryTitle(e.title,sourceName)||e.title||'YouTube video';
     const article={id:uid(),url:'https://www.youtube.com/watch?v='+vid,title,source:'YouTube',author:sourceName||'',image:entryThumb(e)||('https://i.ytimg.com/vi/'+vid+'/hqdefault.jpg'),
       html:'',text:'',excerpt:sourceName?('Video by '+sourceName):'Saved video',words:0,readMin:0,isVideo:true,videoId:vid,publishedAt:e.publishedMs||0,
-      addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]};
+      addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[],routineOnly:true};
     update(d=>({...d,articles:[article,...d.articles]}));
-    toastFn('Saved to Home with its transcript');
     return article.id;
   };
   const txOfEntry=e=>{const vid=ytIdOf(e&&e.url);if(!vid)return false;const a=data.articles.find(x=>!x.isEdition&&x.videoId===vid);return!!(a&&a.transcript&&String(a.transcript).trim())};
@@ -8671,7 +8679,7 @@ function App(){
         :sc==='source'?((a.source||'')+' '+(a.author||''))
         :sc==='tags'?(a.tags||[]).join(' ')
         :((a.title||'')+' '+(a.author||'')+' '+(a.source||'')+' '+(a.tags||[]).join(' ')+' '+(a.text||''));
-      arr=data.articles.filter(a=>hay(a).toLowerCase().includes(q));
+      arr=data.articles.filter(a=>!a.routineOnly&&hay(a).toLowerCase().includes(q));
     }
     else{
       arr=data.articles.filter(a=>inScope(a,scope));
@@ -8694,7 +8702,8 @@ function App(){
   },[data,scope,q,searchScope,S.sort,S.typeFilter,S.readFilter,S.lenFilter,S.srcFilter]);
   const unreadCount=useMemo(()=>data.articles.filter(a=>inScope(a,scope)&&(a.progress||0)<0.97).length,[data.articles,scope]);
   // publishers present in the library, for the source filter picker
-  const libSources=useMemo(()=>{const m=new Map();data.articles.forEach(a=>{const name=(a.source||'').trim();if(!name)return;const k=name.toLowerCase();const e=m.get(k);if(e)e.count++;else m.set(k,{key:k,name,count:1})});return[...m.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name))},[data.articles]);
+  const libData=useMemo(()=>({...data,articles:data.articles.filter(a=>!a.routineOnly)}),[data]);
+  const libSources=useMemo(()=>{const m=new Map();libData.articles.forEach(a=>{const name=(a.source||'').trim();if(!name)return;const k=name.toLowerCase();const e=m.get(k);if(e)e.count++;else m.set(k,{key:k,name,count:1})});return[...m.values()].sort((a,b)=>b.count-a.count||a.name.localeCompare(b.name))},[data.articles]);
   const snippetFor=a=>{
     if(!q||!a.text)return null;
     const i=a.text.toLowerCase().indexOf(q);
@@ -8714,12 +8723,12 @@ function App(){
     const bf=f&&(data.blogFeeds||{})[f.id];
     if(bf&&bf.entries)bf.entries.slice().sort((p,q)=>(q.publishedMs||0)-(p.publishedMs||0)).forEach(e=>push({kind:'blog',url:e.url,title:e.title,image:e.thumb||'',label:f.name,date:e.publishedMs}));
     const lib=x=>({kind:'lib',id:x.id,url:x.url,title:x.title,image:x.image||(x.videoId?'https://i.ytimg.com/vi/'+x.videoId+'/mqdefault.jpg':''),label:x.source||domainOf(x.url),date:x.addedAt});
-    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&x.source&&x.source===reading.source).forEach(x=>push(lib(x)));
-    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&(x.progress||0)<0.97).sort((p,q)=>(q.addedAt||0)-(p.addedAt||0)).forEach(x=>push(lib(x)));
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&!x.routineOnly&&x.source&&x.source===reading.source).forEach(x=>push(lib(x)));
+    data.articles.filter(x=>x.id!==reading.id&&!x.archived&&!x.routineOnly&&(x.progress||0)<0.97).sort((p,q)=>(q.addedAt||0)-(p.addedAt||0)).forEach(x=>push(lib(x)));
     return out;
   },[reading&&reading.id,data.articles,data.blogFeeds,data.feeds]);
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
-  const allTags=useMemo(()=>{const s=new Set();data.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
+  const allTags=useMemo(()=>{const s=new Set();libData.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
   const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
@@ -8845,8 +8854,8 @@ function App(){
           ?h(window.InstaStats.TimeGroups,{T,list,row,closed:hgClosed,setClosed:setHgClosed}):list.map(row);})());
   }
   /* premium Home: insights above the library (week / month comparisons) */
-  if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
-    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
+  if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data:libData,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
+    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:libData.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
@@ -9017,7 +9026,7 @@ function App(){
     edition&&byId(edition.id)&&window.InstaEdition?h(window.InstaEdition.EditionReader,{key:edition.id,T,S,a:byId(edition.id),patch:p=>patchArticle(edition.id,p),toastFn,initialPanel:edition.panel,
       onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
-      articles:sortArticles(data.articles.filter(a=>!a.archived),'newest'),brief:data.brief,
+      articles:sortArticles(data.articles.filter(a=>!a.archived&&!a.routineOnly),'newest'),brief:data.brief,
       initialView:aiOpen.routine?'claudeRoutine':null,
       update,toastFn,onClose:()=>setAiOpen(null),onSaveCopy:saveAiCopy,onSaveNote:saveAiNote}):null,
 
