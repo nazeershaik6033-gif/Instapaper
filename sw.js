@@ -1,9 +1,9 @@
 /* Instapaper PWA service worker — offline app shell + runtime caching */
 /* redeploy trigger: retry Pages deploy after a transient GitHub Pages failure */
-const CACHE = 'instapaper-shell-v154';
+const CACHE = 'instapaper-shell-v155';
 /* big libraries fetched on demand (the PDF reader) live in their own cache so app updates don't re-download them */
 const LIB_CACHE = 'insta-libs-v1';
-const SHELL = ['./', './index.html', './app.js', './shields.js', './social.js', './insights.js', './edition.js', './browser.js', './books.js', './ocr.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
+const SHELL = ['./', './index.html', './app.js', './shields.js', './social.js', './insights.js', './edition.js', './browser.js', './books.js', './ocr.js', './routine-social.js', './manifest.json', './icon-180.png', './icon-192.png', './icon-512.png',
   './newspaper.html', './newspaper.js', './newspaper.manifest.json',
   'https://cdnjs.cloudflare.com/ajax/libs/react/18.3.1/umd/react.production.min.js',
   'https://cdnjs.cloudflare.com/ajax/libs/react-dom/18.3.1/umd/react-dom.production.min.js',
