@@ -82,14 +82,20 @@ const INDIC_TTS_LANGS=[
 ];
 
 const sleep=ms=>new Promise(r=>setTimeout(r,ms));
+/* Streams the reply (stream:true): bytes start flowing at once, so iPhone Safari never drops a long,
+   silent request with "Load failed" while a slow free model thinks. */
 async function openRouterChat(key,model,messages,maxTokens,onWait){
   let res;
   for(let attempt=0;;attempt++){
-    res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
+    try{res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
       method:'POST',
       headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
-      body:JSON.stringify({model,messages:messages.map(m=>Array.isArray(m.content)?{...m,content:m.content.map(p=>p.type==='image'?{type:'image_url',image_url:{url:'data:'+p.mime+';base64,'+p.data}}:{type:'text',text:p.text||''})}:m),max_tokens:maxTokens||2048,temperature:0.4})
-    },120000);
+      body:JSON.stringify({model,messages:messages.map(m=>Array.isArray(m.content)?{...m,content:m.content.map(p=>p.type==='image'?{type:'image_url',image_url:{url:'data:'+p.mime+';base64,'+p.data}}:{type:'text',text:p.text||''})}:m),max_tokens:maxTokens||2048,temperature:0.4,stream:true})
+    },120000)}
+    catch(e){
+      if(attempt<1&&!(e&&e.name==='AbortError')){if(onWait)onWait('Connection dropped — retrying…');await sleep(1500);continue}
+      throw new Error(e&&e.name==='AbortError'?'OpenRouter took too long to answer — try again or pick a faster model in Settings → AI.':'Couldn’t reach OpenRouter ('+((e&&e.message)||'network error')+'). Check your connection — an ad-blocking DNS / VPN profile can also block openrouter.ai.');
+    }
     if(res.status===429&&attempt<2){ // free tiers burst-limit easily — back off and retry
       const wait=(attempt+1)*6;
       if(onWait)onWait('Rate limited — retrying in '+wait+'s…');
@@ -107,10 +113,28 @@ async function openRouterChat(key,model,messages,maxTokens,onWait){
     if(/not a valid model/i.test(msg))msg+=' — Tip: rerank and embedding models can\'t chat. Pick a chat model in Settings → AI (e.g. Llama 3.3 70B free).';
     throw new Error(msg);
   }
-  const j=await res.json();
-  const m=j&&j.choices&&j.choices[0]&&j.choices[0].message;
-  let out=m&&m.content;
-  if(!out||!String(out).trim())out=m&&m.reasoning; // some reasoning models put text here
+  let out='',reasoning='';
+  if(res.body&&/event-stream/i.test(res.headers.get('content-type')||'')){
+    const rd=res.body.getReader(),dec=new TextDecoder();let buf='';
+    for(;;){
+      let chunk;try{chunk=await rd.read()}catch(e){if(out)break;throw new Error('The AI connection dropped — try again.')}
+      if(chunk.done)break;buf+=dec.decode(chunk.value,{stream:true});let i;
+      while((i=buf.indexOf('\n'))>=0){
+        const line=buf.slice(0,i).trim();buf=buf.slice(i+1);
+        if(!line.startsWith('data:'))continue;const d=line.slice(5).trim();if(!d||d==='[DONE]')continue;
+        let j;try{j=JSON.parse(d)}catch(e){continue}
+        if(j.error)throw new Error(String(j.error.message||'AI error'));
+        const c=j.choices&&j.choices[0];const dl=c&&(c.delta||c.message)||{};
+        if(dl.content)out+=dl.content;else if(dl.reasoning)reasoning+=dl.reasoning;
+      }
+    }
+    if(!out.trim())out=reasoning;
+  }else{
+    const j=await res.json();
+    const m=j&&j.choices&&j.choices[0]&&j.choices[0].message;
+    out=m&&m.content;
+    if(!out||!String(out).trim())out=m&&m.reasoning; // some reasoning models put text here
+  }
   out=String(out||'').replace(/<think>[\s\S]*?<\/think>/gi,'').trim(); // strip R1 thinking blocks
   if(!out)throw new Error('Empty AI response — try another model.');
   return out;

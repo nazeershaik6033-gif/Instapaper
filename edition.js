@@ -85,7 +85,7 @@ const PREF_KEY='insta_edition_prefs';
 const FONTS=[['news','Newsprint',"'PT Serif'"],['lora','Lora',"'Lora'"],['literata','Literata',"'Literata'"],['merri','Merriweather',"'Merriweather'"],['sans','Sans',"'Inter',-apple-system,system-ui"]];
 const THEMES=[['paper','Newsprint','#f3eee2','#1c1a16','#c9bd9e','#8a2b1d'],['white','White','#ffffff','#141414','#d6d6d6','#b3261e'],['sepia','Sepia','#ecdcbf','#3b2c1a','#c4a77a','#8a3b12'],['dark','Night','#141311','#e9e3d6','#3a362e','#e08a6d']];
 const INDIC=",'Noto Serif Telugu','Noto Serif Devanagari',Georgia,serif";
-const loadPrefs=()=>{try{return Object.assign({font:'news',size:18,theme:'paper',cols:1},JSON.parse(localStorage.getItem(PREF_KEY)||'{}'))}catch(e){return{font:'news',size:18,theme:'paper',cols:1}}};
+const loadPrefs=()=>{try{return Object.assign({font:'news',size:18,theme:'paper',focus:false,awake:false},JSON.parse(localStorage.getItem(PREF_KEY)||'{}'),{cols:1})}catch(e){return{font:'news',size:18,theme:'paper',cols:1}}};
 const themeOf=id=>THEMES.find(t=>t[0]===id)||THEMES[0];
 const fontOf=id=>(FONTS.find(f=>f[0]===id)||FONTS[0])[2]+INDIC;
 const HEAD="'Playfair Display'"+INDIC;
@@ -149,17 +149,114 @@ function printHtml(html){
   f.srcdoc=html;
 }
 
+/* ============================== Google Translate (the app) ============================== */
+/* Safari can't read results back from another app, so: send a part to Google Translate (the text is
+   also copied), copy the translation there, come back and tap “Paste translation”. */
+const GT_LANGS=[['Telugu','te'],['Hindi','hi'],['English','en'],['Tamil','ta'],['Kannada','kn'],['Malayalam','ml'],['Marathi','mr'],['Bengali','bn'],['Gujarati','gu'],['Urdu','ur'],['Arabic','ar'],['Spanish','es'],['French','fr'],['German','de']];
+const GT_MAX=4500; /* Google Translate takes up to 5,000 characters at a time */
+function gtParts(paras){const out=[];let cur='';for(const p of paras){if(cur&&cur.length+p.length+2>GT_MAX){out.push(cur);cur=''}
+  if(p.length>GT_MAX){for(let i=0;i<p.length;i+=GT_MAX)out.push(p.slice(i,i+GT_MAX));continue}cur+=(cur?'\n\n':'')+p}if(cur)out.push(cur);return out}
+/* the app opens straight from the tap (a delayed fallback would be blocked as a pop-up); the text is
+   also on the clipboard in case the app opens without it — just paste it there */
+function openGoogleTranslate(text,tl,web){
+  try{copyText(text)}catch(e){}
+  const q='sl=auto&tl='+encodeURIComponent(tl||'en')+'&text='+encodeURIComponent(text);
+  if(web){const u='https://translate.google.com/?'+q+'&op=translate';if(typeof openExternalUrl==='function')openExternalUrl(u);else window.open(u,'_blank');return}
+  try{window.location.href='googletranslate://?'+q}catch(e){}
+}
+async function readClipboard(){try{if(navigator.clipboard&&navigator.clipboard.readText)return await navigator.clipboard.readText()}catch(e){}return null}
+
+/* ============================== PDF ============================== */
+const LIBS={h2c:'https://cdnjs.cloudflare.com/ajax/libs/html2canvas/1.4.1/html2canvas.min.js',pdf:'https://cdnjs.cloudflare.com/ajax/libs/jspdf/2.5.1/jspdf.umd.min.js'};
+const _libs={};
+function loadLib(k){if(_libs[k])return _libs[k];_libs[k]=new Promise((res,rej)=>{const s2=document.createElement('script');s2.src=LIBS[k];s2.crossOrigin='anonymous';
+  s2.onload=()=>res();s2.onerror=()=>{delete _libs[k];rej(new Error('Connect to the internet once to set up PDF export'))};document.head.appendChild(s2)});return _libs[k]}
+async function shareBlob(blob,name){
+  try{const f=new File([blob],name,{type:blob.type});if(navigator.canShare&&navigator.canShare({files:[f]})){await navigator.share({files:[f],title:name});return}}catch(e){if(e&&e.name==='AbortError')return}
+  const u=URL.createObjectURL(blob);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{URL.revokeObjectURL(u);x.remove()},2000);
+}
+/* exact look: render the page as you see it (any script), cut into A4 pages between paragraphs */
+async function imagePdf(article,bg,name,onStep){
+  await loadLib('h2c');await loadLib('pdf');
+  const W=720;const box=document.createElement('div');
+  box.style.cssText='position:fixed;left:-12000px;top:0;width:'+W+'px;background:'+bg+';z-index:-1';
+  const clone=article.cloneNode(true);clone.style.maxWidth=W+'px';clone.style.margin='0';clone.style.padding='34px 40px 40px';
+  clone.querySelectorAll('mark.ed-find').forEach(m=>{m.className=m.classList.contains('ed-hl')?'ed-hl':''});
+  clone.querySelectorAll('button').forEach(b=>{if(!b.closest('figcaption'))b.remove()});
+  clone.querySelectorAll('[data-i],[data-p]').forEach(el=>{el.style.opacity='1'});
+  /* the renderer can't draw ::first-letter drop caps or auto-hyphenation faithfully */
+  clone.querySelectorAll('.ed-drop').forEach(el=>el.classList.remove('ed-drop'));
+  /* a highlight that wraps lines would be painted as one big box — split it into one span per word */
+  clone.querySelectorAll('mark').forEach(m=>{const bgc=getComputedStyle(m).backgroundColor||'rgba(255,214,10,.45)';const frag=document.createDocumentFragment();
+    String(m.textContent).split(/(\s+)/).forEach(w=>{if(!w)return;if(/^\s+$/.test(w)){frag.appendChild(document.createTextNode(w));return}
+      const sp=document.createElement('span');sp.textContent=w;sp.style.background=bgc;sp.style.borderRadius='2px';frag.appendChild(sp)});
+    m.replaceWith(frag)});
+  clone.querySelectorAll('p,li,blockquote,h1,h2').forEach(el=>{el.style.hyphens='manual';el.style.webkitHyphens='manual'});
+  box.appendChild(clone);document.body.appendChild(box);
+  try{
+    onStep&&onStep('Rendering the page…');
+    const scale=2;const cv=await window.html2canvas(box,{scale,backgroundColor:bg,useCORS:true,logging:false,windowWidth:W});
+    const top0=box.getBoundingClientRect().top;
+    const breaks=[...box.querySelectorAll('p,h1,h2,blockquote,li,figure,aside,header')].map(el=>Math.round((el.getBoundingClientRect().bottom-top0)*scale)).filter(y=>y>0).sort((a,b)=>a-b);
+    const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:'pt',format:'a4',compress:true});
+    const pw=doc.internal.pageSize.getWidth(),ph=doc.internal.pageSize.getHeight();const pageH=Math.floor(cv.width*ph/pw);
+    let y=0,n=0;
+    while(y<cv.height-4){
+      let end=Math.min(cv.height,y+pageH);
+      if(end<cv.height){const ok=breaks.filter(b=>b>y+pageH*.55&&b<=end);if(ok.length)end=ok[ok.length-1]}
+      const c=document.createElement('canvas');c.width=cv.width;c.height=pageH;const x=c.getContext('2d');x.fillStyle=bg;x.fillRect(0,0,c.width,c.height);
+      x.drawImage(cv,0,y,cv.width,end-y,0,0,cv.width,end-y);
+      if(n)doc.addPage();doc.addImage(c.toDataURL('image/jpeg',.88),'JPEG',0,0,pw,ph);n++;y=end;onStep&&onStep('Page '+n+'…');
+    }
+    return new Blob([doc.output('arraybuffer')],{type:'application/pdf'});
+  }finally{box.remove()}
+}
+const nonLatin=t=>/[^\u0000-ɏḀ-ỿ -⁯₠-⃏℀-⅏]/.test(t);
+/* selectable text: a clean typeset PDF with real text (Latin scripts) + your highlights and notes */
+async function textPdf(a,view,paras,hls,note,name){
+  await loadLib('pdf');const {jsPDF}=window.jspdf;const doc=new jsPDF({unit:'pt',format:'a4',compress:true});
+  const pw=doc.internal.pageSize.getWidth(),ph=doc.internal.pageSize.getHeight(),M=56,TW=pw-2*M;let y=M;
+  const clean=t=>String(t||'').replace(/\s+/g,' ').trim();
+  const block=(t,o)=>{o=Object.assign({font:'times',style:'normal',size:11.5,lh:1.45,gap:8,indent:0,color:[20,20,20]},o||{});
+    t=clean(t);if(!t)return;doc.setFont(o.font,o.style);doc.setFontSize(o.size);doc.setTextColor(o.color[0],o.color[1],o.color[2]);
+    const lines=doc.splitTextToSize(t,TW-o.indent);const L=o.size*o.lh;
+    for(const ln of lines){if(y+L>ph-M){doc.addPage();y=M}doc.text(ln,M+o.indent,y+o.size);y+=L}y+=o.gap;
+  };
+  const rule=()=>{if(y+10>ph-M){doc.addPage();y=M}doc.setDrawColor(180);doc.line(M,y,pw-M,y);y+=12};
+  block('THE DAILY TRANSCRIPT',{font:'helvetica',style:'bold',size:9,color:[120,40,30],gap:4});
+  block(view.headline||a.title,{style:'bold',size:22,lh:1.2,gap:8});
+  if(view.standfirst)block(view.standfirst,{style:'italic',size:13,gap:8});
+  block('From '+(a.author||a.source||'YouTube')+' · '+paras.join(' ').split(/\s+/).length.toLocaleString()+' words',{font:'helvetica',size:9,color:[110,110,110],gap:10});rule();
+  if((view.keyPoints||[]).length){block('In this edition',{font:'helvetica',style:'bold',size:10,gap:4});view.keyPoints.forEach(k=>block('• '+k,{size:11,gap:3,indent:8}));y+=6;rule()}
+  const starts={};(view.sections||[]).forEach(s2=>{starts[s2.start-1]=s2.heading});
+  const quotes={};(view.quotes||[]).forEach(q=>{(quotes[q.para-1]=quotes[q.para-1]||[]).push(q.text)});
+  paras.forEach((p,i)=>{if(starts[i]&&i>0){y+=6;block(starts[i],{style:'bold',size:14,gap:6})}block(p);(quotes[i]||[]).forEach(q=>block('“'+q+'”',{style:'italic',size:13,indent:16,gap:10,color:[90,30,20]}))});
+  if(hls.length){y+=10;rule();block('Highlights',{font:'helvetica',style:'bold',size:12,gap:6});hls.forEach(x=>block('“'+x.text+'”',{style:'italic',size:11,indent:8,gap:6}))}
+  if(String(note||'').trim()){y+=6;rule();block('Notes',{font:'helvetica',style:'bold',size:12,gap:6});String(note).split(/\n+/).forEach(l=>block(l,{size:11,gap:4}))}
+  return new Blob([doc.output('arraybuffer')],{type:'application/pdf'});
+}
+const EdIcons={
+  marker:s=>Svg({size:s},P('M15.2 4.3l4.5 4.5-8.9 8.9H6.3v-4.5l8.9-8.9Z'),P('M12.9 6.6l4.5 4.5'),P('M4 20.5h9')),
+  find:s=>Svg({size:s},h('circle',{cx:10.5,cy:10.5,r:6,stroke:'currentColor',strokeWidth:1.7,fill:'none'}),P('M15 15l5 5')),
+  up:s=>Svg({size:s},P('M6 14.5l6-6 6 6')),down:s=>Svg({size:s},P('M6 9.5l6 6 6-6')),
+  lang:s=>Svg({size:s},P('M4 6h8M8 4.5V6M10.5 6c-.6 3-2.6 5.4-5.5 6.8M6.4 8.6c1 1.7 2.5 3 4.3 3.8'),P('M12.5 20l3.8-9 3.7 9M13.8 17h5'))
+};
+
 /* ============================== reader ============================== */
 function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,onOpenVideo,initialPanel}){
   const tr=a.transcriptTr||{};
   const langs=['orig'].concat(Object.keys(tr).filter(k=>String(tr[k]||'').trim()));
   const [lang,setLang]=useState(initialLang&&langs.includes(initialLang)?initialLang:'orig');
   const [prefs,setPrefs]=useState(loadPrefs);
-  const [panel,setPanel]=useState(initialPanel||null);
+  const [panel,setPanel]=useState(initialPanel==='translate'?'lang':initialPanel==='notes'?null:(initialPanel||null));
   const [busy,setBusy]=useState('');
   const [err,setErr]=useState('');
   const [prog,setProg]=useState(0);
   const [selBar,setSelBar]=useState(null); // {text} | {remove:id}
+  const [find,setFind]=useState(null); // {q, idx}
+  const [nh,setNh]=useState(initialPanel==='notes'?'notes':null); // notes & highlights page: 'notes' | 'hl'
+  const [gt,setGt]=useState(null); // Google Translate hand-off: {lang,code,parts:[{src,out}]}
+  const [focusIdx,setFocusIdx]=useState(0);
   const scRef=useRef(null);const alive=useRef(true);
   useEffect(()=>()=>{alive.current=false},[]);
   const setP=p=>setPrefs(x=>{const n=Object.assign({},x,p);try{localStorage.setItem(PREF_KEY,JSON.stringify(n))}catch(e){}return n});
@@ -181,7 +278,13 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   };
   useEffect(()=>{if(!ed&&paras.length&&typeof translateEngine==='function'&&translateEngine(S))build(false)},[lang,text.length]);
   /* reading progress */
-  const onScroll=()=>{const el=scRef.current;if(!el)return;const m=el.scrollHeight-el.clientHeight;setProg(m>0?Math.min(1,el.scrollTop/m):1)};
+  const onScroll=()=>{const el=scRef.current;if(!el)return;const m=el.scrollHeight-el.clientHeight;setProg(m>0?Math.min(1,el.scrollTop/m):1);
+    if(prefs.focus){const line=el.getBoundingClientRect().top+el.clientHeight*.35;let cur=0;for(const n of el.querySelectorAll('[data-i]')){if(n.getBoundingClientRect().top<=line)cur=+n.getAttribute('data-i');else break}if(cur!==focusIdx)setFocusIdx(cur)}};
+  /* keep the screen on while reading (Aa → Keep screen awake) */
+  useEffect(()=>{if(!prefs.awake||!navigator.wakeLock)return;let lock=null,dead=false;
+    const get=()=>{if(document.visibilityState==='visible')navigator.wakeLock.request('screen').then(l=>{if(dead)l.release();else lock=l}).catch(()=>{})};
+    get();document.addEventListener('visibilitychange',get);
+    return()=>{dead=true;document.removeEventListener('visibilitychange',get);try{lock&&lock.release()}catch(e){}}},[prefs.awake]);
   /* highlights live on the video (src:'edition'), so they also show on the Notes page */
   const hls=(a.highlights||[]).filter(x=>x&&x.text&&x.kind!==(typeof VIDEO_NOTES_KIND!=='undefined'?VIDEO_NOTES_KIND:'videoNotes'));
   useEffect(()=>{
@@ -196,12 +299,21 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   },[]);
   const addHl=(t,para)=>{patch(x=>({highlights:(x.highlights||[]).concat([{id:uid(),text:t,createdAt:Date.now(),src:'edition',lang,para:para==null?undefined:para}])}));try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Highlighted — also on your Notes page')};
   const delHl=id=>{patch(x=>({highlights:(x.highlights||[]).filter(y=>y.id!==id)}));setSelBar(null)};
+  const findHits=useMemo(()=>{const q=(find&&find.q||'').trim().toLowerCase();if(q.length<2)return[];const out=[];
+    paras.forEach((p,pi)=>{const pl=p.toLowerCase();let i=pl.indexOf(q);while(i>=0&&out.length<999){out.push({pi,i,len:q.length});i=pl.indexOf(q,i+q.length)}});return out},[find&&find.q,paras]);
+  useEffect(()=>{if(!find||!findHits.length)return;const el=scRef.current&&scRef.current.querySelector('mark.ed-cur');if(el)el.scrollIntoView({behavior:'smooth',block:'center'})},[find&&find.idx,findHits]);
   const marked=(p,pi)=>{
-    const hits=[];for(const hl of hls){if(hl.src==='edition'&&((hl.lang&&hl.lang!==lang)||(hl.para!=null&&hl.para!==pi)))continue;let i=p.indexOf(hl.text);if(i<0&&hl.text.length>40)i=p.indexOf(hl.text.slice(0,40));if(i>=0)hits.push({i,len:Math.min(hl.text.length,p.length-i),id:hl.id})}
-    if(!hits.length)return p;
-    hits.sort((x,y)=>x.i-y.i);const out=[];let pos=0;
-    hits.forEach((m,k)=>{if(m.i<pos)return;out.push(p.slice(pos,m.i));out.push(h('mark',{key:k,onClick:ev=>{ev.stopPropagation();setSelBar({remove:m.id})}},p.slice(m.i,m.i+m.len)));pos=m.i+m.len});
-    out.push(p.slice(pos));return out;
+    const rs=[];
+    for(const hl of hls){if(hl.src==='edition'&&((hl.lang&&hl.lang!==lang)||(hl.para!=null&&hl.para!==pi)))continue;let i=p.indexOf(hl.text);if(i<0&&hl.text.length>40)i=p.indexOf(hl.text.slice(0,40));
+      if(i>=0)rs.push({s:i,e:i+Math.min(hl.text.length,p.length-i),hl:hl.id})}
+    findHits.forEach((m,k)=>{if(m.pi===pi)rs.push({s:m.i,e:m.i+m.len,find:true,cur:k===(find&&find.idx)})});
+    if(!rs.length)return p;
+    const cuts=new Set([0,p.length]);rs.forEach(r=>{cuts.add(r.s);cuts.add(r.e)});const pts=[...cuts].sort((x,y)=>x-y);const out=[];
+    for(let k=0;k<pts.length-1;k++){const a0=pts[k],b0=pts[k+1];if(b0<=a0)continue;const seg=p.slice(a0,b0);const cov=rs.filter(r=>r.s<=a0&&r.e>=b0);
+      if(!cov.length){out.push(seg);continue}
+      const f=cov.find(r=>r.find),hh=cov.find(r=>r.hl);
+      out.push(h('mark',{key:k,className:f?('ed-find'+(f.cur?' ed-cur':'')+(hh?' ed-hl':'')):undefined,'data-hl':hh?hh.hl:undefined,onClick:hh?ev=>{ev.stopPropagation();setSelBar({remove:hh.hl})}:undefined},seg))}
+    return out;
   };
   /* notes: one notepad per video, the same one the transcript view uses */
   const NK=typeof VIDEO_NOTES_KIND!=='undefined'?VIDEO_NOTES_KIND:'videoNotes';
@@ -209,6 +321,19 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   const [note,setNote]=useState(noteObj?noteObj.note||'':'');
   const saveNote=v=>patch(x=>{const hs=(x.highlights||[]).filter(y=>y.kind!==NK);if(!v.trim())return{highlights:hs};const old=(x.highlights||[]).find(y=>y.kind===NK);
     return{highlights:hs.concat([{id:old?old.id:uid(),kind:NK,text:'📝 My notes',note:v,createdAt:old?old.createdAt:Date.now(),updatedAt:Date.now()}])}});
+  const addToNotes=t=>{const v=(note.trim()?note.replace(/\s+$/,'')+'\n\n':'')+'• '+String(t).trim();setNote(v);saveNote(v);try{window.getSelection().removeAllRanges()}catch(e){}setSelBar(null);toastFn('Added to notes')};
+  const noteT=useRef(null);const editNote=v=>{setNote(v);clearTimeout(noteT.current);noteT.current=setTimeout(()=>saveNote(v),700)};
+  const jumpHl=x=>{setNh(null);setTimeout(()=>{const root=scRef.current;if(!root)return;const m=root.querySelector('mark[data-hl="'+x.id+'"]');
+    const el=m||(x.para!=null?root.querySelector('[data-i="'+x.para+'"]'):null);if(el){el.scrollIntoView({behavior:'smooth',block:'center'});if(m){m.classList.add('ed-flash');setTimeout(()=>m.classList.remove('ed-flash'),1400)}}else toastFn('That highlight is in another language edition')},60)};
+  const startGt=(name,code)=>{setPanel(null);const src=paragraphsOf(a.transcript||'');if(!src.length){toastFn('No transcript to translate');return}
+    setGt(g=>g&&g.lang===name?g:{lang:name,code,parts:gtParts(src).map(t=>({src:t,out:''}))})};
+  const pastePart=async i=>{const t=await readClipboard();
+    if(t==null){toastFn('Couldn’t read the clipboard — paste into the box instead');setGt(g=>({...g,manual:i}));return}
+    if(!t.trim()){toastFn('The clipboard is empty — copy the translation in Google Translate first');return}
+    if(t.trim()===gt.parts[i].src.trim()){toastFn('That’s still the original text — copy the translation in Google Translate, then paste');return}
+    setGt(g=>({...g,parts:g.parts.map((p2,k)=>k===i?{...p2,out:t.trim()}:p2),manual:null}));toastFn('Part '+(i+1)+' pasted')};
+  const finishGt=()=>{const out=gt.parts.map(p2=>p2.out).join('\n\n');patch(x=>({transcriptTr:Object.assign({},x.transcriptTr||{},{[gt.lang]:out})}));setLang(gt.lang);toastFn(gt.lang+' edition ready');setGt(null)};
+  const [pdfBusy,setPdfBusy]=useState('');
   /* translate here too */
   const translate=async target=>{
     setPanel(null);
@@ -237,6 +362,11 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   const jump=i=>{const el=scRef.current&&scRef.current.querySelector('[data-p="'+i+'"]');if(el)el.scrollIntoView({behavior:'smooth',block:'start'});setPanel(null)};
   const fileBase=(view.headline||a.title||'edition').replace(/[^\p{L}\p{N}]+/gu,'-').replace(/^-|-$/g,'').slice(0,60)||'edition';
   const html=()=>editionHtml(a,view,paras,prefs,lang);
+  const makePdf=async kind=>{setPanel(null);setFind(null);setPdfBusy(kind==='img'?'Preparing PDF…':'Typesetting PDF…');
+    try{await new Promise(r=>setTimeout(r,80));const art=scRef.current&&scRef.current.querySelector('article');
+      const blob=kind==='img'?await imagePdf(art,bg,fileBase,m=>alive.current&&setPdfBusy(m)):await textPdf(a,view,paras,hls.filter(x=>x.src!=='edition'||!x.lang||x.lang===lang),note,fileBase);
+      if(alive.current)setPdfBusy('');await shareBlob(blob,fileBase+'.pdf')}
+    catch(e){if(alive.current){setPdfBusy('');setErr((e&&e.message)||'PDF failed')}}};
   const saveCopy=()=>{
     const body=(view.keyPoints&&view.keyPoints.length?'<h3>In this edition</h3><ul>'+view.keyPoints.map(k=>'<li>'+esc(k)+'</li>').join('')+'</ul>':'')+(view.standfirst?'<p><em>'+esc(view.standfirst)+'</em></p>':'')+editionBodyHtml(a,view,paras);
     onSaveToLibrary({title:view.headline||a.title,html:body,text:paras.join('\n\n'),words,image:thumbOf(a),standfirst:view.standfirst,lang,videoId:a.videoId});
@@ -253,18 +383,30 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   const tbtn=(icon,label,onClick)=>h('button',{onClick,'aria-label':label,className:'act90',style:{display:'flex',alignItems:'center',justifyContent:'center',width:38,height:38,color:ink,flexShrink:0}},icon);
   const tabs=langs.concat(['+']);
   const node=h('div',{style:{position:'fixed',inset:0,zIndex:400,background:bg,color:ink,display:'flex',flexDirection:'column'}},
-    h('style',null,'.ed-drop::first-letter{float:left;font-family:'+HEAD+';font-weight:900;font-size:'+Math.round(size*3.3)+'px;line-height:.85;margin:4px 8px 0 0;color:'+accent+'}.ed-paper mark{background:rgba(255,214,10,.45);color:inherit;border-radius:2px;padding:0 1px}.ed-paper ::selection{background:rgba(255,214,10,.5)}.ed-paper,.ed-paper *{-webkit-user-select:text!important;user-select:text!important;-webkit-touch-callout:default!important}'),
+    h('style',null,'.ed-drop::first-letter{float:left;font-family:'+HEAD+';font-weight:900;font-size:'+Math.round(size*3.3)+'px;line-height:.85;margin:4px 8px 0 0;color:'+accent+'}.ed-paper mark.ed-find{background:rgba(255,149,0,.28);box-shadow:0 0 0 1px rgba(255,149,0,.45)}.ed-paper mark.ed-cur{background:rgba(255,149,0,.75)}.ed-paper mark.ed-flash{animation:edfl 1.3s ease}@keyframes edfl{0%,60%{background:rgba(255,149,0,.8)}}.ed-paper mark{background:rgba(255,214,10,.45);color:inherit;border-radius:2px;padding:0 1px}.ed-paper ::selection{background:rgba(255,214,10,.5)}.ed-paper,.ed-paper *{-webkit-user-select:text!important;user-select:text!important;-webkit-touch-callout:default!important}'),
     /* toolbar */
     h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:2,padding:'calc(4px + env(safe-area-inset-top)) 6px 4px',borderBottom:'1px solid '+rule,fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
       tbtn(Icons.x(21),'Close',onClose),
-      h('div',{className:'sx',style:{flex:1,minWidth:0,display:'flex',gap:6,overflowX:'auto',padding:'4px 2px'}},
-        tabs.map(k=>k==='+'?h('button',{key:'+',onClick:()=>setPanel('translate'),className:'act95',style:{flexShrink:0,padding:'5px 10px',borderRadius:14,fontSize:12.5,fontWeight:600,color:accent,border:'1px dashed '+rule}},'+ Translate')
-          :h('button',{key:k,onClick:()=>setLang(k),className:'act95',style:{flexShrink:0,padding:'5px 11px',borderRadius:14,fontSize:12.5,fontWeight:650,background:lang===k?ink:'transparent',color:lang===k?bg:ink,border:'1px solid '+(lang===k?ink:rule)}},langName(k)))),
+      h('button',{onClick:()=>setPanel('lang'),'aria-label':'Language & translate',className:'act95',style:{display:'flex',alignItems:'center',gap:5,height:32,padding:'0 9px',borderRadius:16,border:'1px solid '+rule,color:ink,flexShrink:0}},
+        EdIcons.lang(18),h('span',{style:{fontSize:12.5,fontWeight:700}},lang==='orig'?'Original':((GT_LANGS.find(x=>x[0]===lang)||[lang,lang.slice(0,2)])[1]).toUpperCase())),
+      h('div',{style:{flex:1}}),
+      tbtn(EdIcons.find(19),'Find in edition',()=>setFind(f=>f?null:{q:'',idx:0})),
+      tbtn(EdIcons.marker(20),'Notes & highlights',()=>setNh(hls.length&&!note.trim()?'hl':'notes')),
       tbtn(Icons.menu?Icons.menu(19):'☰','Contents',()=>setPanel('contents')),
       tbtn(h('span',{style:{fontFamily:'Georgia,serif',fontSize:18,fontWeight:600}},'Aa'),'Appearance',()=>setPanel('aa')),
       tbtn(Icons.download(19),'Download',()=>setPanel('download')),
       tbtn(Icons.dots(19),'More',()=>setPanel('more'))),
     h('div',{style:{height:2.5,background:rule,flexShrink:0}},h('div',{style:{height:'100%',width:(prog*100)+'%',background:accent,transition:'width 120ms'}})),
+    find?h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'6px 10px',borderBottom:'1px solid '+rule,fontFamily:"'Inter',system-ui,sans-serif"}},
+      h('div',{style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:7,border:'1px solid '+rule,borderRadius:10,padding:'6px 10px'}},
+        h('span',{style:{display:'flex',opacity:.6}},EdIcons.find(15)),
+        h('input',{autoFocus:true,value:find.q,onChange:e=>setFind({q:e.target.value,idx:0}),onKeyDown:e=>{if(e.key==='Enter'&&findHits.length)setFind(f=>({...f,idx:(f.idx+1)%findHits.length}))},placeholder:'Find in edition',enterKeyHint:'search',
+          style:{flex:1,minWidth:0,border:'none',background:'transparent',color:ink,fontSize:16,outline:'none',padding:0}}),
+        h('span',{style:{fontSize:12,opacity:.65,flexShrink:0}},find.q.trim().length>1?(findHits.length?(find.idx+1)+' of '+findHits.length:'No matches'):'')),
+      tbtn(EdIcons.up(18),'Previous match',()=>findHits.length&&setFind(f=>({...f,idx:(f.idx-1+findHits.length)%findHits.length}))),
+      tbtn(EdIcons.down(18),'Next match',()=>findHits.length&&setFind(f=>({...f,idx:(f.idx+1)%findHits.length}))),
+      tbtn(Icons.x(17),'Close find',()=>setFind(null))):null,
+    pdfBusy?h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:9,padding:'8px 14px',fontSize:12.5,fontFamily:"'Inter',system-ui,sans-serif",borderBottom:'1px solid '+rule}},h(Spinner,{T,size:13}),pdfBusy):null,
     busy||err?h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:9,padding:'8px 14px',fontSize:12.5,fontFamily:"'Inter',system-ui,sans-serif",background:err?'rgba(179,38,30,.1)':'transparent',color:err?accent:ink,borderBottom:'1px solid '+rule}},
       busy?h(Spinner,{T,size:13}):null,busy||err,err?h('button',{onClick:()=>setErr(''),style:{marginLeft:'auto',color:ink,display:'flex'}},Icons.x(14)):null):null,
     /* the paper */
@@ -287,20 +429,27 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
         (view.keyPoints||[]).length?h('aside',{style:{border:'1px solid '+rule,borderLeft:'4px solid '+accent,padding:'12px 14px',margin:'0 0 18px'}},
           h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:11,fontWeight:700,letterSpacing:'.12em',textTransform:'uppercase',color:accent,marginBottom:8}},'In this edition'),
           h('ul',{style:{margin:0,paddingLeft:18}},view.keyPoints.map((k,i)=>h('li',{key:i,style:{margin:'4px 0',lineHeight:1.45,fontSize:Math.round(size*.92)}},k)))):null,
-        h('div',{style:{columnCount:cols,columnGap:24,columnRule:cols>1?'1px solid '+rule:'none'}},
+        h('div',null,
           paras.map((p,i)=>h(Fragment,{key:i},
             starts[i]&&i>0?h('h2',{'data-p':i,style:{fontFamily:HEAD,fontWeight:700,fontSize:Math.round(size*1.15),margin:'1.3em 0 .5em',paddingTop:'.5em',borderTop:'1px solid '+rule,breakAfter:'avoid'}},starts[i]):null,
-            h('p',{'data-p':starts[i]&&i>0?undefined:i,'data-i':i,className:i===0?'ed-drop':undefined,style:{fontSize:size,lineHeight:1.62,margin:'0 0 .9em',textAlign:cols>1?'justify':'left',hyphens:'auto',WebkitHyphens:'auto'}},marked(p,i)),
+            h('p',{'data-p':starts[i]&&i>0?undefined:i,'data-i':i,className:i===0?'ed-drop':undefined,style:{fontSize:size,lineHeight:1.62,margin:'0 0 .9em',textAlign:'left',hyphens:'auto',WebkitHyphens:'auto',
+              opacity:prefs.focus&&i!==focusIdx?.28:1,transition:'opacity 260ms'}},marked(p,i)),
             (quotes[i]||[]).map((q,k)=>h('blockquote',{key:k,style:{margin:'1em 0',padding:'.6em 0',borderTop:'2px solid '+ink,borderBottom:'1px solid '+rule,fontFamily:HEAD,fontStyle:'italic',fontSize:Math.round(size*1.28),lineHeight:1.3,breakInside:'avoid'}},
               h('span',{style:{color:accent,fontSize:'1.6em',lineHeight:0,verticalAlign:'-.35em',marginRight:4}},'“'),q))))),
         h('div',{style:{textAlign:'center',fontFamily:"'Inter',system-ui",fontSize:12,fontWeight:600,letterSpacing:'.12em',textTransform:'uppercase',opacity:.55,marginTop:24}},'— End of edition —'),
         h('div',{style:{display:'flex',gap:8,justifyContent:'center',flexWrap:'wrap',marginTop:16,fontFamily:"'Inter',system-ui"}},
-          chip(false,'⤓ Download',()=>setPanel('download')),chip(false,'Notes',()=>setPanel('notes')),view.plain?chip(false,'✦ Lay out with AI',()=>build(true)):null))),
+          chip(false,'⤓ Download',()=>setPanel('download')),chip(false,'Notes & highlights',()=>setNh('notes')),view.plain?chip(false,'✦ Lay out with AI',()=>build(true)):null))),
     /* selection / highlight bar */
-    selBar?h('div',{style:{position:'absolute',left:12,right:12,bottom:'calc(14px + env(safe-area-inset-bottom))',zIndex:4,display:'flex',gap:8,justifyContent:'center',fontFamily:"'Inter',system-ui"}},
+    !selBar&&paras.length?h('div',{style:{position:'absolute',left:'50%',transform:'translateX(-50%)',bottom:'calc(12px + env(safe-area-inset-bottom))',zIndex:3,padding:'6px 12px',borderRadius:16,
+      background:bg,border:'1px solid '+rule,boxShadow:'0 4px 16px rgba(0,0,0,.12)',fontFamily:"'Inter',system-ui,sans-serif",fontSize:12,fontWeight:600,whiteSpace:'nowrap',pointerEvents:'none',opacity:.92}},
+      words.toLocaleString()+' words · '+Math.round(prog*100)+'% read · '+(prog>=.99?'done':Math.max(1,Math.round(words*(1-prog)/230))+' min left')):null,
+    selBar?h('div',{style:{position:'absolute',left:8,right:8,bottom:'calc(14px + env(safe-area-inset-bottom))',zIndex:4,display:'flex',gap:7,justifyContent:'center',alignItems:'center',flexWrap:'wrap',fontFamily:"'Inter',system-ui"}},
       selBar.text?h(Fragment,null,
         h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>addHl(selBar.text,selBar.para),className:'act95',style:{padding:'10px 16px',borderRadius:20,background:ink,color:bg,fontWeight:650,fontSize:14,boxShadow:'0 6px 20px rgba(0,0,0,.25)'}},'Highlight'),
-        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>{copyText(selBar.text);toastFn('Copied')},className:'act95',style:{padding:'10px 16px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:600,fontSize:14}},'Copy'))
+        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>addToNotes(selBar.text),className:'act95',style:{padding:'10px 14px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:650,fontSize:14,boxShadow:'0 6px 20px rgba(0,0,0,.12)'}},'+ Notes'),
+        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>{copyText(selBar.text);toastFn('Copied')},className:'act95',style:{padding:'10px 14px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:600,fontSize:14}},'Copy'),
+        h('button',{onMouseDown:e=>e.preventDefault(),onClick:()=>openGoogleTranslate(selBar.text,lang==='orig'?((GT_LANGS.find(x=>x[0]===((S&&S.aiLang)||'Telugu'))||['','te'])[1]):'en'),'aria-label':'Translate in Google Translate',className:'act95',
+          style:{width:42,height:42,borderRadius:21,background:bg,color:ink,border:'1px solid '+rule,display:'flex',alignItems:'center',justifyContent:'center'}},EdIcons.lang(19)))
       :h(Fragment,null,
         h('button',{onClick:()=>delHl(selBar.remove),className:'act95',style:{padding:'10px 16px',borderRadius:20,background:ink,color:bg,fontWeight:650,fontSize:14}},'Remove highlight'),
         h('button',{onClick:()=>setSelBar(null),className:'act95',style:{padding:'10px 16px',borderRadius:20,background:bg,color:ink,border:'1px solid '+rule,fontWeight:600,fontSize:14}},'Cancel'))):null,
@@ -312,31 +461,69 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
       h('div',{style:{display:'flex',alignItems:'center',gap:10}},h('span',{style:{fontSize:13}},'A'),h('input',{type:'range',min:14,max:28,step:1,value:size,onChange:e=>setP({size:Number(e.target.value)}),style:{flex:1,accentColor:accent}}),h('span',{style:{fontSize:20}},'A')),
       h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Paper'),
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},THEMES.map(t=>h('button',{key:t[0],onClick:()=>setP({theme:t[0]}),className:'act95',style:{display:'flex',alignItems:'center',gap:7,padding:'7px 12px',borderRadius:12,background:t[2],color:t[3],border:'2px solid '+(prefs.theme===t[0]?accent:t[4]),fontSize:13.5,fontWeight:600}},t[1]))),
-      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Columns'),
-      h('div',{style:{display:'flex',gap:8}},chip(cols===1,'One column',()=>setP({cols:1})),chip(cols===2,'Two columns',()=>setP({cols:2}))))):null,
+      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Reading'),
+      h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
+        chip(!!prefs.focus,(prefs.focus?'✓ ':'')+'Focus mode',()=>{setP({focus:!prefs.focus});setTimeout(onScroll,30)},'focus'),
+        chip(!!prefs.awake,(prefs.awake?'✓ ':'')+'Keep screen awake',()=>{if(!navigator.wakeLock&&!prefs.awake)toastFn('This iOS version can’t keep the screen awake');setP({awake:!prefs.awake})},'awake')),
+      h('div',{style:{fontSize:12,opacity:.6,marginTop:8,lineHeight:1.45}},'Focus mode dims everything except the paragraph you’re reading.'))):null,
     panel==='contents'?sheet('Contents',h(Fragment,null,
       (view.sections||[]).length?view.sections.map((s,i)=>row((i+1)+'. '+s.heading,null,()=>jump(s.start-1))):h('div',{style:{fontSize:13.5,opacity:.7,padding:'8px 0'}},'This edition has no sections yet.'+(view.plain?' Tap “Lay out with AI” for headings.':'')),
       row('Back to the top',null,()=>{scRef.current&&scRef.current.scrollTo({top:0,behavior:'smooth'});setPanel(null)}),
       (view.keyPoints||[]).length?h('div',{style:{marginTop:14}},h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,marginBottom:6}},'Key points'),view.keyPoints.map((k,i)=>h('div',{key:i,style:{fontSize:14,lineHeight:1.45,margin:'5px 0'}},'• '+k))):null)):null,
     panel==='download'?sheet('Download this edition',h(Fragment,null,
-      row('PDF','Opens Print — pinch out on the preview, then Share → Save to Files',()=>{setPanel(null);printHtml(html())},Icons.download(19)),
+      row('PDF — exact look','Pages exactly as you see them, with highlights; any language. Share → Save to Files',()=>makePdf('img'),Icons.download(19)),
+      nonLatin(paras.join(' ').slice(0,4000)+(view.headline||''))?row('PDF — selectable text','Not available for Telugu / Hindi text — use the exact look',()=>toastFn('Use “PDF — exact look” for this language'),Icons.file?Icons.file(19):Icons.download(19))
+        :row('PDF — selectable text','Real text you can search and copy, plus your highlights and notes at the end',()=>makePdf('txt'),Icons.file?Icons.file(19):Icons.download(19)),
       row('HTML file','A single file with this layout and fonts; opens offline in any browser',()=>{setPanel(null);(window.InstaShields?window.InstaShields.downloadText:dl)(fileBase+'.html',html(),'text/html')},Icons.file?Icons.file(19):Icons.download(19)),
       row('Save to my library','A copy in Home with highlights, notes and listen-aloud — also on the Editions shelf',saveCopy,Icons.plus(19)))):null,
     panel==='more'?sheet('Edition',h(Fragment,null,
       row(view.plain?'Lay out with AI':'Lay out again with AI','New headline, sections and pull quotes',()=>{setPanel(null);build(true)},Icons.ai(19)),
-      row('Notes','Your notepad for this video',()=>setPanel('notes'),Icons.notes?Icons.notes(19):null),
+      row('Notes & highlights','Your notepad and every highlight',()=>{setPanel(null);setNh('notes')},Icons.notes?Icons.notes(19):null),
       row('Copy transcript',lang==='orig'?'The original text':lang+' text',()=>{copyText(text);toastFn('Transcript copied');setPanel(null)},Icons.copy(19)),
       a.url?row('Share the video',null,()=>{shareText(view.headline||a.title,'',a.url);setPanel(null)},Icons.share(19)):null)):null,
-    panel==='notes'?sheet('Notes',h(Fragment,null,
-      h('textarea',{value:note,onChange:e=>setNote(e.target.value),onBlur:()=>saveNote(note),rows:8,placeholder:'Thoughts, takeaways, things to look up…',style:{width:'100%',padding:12,borderRadius:10,border:'1px solid '+rule,background:'transparent',color:ink,fontSize:16,lineHeight:1.5,fontFamily:font}}),
-      h('div',{style:{display:'flex',justifyContent:'flex-end',marginTop:8}},chip(true,'Save notes',()=>{saveNote(note);toastFn('Notes saved');setPanel(null)})),
-      hls.length?h('div',{style:{marginTop:14}},h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,marginBottom:6}},'Highlights · '+hls.length),
-        hls.slice().reverse().map(x=>h('div',{key:x.id,style:{display:'flex',gap:8,alignItems:'flex-start',padding:'8px 0',borderBottom:'1px solid '+rule}},
-          h('div',{style:{flex:1,fontSize:14,lineHeight:1.45,background:'rgba(255,214,10,.25)',padding:'2px 4px'}},x.text),
-          h('button',{onClick:()=>delHl(x.id),'aria-label':'Remove',style:{color:ink,opacity:.6,display:'flex',padding:4}},Icons.x(14))))):null)):null,
-    panel==='translate'?sheet('Translate this edition',h(Fragment,null,
-      ['Telugu','Hindi','English','Tamil','Kannada','Malayalam','Marathi','Bengali'].filter(l=>!langs.includes(l)).map(l=>row(l,null,()=>translate(l))),
-      h('div',{style:{fontSize:12,opacity:.65,marginTop:10,lineHeight:1.5}},'Uses your Gemini or OpenRouter key. Each translation is saved with the video and gets its own edition.'))):null);
+    panel==='lang'?sheet('Language',h(Fragment,null,
+      langs.map(k=>row(k==='orig'?'Original':k+' edition',k===lang?'Reading now':null,()=>{setLang(k);setPanel(null)},k===lang?Icons.check(18):h('span',{style:{width:18}}))),
+      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 4px'}},'Translate with Google Translate'),
+      h('div',{style:{display:'flex',flexWrap:'wrap',gap:7,padding:'6px 0'}},GT_LANGS.filter(([n])=>!langs.includes(n)).map(([n,c])=>chip(false,n,()=>startGt(n,c),c))),
+      h('div',{style:{fontSize:12,opacity:.65,marginTop:8,lineHeight:1.5}},'Opens the Google Translate app with the text (it’s also copied). Copy the translation there, come back and tap “Paste translation”. Each language becomes its own edition.'))):null,
+    gt?h('div',{style:{position:'absolute',inset:0,zIndex:6,background:bg,color:ink,display:'flex',flexDirection:'column',fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'calc(6px + env(safe-area-inset-top)) 8px 8px',borderBottom:'1px solid '+rule}},
+        tbtn(Icons.back(21),'Back',()=>setGt(null)),h('div',{style:{flex:1,fontSize:16.5,fontWeight:700}},'Translate to '+gt.lang),
+        h('span',{style:{fontSize:12.5,opacity:.7,paddingRight:8}},gt.parts.filter(p2=>p2.out).length+' / '+gt.parts.length)),
+      h('div',{style:{flex:1,overflowY:'auto',padding:'12px 16px calc(24px + env(safe-area-inset-bottom))'}},
+        h('div',{style:{fontSize:13,lineHeight:1.5,opacity:.8,marginBottom:12}},gt.parts.length>1?'Google Translate takes up to 5,000 characters at a time, so the transcript is split into '+gt.parts.length+' parts. For each part:':'Three steps:',
+          h('ol',{style:{margin:'6px 0 0',paddingLeft:20}},h('li',null,'Tap ',h('b',null,'Open in Google Translate')),h('li',null,'In Google Translate, tap the ',h('b',null,'copy'),' icon under the translation'),h('li',null,'Come back and tap ',h('b',null,'Paste translation')))),
+        gt.parts.map((p2,i)=>h('div',{key:i,style:{border:'1px solid '+rule,borderRadius:14,padding:12,marginBottom:10,background:p2.out?'rgba(52,199,89,.08)':'transparent'}},
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginBottom:6}},h('b',{style:{fontSize:14}},'Part '+(i+1)),h('span',{style:{fontSize:12,opacity:.6}},p2.src.length.toLocaleString()+' characters'),
+            p2.out?h('span',{style:{marginLeft:'auto',fontSize:12.5,fontWeight:700,color:'#2e9e4f'}},'✓ Translated'):null),
+          h('div',{style:{fontSize:13,opacity:.75,lineHeight:1.4,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},p2.out||p2.src),
+          gt.manual===i?h('textarea',{autoFocus:true,rows:4,placeholder:'Paste the translation here',onBlur:e=>{const v=e.target.value.trim();if(v)setGt(g=>({...g,parts:g.parts.map((q2,k)=>k===i?{...q2,out:v}:q2),manual:null}))},
+            style:{width:'100%',boxSizing:'border-box',marginTop:8,padding:10,borderRadius:10,border:'1px solid '+rule,background:'transparent',color:ink,fontSize:15}}):null,
+          h('div',{style:{display:'flex',gap:8,marginTop:10,flexWrap:'wrap'}},
+            chip(false,'Open in Google Translate',()=>openGoogleTranslate(p2.src,gt.code),'o'+i),chip(!!p2.out,p2.out?'Paste again':'Paste translation',()=>pastePart(i),'p'+i)),
+          h('button',{onClick:()=>openGoogleTranslate(p2.src,gt.code,true),style:{marginTop:8,fontSize:12,color:ink,opacity:.6,textDecoration:'underline'}},'App didn’t open? Use translate.google.com'))),
+        h('div',{style:{display:'flex',justifyContent:'flex-end',marginTop:6}},
+          h('button',{onClick:finishGt,disabled:!gt.parts.every(p2=>p2.out),className:'act95',style:{padding:'11px 18px',borderRadius:22,background:ink,color:bg,fontWeight:700,fontSize:14.5,opacity:gt.parts.every(p2=>p2.out)?1:.4}},'Save '+gt.lang+' edition')))):null,
+    nh?h('div',{style:{position:'absolute',inset:0,zIndex:6,background:bg,color:ink,display:'flex',flexDirection:'column',fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
+      h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'calc(6px + env(safe-area-inset-top)) 8px 8px'}},
+        tbtn(Icons.back(21),'Back to the edition',()=>{saveNote(note);setNh(null)}),h('div',{style:{flex:1,fontSize:17,fontWeight:700}},'Notes & highlights')),
+      h('div',{style:{display:'flex',gap:4,margin:'0 14px 10px',padding:3,borderRadius:12,border:'1px solid '+rule}},
+        [['notes','Notes'],['hl','Highlights · '+hls.length]].map(([k,l])=>h('button',{key:k,onClick:()=>setNh(k),style:{flex:1,padding:'8px 6px',borderRadius:9,fontSize:14,fontWeight:650,background:nh===k?ink:'transparent',color:nh===k?bg:ink}},l))),
+      nh==='notes'?h('div',{style:{flex:1,display:'flex',flexDirection:'column',padding:'0 14px calc(14px + env(safe-area-inset-bottom))',minHeight:0}},
+          h('textarea',{value:note,onChange:e=>editNote(e.target.value),onBlur:()=>saveNote(note),placeholder:'Thoughts, takeaways, things to look up… Select text in the edition and tap “Add to notes” to collect quotes here.',
+            style:{flex:1,width:'100%',boxSizing:'border-box',padding:14,borderRadius:14,border:'1px solid '+rule,background:'transparent',color:ink,fontFamily:font,fontSize:Math.max(16,size-1),lineHeight:1.55,resize:'none'}}),
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:10}},
+            h('span',{style:{fontSize:12,opacity:.6,flex:1}},(note.trim()?note.trim().split(/\s+/).length:0)+' words · saved automatically'),
+            chip(false,'Copy',()=>{copyText(note);toastFn('Notes copied')},'cp'),chip(false,'Share',()=>shareText((view.headline||a.title)+' — notes',note,''),'sh')))
+      :h('div',{style:{flex:1,overflowY:'auto',padding:'0 14px calc(20px + env(safe-area-inset-bottom))'}},
+          hls.length?hls.slice().reverse().map(x=>h('div',{key:x.id,style:{padding:'12px 0',borderBottom:'1px solid '+rule}},
+            h('button',{onClick:()=>jumpHl(x),style:{display:'block',width:'100%',textAlign:'left',color:ink,fontFamily:font,fontSize:15.5,lineHeight:1.5}},h('span',{style:{background:'rgba(255,214,10,.35)',borderRadius:2,padding:'1px 2px',WebkitBoxDecorationBreak:'clone'}},x.text)),
+            h('div',{style:{display:'flex',alignItems:'center',gap:14,marginTop:8,fontSize:12.5}},
+              h('span',{style:{opacity:.55,flex:1}},(x.lang&&x.lang!=='orig'?x.lang+' · ':'')+(x.createdAt?new Date(x.createdAt).toLocaleDateString([],{day:'numeric',month:'short'}):'')),
+              h('button',{onClick:()=>jumpHl(x),style:{color:accent,fontWeight:650}},'Go to'),
+              h('button',{onClick:()=>addToNotes(x.text),style:{color:ink,fontWeight:650,opacity:.8}},'+ Notes'),
+              h('button',{onClick:()=>delHl(x.id),'aria-label':'Remove highlight',style:{color:ink,opacity:.55,display:'flex'}},Icons.x(15)))))
+          :h('div',{style:{textAlign:'center',opacity:.65,fontSize:14,lineHeight:1.55,padding:'40px 20px'}},'No highlights yet. Select text in the edition and tap Highlight.'))):null);
   return ReactDOM.createPortal(node,document.body);
 }
 function dl(name,text,type){const b=new Blob([text],{type});const u=URL.createObjectURL(b);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{URL.revokeObjectURL(u);x.remove()},1500)}
@@ -547,8 +734,7 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
       h('input',{type:'range',min:14,max:28,step:1,value:size,onChange:ev=>setP({size:Number(ev.target.value)}),style:{width:'100%',accentColor:accent}}),
       h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Paper'),
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},THEMES.map(t=>h('button',{key:t[0],onClick:()=>setP({theme:t[0]}),className:'act95',style:{padding:'7px 12px',borderRadius:12,background:t[2],color:t[3],border:'2px solid '+(prefs.theme===t[0]?accent:t[4]),fontSize:13.5,fontWeight:600}},t[1]))),
-      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Columns'),
-      h('div',{style:{display:'flex',gap:8}},chip(prefs.cols===1,'One column',()=>setP({cols:1})),chip(prefs.cols===2,'Two columns',()=>setP({cols:2}))))):null,
+      null)):null,
     panel==='download'?sheet('Download today’s paper',h(Fragment,null,
       row('PDF','The stories, contents and key points — Print → Share → Save to Files',()=>{setPanel(null);printHtml(paperHtml(paper,articles,prefs,false))}),
       row('HTML file','Everything, with each full transcript folded under its story',()=>{setPanel(null);(window.InstaShields?window.InstaShields.downloadText:dl)('daily-transcript-'+new Date(paper.at).toISOString().slice(0,10)+'.html',paperHtml(paper,articles,prefs,true),'text/html')}),
