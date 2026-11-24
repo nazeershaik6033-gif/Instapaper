@@ -162,10 +162,50 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
       h('span',{style:{fontSize:12.5,opacity:.75}},(idx+1)+' / '+posts.length)));
 }
 
+/* ---------- feed links: free feeds turn on with one tap; Instagram / X / Threads need a feed service ---------- */
+const FREE_FEED={telegram:1,reddit:1,bluesky:1,mastodon:1};
+function FeedSetup({T,platform,accounts,onAutoFeed,onSetFeed,onProfile,onClose,toastFn}){
+  const pl=PLAT[platform]||{label:'this app'};const free=!!FREE_FEED[platform];
+  const [manual,setManual]=useState(null);const [busy,setBusy]=useState(null);
+  const paste=async a=>{let t=null;try{t=await navigator.clipboard.readText()}catch(e){}
+    if(t==null){setManual(a.it.id);return}t=String(t).trim();
+    if(!/^https?:\/\/\S+$/i.test(t)){toastFn&&toastFn('The clipboard doesn’t hold a link — copy the feed URL from RSS.app first');return}
+    setBusy(a.it.id);await onSetFeed(a.it,t);setBusy(null)};
+  const auto=async a=>{setBusy(a.it.id);await onAutoFeed(a.it);setBusy(null)};
+  const pill=(label,fn,primary,key)=>h('button',{key,onClick:fn,className:'act95',style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:650,background:primary?T.fg:T.card,color:primary?T.bg:T.fg}},label);
+  return h(Sheet,{T,onClose,title:'New posts from '+pl.label,z:74,maxH:'88%'},
+    h('div',{style:{padding:'0 18px 18px'}},
+      h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},free?pl.label+' has free public feeds — turn one on per account to get New counts and posts here.':
+        pl.label+' has no free public feed. For each account: tap “Copy link & open RSS.app”, create a feed there (paste the link), copy the feed URL it gives you, come back and tap “Paste feed link”. Without one, the account still opens as a live profile.'),
+      accounts.map(a=>h('div',{key:a.it.id,style:{padding:'12px 0',borderTop:'1px solid '+T.hair}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:10}},h(Avatar,{it:a.it,size:30}),
+          h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},displayName(a.it)),
+            h('div',{style:{fontSize:12,color:a.feed&&!a.entries?T.danger:T.sub}},a.feed?(a.entries?a.entries+' posts in its feed':'Feed linked but not returning posts'):'No feed yet')),
+          busy===a.it.id?h(Spinner,{T,size:16}):null),
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
+          free?pill(a.feed?'Reconnect feed':'Turn on feed',()=>auto(a),true,'f'):h(Fragment,null,
+            pill('Copy link & open RSS.app',()=>{try{copyText(a.it.url||'')}catch(e){}openExternalUrl('https://rss.app/new-rss-feed');toastFn&&toastFn('Profile link copied — paste it in RSS.app')},false,'o'),
+            pill('Paste feed link',()=>paste(a),true,'p')),
+          pill('Live profile',()=>onProfile(a.it),false,'v')),
+        manual===a.it.id?h('input',{autoFocus:true,placeholder:'Paste the feed URL here',onKeyDown:e=>{if(e.key==='Enter'){const v=e.target.value.trim();if(v){setManual(null);setBusy(a.it.id);Promise.resolve(onSetFeed(a.it,v)).then(()=>setBusy(null))}}},
+          style:{width:'100%',boxSizing:'border-box',marginTop:8,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.card,color:T.fg,fontSize:16}}):null)),
+      !accounts.length?h('div',{style:{fontSize:13,color:T.sub}},'All accounts here are connected.'):null));
+}
+
 /* ---------- the feed ---------- */
-function SocialFeed({T,S,posts,isDone,onDone,isSaved,onSave,onOpen,notesOf,onNote,toastFn,padTop,padBottom,hidden,emptyHint}){
-  const [open,setOpen]=useState({});const [sheet,setSheet]=useState(null);const [reels,setReels]=useState(null);
+function SocialFeed({T,S,posts:allPosts,accounts,platform,isDone,onDone,isSaved,onSave,onOpen,onProfile,onSetFeed,onAutoFeed,notesOf,onNote,toastFn,padTop,padBottom,hidden,emptyHint}){
+  const [open,setOpen]=useState({});const [sheet,setSheet]=useState(null);const [reels,setReels]=useState(null);const [acct,setAcct]=useState(null);const [setup,setSetup]=useState(false);
+  accounts=accounts||[];
+  const posts=acct?allPosts.filter(p=>p.it.id===acct):allPosts;
   const videos=useMemo(()=>posts.filter(p=>!p.card&&isVideoPost(p)),[posts]);
+  const needFeed=accounts.filter(a=>!a.feed||!a.entries);
+  /* story-style account circles: gradient ring = new posts · tap to show only that account (or its live profile if it has no feed yet) */
+  const tile=a=>{const on=acct===a.it.id;const handle=displayName(a.it).replace(/^@/,'');
+    return h('button',{key:a.it.id,onClick:()=>{if(a.posts){setAcct(on?null:a.it.id)}else if(onProfile)onProfile(a.it)},className:'act95','aria-pressed':on,
+      style:{display:'flex',flexDirection:'column',alignItems:'center',gap:5,width:66,flexShrink:0,color:'#fff',opacity:acct&&!on?.45:1}},
+      h(Avatar,{it:a.it,size:52,ring:true,seen:!a.newN}),
+      h('span',{style:{fontSize:11,maxWidth:66,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:on?700:500}},handle),
+      !a.feed||!a.entries?h('span',{style:{fontSize:9.5,opacity:.55,marginTop:-3}},'profile'):null)};
   const act=(k,p)=>{if(k==='share')shareText(displayName(p.it)+' on '+((PLAT[platformOf(p.it)]||{}).label||''),'',p.e.url);else if(k==='open')onOpen(p);else setSheet({k,p})};
   const ib=(icon,label,fn,color)=>h('button',{onClick:fn,'aria-label':label,className:'act90',style:{display:'flex',padding:6,color:color||'#fff'}},icon);
   const card=(p,i)=>{
@@ -204,13 +244,18 @@ function SocialFeed({T,S,posts,isDone,onDone,isSaved,onSave,onOpen,notesOf,onNot
   return h('div',{style:{position:'absolute',inset:0,background:'#000',color:'#fff',display:hidden?'none':'block'}},
     h('div',{className:'sy',style:{position:'absolute',inset:0,overflowY:'auto',WebkitOverflowScrolling:'touch',padding:'calc('+(padTop||96)+'px + env(safe-area-inset-top)) 0 '+(padBottom||'90px')}},
       h('div',{style:{maxWidth:520,margin:'0 auto'}},
+        accounts.length?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'4px 10px 8px'}},accounts.map(tile)):null,
+        needFeed.length&&onSetFeed?h('button',{onClick:()=>setSetup(true),style:{display:'block',margin:'0 14px 14px',fontSize:12.5,color:'rgba(255,255,255,.6)',textAlign:'left'}},
+          needFeed.length+' of '+accounts.length+' account'+(accounts.length>1?'s':'')+' show'+(needFeed.length===1?'s':'')+' only a live profile · ',h('span',{style:{color:'#fff',fontWeight:650,textDecoration:'underline'}},'Get new posts')):null,
         videos.length?h('button',{onClick:()=>setReels(0),className:'act98',style:{display:'flex',alignItems:'center',gap:10,margin:'2px 12px 16px',padding:'10px 14px',borderRadius:14,background:'#141417',color:'#fff',width:'calc(100% - 24px)',textAlign:'left'}},
           h('span',{style:{display:'flex',width:34,height:34,borderRadius:10,background:IG_RING,alignItems:'center',justifyContent:'center'}},SI.reel(19)),
           h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:14.5,fontWeight:700}},'Reels'),h('span',{style:{display:'block',fontSize:12,color:'rgba(255,255,255,.55)'}},videos.length+' video'+(videos.length>1?'s':'')+' · swipe through full screen')),
           Icons.chevR?Icons.chevR(16):null):null,
         posts.map(card),
-        !posts.length?h('div',{style:{textAlign:'center',padding:'60px 30px',color:'rgba(255,255,255,.6)',fontSize:14,lineHeight:1.55}},emptyHint||'No social updates here yet.'):null)),
+        !posts.length?h('div',{style:{textAlign:'center',padding:accounts.length?'36px 30px':'60px 30px',color:'rgba(255,255,255,.6)',fontSize:14,lineHeight:1.55}},
+          accounts.length?(needFeed.length===accounts.length?'Tap an account above to see its latest posts, or connect feeds to get them here with New counts.':(emptyHint||'No new posts.')):'No accounts here yet — add them in ⋯ → Manage sources.'):null)),
     reels!=null&&videos.length?toBody(h(Reels,{T,posts:videos,start:reels,isDone,onDone,onAction:act,onClose:()=>setReels(null)})):null,
+    setup?toBody(h(FeedSetup,{T,platform,accounts:needFeed.length?needFeed:accounts,onAutoFeed,onSetFeed,onProfile:it=>{setSetup(false);onProfile(it)},onClose:()=>setSetup(false),toastFn})):null,
     sheet&&sheet.k==='caption'?toBody(h(CaptionSheet,{T,p:sheet.p,note:notesOf(sheet.p.e.url),onNote,onOpen:p=>{setSheet(null);onOpen(p)},onClose:()=>setSheet(null)})):null,
     sheet&&sheet.k==='about'?toBody(h(AboutSheet,{T,S,p:sheet.p,done:isDone(sheet.p),saved:isSaved(sheet.p.e),onDone,onSave,onOpen,onClose:()=>setSheet(null),toastFn})):null);
 }
