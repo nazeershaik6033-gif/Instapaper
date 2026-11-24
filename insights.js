@@ -159,11 +159,16 @@ function bucketOf(t){
 }
 const HG_KEY='insta_home_groups_closed';
 const hgClosed=()=>{try{return new Set(JSON.parse(localStorage.getItem(HG_KEY)||'[]'))}catch(e){return new Set()}};
-function TimeGroups({T,list,row}){
-  const [closed,setClosed]=useState(hgClosed);
-  const flip=k=>setClosed(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);try{localStorage.setItem(HG_KEY,JSON.stringify([...n]))}catch(e){}return n});
-  const groups=[];const at={};
+const hgSave=n=>{try{localStorage.setItem(HG_KEY,JSON.stringify([...n]))}catch(e){}return n};
+const groupsOf=list=>{const groups=[];const at={};
   for(const a of list){const b=bucketOf(a.addedAt);if(!(b.key in at)){at[b.key]=groups.length;groups.push(Object.assign({items:[]},b))}groups[at[b.key]].items.push(a)}
+  return groups};
+/* the folded set can live with the caller (so a "fold all" control elsewhere can drive it) or here */
+function TimeGroups({T,list,row,closed:cClosed,setClosed:cSet}){
+  const [own,setOwn]=useState(hgClosed);
+  const closed=cClosed||own,setClosed=cSet||setOwn;
+  const flip=k=>setClosed(prev=>{const n=new Set(prev);n.has(k)?n.delete(k):n.add(k);return hgSave(n)});
+  const groups=groupsOf(list);
   return h('div',null,groups.map(g=>{
     const open=!closed.has(g.key);
     const unread=g.items.filter(a=>(a.progress||0)<0.97).length;
@@ -318,5 +323,5 @@ function HomeDashboard({T,data,onOpen,onGo}){
     null);
 }
 
-window.InstaStats={track,tick,diff,HomeDashboard,compute,periods,bucketOf,TimeGroups};
+window.InstaStats={track,tick,diff,HomeDashboard,compute,periods,bucketOf,TimeGroups,hgClosed,hgSave,groupKeys:list=>groupsOf(list).map(g=>g.key)};
 })();
