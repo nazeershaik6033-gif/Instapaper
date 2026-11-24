@@ -137,6 +137,10 @@ html.motion-subtle .pgin{animation-duration:180ms}
 @keyframes navgoo{0%{transform:scale(.82,.86);opacity:.55}40%{transform:scale(1.22,.9);opacity:1}72%{transform:scale(.96,1.04)}100%{transform:none}}
 .navplus{transition:transform 560ms cubic-bezier(.2,1.7,.4,1),box-shadow 300ms}
 .navplusb:active .navplus{transform:scale(.82);transition-duration:130ms}
+/* book reader: chapter / page arrivals */
+.bkinR{animation:bkinR 300ms cubic-bezier(.2,.85,.25,1) both}.bkinL{animation:bkinL 300ms cubic-bezier(.2,.85,.25,1) both}.bkfade{animation:fdk2 240ms ease both}
+@keyframes bkinR{from{transform:translate3d(36%,0,0);opacity:.2}to{transform:none;opacity:1}}
+@keyframes bkinL{from{transform:translate3d(-36%,0,0);opacity:.2}to{transform:none;opacity:1}}
 .shimmer{background:linear-gradient(90deg,rgba(127,127,127,.12) 25%,rgba(127,127,127,.24) 50%,rgba(127,127,127,.12) 75%);background-size:200% 100%;animation:shm 1.2s linear infinite}
 html.motion-off *:not(.spin),html.motion-off *:not(.spin)::before,html.motion-off *:not(.spin)::after{animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}
 @media (prefers-reduced-motion:reduce){html:not(.motion-forced) *:not(.spin){animation-duration:1ms!important;animation-iteration-count:1!important;transition-duration:1ms!important}}
@@ -218,6 +222,7 @@ setTimeout(function(){
 <script src="insights.js"></script>
 <script src="edition.js"></script>
 <script src="browser.js"></script>
+<script src="books.js"></script>
 <script src="app.js"></script>
 <script>
 if('serviceWorker' in navigator){

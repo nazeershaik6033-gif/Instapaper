@@ -2063,10 +2063,14 @@ function FolderItem({T,folder,active,onClick,onLongPress}){
     h('span',{style:{fontSize:16.5,fontWeight:active?650:400,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},folder.name));
 }
 
+/* Books live in Blogs, under a "Books" chip beside "All posts" (books.js) */
+function showBooksShelf(){try{localStorage.setItem('insta_blogs_cat','books');localStorage.setItem('insta_blogs_mode','mag')}catch(e){}window.dispatchEvent(new Event('insta-books-show'))}
+
 /* Bottom navigation: a frosted capsule floating above the bottom edge, icons only with the + in the middle.
-   A highlight pill glides (with a little squash-and-stretch) to the active tab; the + glows, springs when
+   Compact (it hugs its five icons). A highlight pill glides (with a little squash-and-stretch) to the active tab; the + glows, springs when
    pressed and spins into an × while the Add menu is open. Always visible. */
-const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['browse','Browse',s=>Icons.globe(s)],['more','More',s=>Icons.menu(s)]];
+const NAV_ITEMS=[['home','Home',s=>Icons.home(s)],['brief','My Routine',s=>Icons.play(s)],['plus','Add',s=>Icons.plus(s)],['blogs','Blogs',s=>Icons.rss(s)],['browse','Browser',s=>Icons.globe(s)]];
+const NAV_BTN=58; /* each slot; the capsule hugs its icons (≈300px) so it floats free of the screen edges */
 const NAV_LIFT=74; /* px from the safe-area edge to just above the capsule — for content and the mini player */
 function FloatingNav({T,active,onTab,overVideo,plusOpen}){
   const dark=overVideo||isDarkTheme(T.id);
@@ -2074,17 +2078,17 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
   const fg=overVideo?'#ffffff':T.fg, onFg=overVideo?'#000000':T.bg;
   return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(8px + '+SAFE_BF+')',zIndex:plusOpen?76:35,
       display:'flex',justifyContent:'center',padding:'0 14px',pointerEvents:'none'}},
-    h('div',{style:{pointerEvents:'auto',width:'100%',maxWidth:420,padding:6,borderRadius:30,
+    h('div',{style:{pointerEvents:'auto',width:'auto',padding:6,borderRadius:30,
         background:dark?'rgba(30,30,34,.74)':hexA(T.bg,.8),backdropFilter:'saturate(180%) blur(24px)',WebkitBackdropFilter:'saturate(180%) blur(24px)',
         border:'0.5px solid '+(dark?'rgba(255,255,255,.13)':'rgba(0,0,0,.08)'),
         boxShadow:'0 10px 34px rgba(0,0,0,'+(dark?.5:.14)+'), inset 0 0.5px 0 rgba(255,255,255,'+(dark?.08:.6)+')'}},
-      h('div',{style:{position:'relative',display:'flex'}},
+      h('div',{style:{position:'relative',display:'flex',width:NAV_BTN*NAV_ITEMS.length}},
         idx>=0&&idx!==2?h('div',{'aria-hidden':true,className:'navpill',style:{position:'absolute',top:0,bottom:0,left:0,width:'20%',transform:'translateX('+(idx*100)+'%)',pointerEvents:'none'}},
           h('span',{key:idx,className:'navgoo',style:{position:'absolute',top:0,bottom:0,left:3,right:3,borderRadius:23,background:dark?'rgba(255,255,255,.14)':hexA(T.fg,.07)}})):null,
         NAV_ITEMS.map(([k,l,ic],i)=>{const on=i===idx;const plus=k==='plus';
           return h('button',{key:k,onClick:()=>{vibrate(plus?10:6);onTab(k)},'aria-label':plus&&plusOpen?'Close':l,'aria-current':on?'page':undefined,'aria-expanded':plus?!!plusOpen:undefined,
             className:plus?'navplusb':'act90',
-            style:{position:'relative',flex:1,height:46,display:'flex',alignItems:'center',justifyContent:'center',color:on?fg:(overVideo?'rgba(255,255,255,.62)':T.sub),transition:'color 260ms'}},
+            style:{position:'relative',width:NAV_BTN,flexShrink:0,height:46,display:'flex',alignItems:'center',justifyContent:'center',color:on?fg:(overVideo?'rgba(255,255,255,.62)':T.sub),transition:'color 260ms'}},
             plus?h('span',{className:'navplus',style:{width:48,height:48,margin:'-1px 0',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:fg,color:onFg,
                 boxShadow:'0 4px 16px '+hexA(fg,dark?.34:.3)+', 0 0 0 3px '+hexA(fg,plusOpen?.14:0)}},
                 h('span',{style:{display:'flex',transform:plusOpen?'rotate(135deg)':'none',transition:'transform 520ms cubic-bezier(.3,1.5,.5,1)'}},ic(22)))
@@ -2101,7 +2105,8 @@ function Sidebar({T,scope,folders,onScope,onClose,onFolderLongPress,onBrowse,onS
     {key:'home',icon:Icons.home(22),label:'Home',active:is('home'),onClick:()=>go('home')},
     {key:'brief',icon:Icons.play(20),label:'My Routine',active:is('brief'),onClick:()=>go('brief')},
     {key:'headlines',icon:Icons.newspaper(22),label:'Headlines',active:is('headlines'),onClick:()=>go('headlines')},
-    {key:'blogs',icon:Icons.rss(22),label:'Blogs',active:is('blogs'),onClick:()=>go('blogs')},
+    {key:'blogs',icon:Icons.rss(22),label:'Blogs',active:is('blogs'),onClick:()=>{try{localStorage.setItem('insta_blogs_cat','all')}catch(e){}go('blogs')}},
+    {key:'books',icon:Icons.notes(22),label:'Books',active:false,onClick:()=>{showBooksShelf();go('blogs')}},
     {key:'browse',icon:Icons.globe(22),label:'Browse',active:false,onClick:()=>{onClose();onBrowse()}},
     {key:'liked',icon:Icons.heart(22),label:'Liked',active:is('liked'),onClick:()=>go('liked')},
     {key:'archive',icon:Icons.archive(22),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
@@ -3622,10 +3627,12 @@ function BlogCover({e,name,site,ratio,radius,big}){
 }
 const blogDate=ms=>{if(!ms)return'';const d=Date.now()-ms;if(d<3600000)return Math.max(1,Math.round(d/60000))+' min ago';if(d<86400000)return Math.round(d/3600000)+'h ago';
   return new Date(ms).toLocaleDateString([],{month:'short',day:'numeric',year:new Date(ms).getFullYear()===new Date().getFullYear()?undefined:'numeric'})};
-function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMarkAll,lastFetch}){
+function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMarkAll,lastFetch,toastFn}){
   const [cat,setCat]=useState(()=>{try{return localStorage.getItem('insta_blogs_cat')||'all'}catch(e){return'all'}});
   const [shown,setShown]=useState(13);
   const pick=c=>{setCat(c);setShown(13);try{localStorage.setItem('insta_blogs_cat',c)}catch(e){}};
+  useEffect(()=>{const f=()=>pick('books');window.addEventListener('insta-books-show',f);return()=>window.removeEventListener('insta-books-show',f)},[]);
+  const books=window.InstaBooks?window.InstaBooks.useBooks():null;
   const gName=id=>{const g=groups.find(x=>x.id===id);return g?g.name:''};
   const posts=[];
   for(const f of feeds){
@@ -3635,7 +3642,7 @@ function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMar
   }
   posts.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   const newN=posts.filter(p=>p.isNew).length;
-  const cats=[['all','All posts'],newN?['new','New · '+newN]:null].filter(Boolean)
+  const cats=[['all','All posts'],window.InstaBooks?['books','Books'+(books&&books.length?' · '+books.length:'')]:null,newN?['new','New · '+newN]:null].filter(Boolean)
     .concat(groups.filter(g=>posts.some(p=>p.group===g.id)).map(g=>[g.id,g.name]))
     .concat(posts.some(p=>p.group==='_other')&&groups.length?[['_other','Other']]:[]);
   const cur=cats.some(c=>c[0]===cat)?cat:'all';
@@ -3653,16 +3660,25 @@ function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMar
     h('div',{style:{fontSize:11.5,color:T.sub,marginTop:9,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label(p)),
     h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,letterSpacing:'-.01em',marginTop:3,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},p.e.title),
     meta(p));
-  const lead=list[0];
+  const lead=cur==='books'?null:list[0];
+  const isBooks=cur==='books';
+  const chips=h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'16px 2px 18px',justifyContent:cats.length<=4?'center':'flex-start'}},
+      cats.map(([id,l])=>h('button',{key:id,onClick:()=>pick(id),className:'act95',style:{flexShrink:0,padding:'8px 15px',borderRadius:999,fontSize:13,fontWeight:600,
+        background:cur===id?T.fg:'transparent',color:cur===id?T.bg:T.fg,border:'1px solid '+(cur===id?T.fg:T.hair)}},l)));
+  if(isBooks)return h('div',{style:{padding:'8px 0 0'}},
+    h('div',{style:{textAlign:'center',padding:'14px 22px 4px'}},
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.sub}},(books?books.length:0)+((books&&books.length===1)?' book':' books')+' · on this device'),
+      h('div',{style:{fontSize:30,fontWeight:780,letterSpacing:'-.03em',lineHeight:1.08,margin:'8px auto 0',maxWidth:340}},'Your Library'),
+      h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.5,margin:'10px auto 0',maxWidth:320}},'Read EPUB, PDF, MOBI, FB2, DOCX and TXT offline — pick up right where you left off.')),
+    h('div',{style:{padding:'0 16px'}},chips),
+    h(window.InstaBooks.BooksLibrary,{T,query,toastFn}));
   return h('div',{style:{padding:'8px 16px 0'}},
     h('div',{style:{textAlign:'center',padding:'14px 6px 4px'}},
       h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.sub}},feeds.filter(f=>f.feedUrl).length+' blogs'+(lastFetch?' · updated '+blogDate(lastFetch).replace(' ago',' ago'):'')),
       h('div',{style:{fontSize:30,fontWeight:780,letterSpacing:'-.03em',lineHeight:1.08,margin:'8px auto 0',maxWidth:340}},'The Latest Posts From Your Blogs'),
       h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.5,margin:'10px auto 0',maxWidth:320}},newN?newN+' new since your last visit. ':'You’re all caught up. ','Fresh reading from every blog you follow, newest first.'),
       newN?h('button',{onClick:onMarkAll,style:{marginTop:8,fontSize:12.5,fontWeight:600,color:T.accent}},'Mark all as read'):null),
-    h('div',{className:'sx',style:{display:'flex',gap:8,overflowX:'auto',padding:'16px 2px 18px',justifyContent:cats.length<=4?'center':'flex-start'}},
-      cats.map(([id,l])=>h('button',{key:id,onClick:()=>pick(id),className:'act95',style:{flexShrink:0,padding:'8px 15px',borderRadius:999,fontSize:13,fontWeight:600,
-        background:cur===id?T.fg:'transparent',color:cur===id?T.bg:T.fg,border:'1px solid '+(cur===id?T.fg:T.hair)}},l))),
+    chips,
     loading&&!posts.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.sub,fontSize:13.5,padding:'30px 0'}},h(Spinner,{T,size:16}),'Fetching the latest posts…'):null,
     !loading&&!list.length?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'30px 10px'}},q?'No posts match “'+query.trim()+'”.':cur==='new'?'Nothing new — you’re all caught up.':'No posts yet. Add blogs under Manage.'):null,
     lead?h('button',{onClick:()=>openP(lead),className:'act98',style:{display:'block',width:'100%',textAlign:'left',color:T.fg,marginBottom:22}},
@@ -3823,7 +3839,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     rowBtn(icon,onClick,false,label,disabled),
     badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
 
-  const mag=mode==='mag'&&feeds.some(f=>f.feedUrl);
+  const mag=mode==='mag'&&(feeds.some(f=>f.feedUrl)||(()=>{try{return localStorage.getItem('insta_blogs_cat')==='books'}catch(e){return false}})());
   const lastFetch=Math.max(0,...feeds.map(f=>(blogFeeds[f.id]||{}).fetchedAt||0));
   return h('div',null,
     h('div',{className:'sx',style:{display:'flex',gap:8,padding:'12px 14px 4px',alignItems:'center',overflowX:'auto'}},
@@ -3842,7 +3858,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
           style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
         query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null,
     mag?h(Fragment,null,
-      h(BlogsMagazine,{T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen:open,lastFetch,
+      h(BlogsMagazine,{T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen:open,lastFetch,toastFn,
         onMarkAll:()=>{const now=Date.now();onSeen(m=>{const n={...m};feeds.forEach(f=>{n[f.id]=now});return n});toastFn('All caught up')}}),
       h('div',{style:{height:'calc(30px + '+SAFE_B+')'}})):
     h('div',{style:{padding:'2px 14px 0'}},
@@ -7824,6 +7840,7 @@ function App(){
   const [searchScope,setSearchScope]=useState('all'); // all|title|source|tags
   const [readingId,setReadingId]=useState(null);
   const [sidebar,setSidebar]=useState(false);
+  const [bookId,setBookId]=useState(null); // open book (books.js reader)
   const [menuOpen,setMenuOpen]=useState(false);
   const [addS,setAddS]=useState(null);
   const [settingsOpen,setSettingsOpen]=useState(false);
@@ -7974,6 +7991,20 @@ function App(){
       if([...p.keys()].length)history.replaceState(null,'',location.pathname);
     }catch(e){}
   },[]);
+
+  useEffect(()=>{ // a book tapped in the library opens the full-screen reader
+    const f=e=>{const id=e&&e.detail&&e.detail.id;if(id)setBookId(id)};
+    window.addEventListener('insta-book-open',f);return()=>window.removeEventListener('insta-book-open',f);
+  },[]);
+  /* + → Upload files: books (EPUB, PDF, MOBI, FB2, DOCX, TXT…) go to the library, everything else to Photos */
+  const importBooks=useCallback(async files=>{
+    const B=window.InstaBooks;if(!B||!files.length)return;
+    showBooksShelf();setScope({type:'blogs'});
+    toastFn(files.length>1?'Adding '+files.length+' books…':'Adding “'+files[0].name+'”…');
+    const r=await B.importFiles(files);
+    if(r.added.length)toastFn(r.added.length===1?'Added “'+r.added[0].title+'” to Books':r.added.length+' books added');
+    if(r.failed.length)setTimeout(()=>toastFn(r.failed[0].name+': '+r.failed[0].error),r.added.length?2400:0);
+  },[toastFn]);
 
   useEffect(()=>{ // host (Naz Trades) can deep-link into a section via postMessage
     const onNav=e=>{const d=e&&e.data;if(!d||d.type!=='reader-nav')return;
@@ -8433,7 +8464,7 @@ function App(){
 
   const readerAction=k=>doAction(readingId,k);
   readerAction.update=update;
-  const showTabs=!selecting&&!readingId&&scope.type!=='turn';
+  const showTabs=!selecting&&!readingId&&!bookId&&scope.type!=='turn';
 
   /* ---------- header ---------- */
   const headerBtn=(icon,onClick)=>h('button',{onClick,className:'act90 trt',style:Object.assign({},iconBtnS,{color:T.fg})},icon);
@@ -8613,6 +8644,7 @@ function App(){
       onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
       onExit:()=>setScope({type:'home'})}):null,
 
+    bookId&&window.InstaBooks?h(window.InstaBooks.BookReader,{key:bookId,T,bookId,toastFn,onClose:()=>setBookId(null)}):null,
     reading?h(Reader,{a:reading,T,S,patch:p=>patchArticle(reading.id,p),onAction:readerAction,toastFn,addHighlight,more:readMore,
       onOpenMore:m=>{if(m.kind==='lib')openArticle(m.id);else addBriefItem({title:m.title,url:m.url,source:m.label,publishedAt:m.date})},
       onHighlightTap:hid=>setSheet({type:'highlight',aid:reading.id,hid}),
@@ -8621,8 +8653,8 @@ function App(){
     !showTabs&&!selecting&&!reading&&scope.type!=='turn'&&scope.type!=='brief'?h('button',{onClick:()=>setSheet({type:'plus'}),className:'act90 trt',
       style:{position:'fixed',right:18,bottom:'calc('+((ttsUI?94:24)+(showTabs?62:0))+'px + '+SAFE_BF+')',width:56,height:56,borderRadius:'50%',background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',boxShadow:'0 6px 22px rgba(0,0,0,.32)',zIndex:32}},Icons.plus(25)):null,
 
-    showTabs?h(FloatingNav,{T,active:['home','brief'].includes(scope.type)?scope.type:'more',plusOpen:!!(sheet&&sheet.type==='plus'),overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
-      onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}if(k==='more'){setSidebar(true);return}
+    showTabs?h(FloatingNav,{T,active:['home','brief','blogs'].includes(scope.type)?scope.type:null,plusOpen:!!(sheet&&sheet.type==='plus'),overVideo:scope.type==='brief'&&(localStorage.getItem('insta_routine_view')||'today')==='today',
+      onTab:k=>{if(k==='plus'){setSheet(sheet&&sheet.type==='plus'?null:{type:'plus'});return}if(k==='browse'){setBrowserO({url:''});return}
         if(scope.type===k){goHome&&k==='home'?goHome():(listScrollRef.current&&listScrollRef.current.scrollTo({top:0,behavior:'smooth'}));return}
         setScope({type:k});setQuery('');setSelecting(null);setHdrP(0)}}):null,
     sidebar?h(Sidebar,{T,scope,folders:data.folders,onScope:s=>{setScope(s);setQuery('');setSelecting(null)},onClose:()=>setSidebar(false),
@@ -8637,7 +8669,10 @@ function App(){
       onSettings:()=>{setMenuOpen(false);setSettingsOpen(true)}}):null,
 
     h('input',{ref:fileInputRef,type:'file',multiple:true,style:{display:'none'},
-      onChange:e=>{const fs=e.target.files;if(fs&&fs.length){addFiles(fs);if(scope.type!=='photos')setScope({type:'photos'})}}}),
+      onChange:e=>{const fs=Array.from(e.target.files||[]);if(!fs.length)return;
+        const B=window.InstaBooks;const books=B?fs.filter(f=>B.isBookFile(f)&&!(f.type||'').startsWith('image/')):[];const rest=fs.filter(f=>!books.includes(f));
+        if(rest.length){addFiles(rest);if(!books.length&&scope.type!=='photos')setScope({type:'photos'})}
+        if(books.length)importBooks(books)}}),
 
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
