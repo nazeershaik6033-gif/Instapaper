@@ -767,7 +767,7 @@ function parseTelegramText(raw){
     if(ph){const mt=(ph.getAttribute('style')||'').match(/url\(['"]?(.*?)['"]?\)/);if(mt)thumb=mt[1]}
     if(!title)title=thumb?'📷 Media post':'Post';
     const video=!!m.querySelector('.tgme_widget_message_video_thumb,.tgme_widget_message_video_player');
-    return{id:post||String(publishedMs),title:title.slice(0,220),caption:title.length>220?title.slice(0,420):'',url:post?'https://t.me/'+post:'https://t.me/'+handle,publishedMs,thumb,video:video||undefined};
+    return{id:post||String(publishedMs),title:title.slice(0,220),caption:title.length>220?title.slice(0,420):'',url:post?'https://t.me/'+post:((m.querySelector('a.tgme_widget_message_date')||{}).href||'https://t.me/'),publishedMs,thumb,video:video||undefined};
   }).filter(e=>e.publishedMs).sort((a,b)=>b.publishedMs-a.publishedMs).slice(0,25);
 }
 /* a post's picture for the Blogs magazine: media:content / media:thumbnail / an image enclosure /
@@ -7980,16 +7980,35 @@ const EMPTY_STATES={
 };
 
 /* ============================== error boundary ============================== */
+/* Catches a crash, shows what broke (so it can be reported) and offers Try again,
+   which re-renders without a reload. `inline` ones guard one screen, so a crash
+   there leaves the rest of the app (the browser, the tab bar) working. */
+const LAST_ERR_KEY='insta_last_error';
 class Boundary extends React.Component{
-  constructor(p){super(p);this.state={err:null}}
+  constructor(p){super(p);this.state={err:null,info:null}}
   static getDerivedStateFromError(e){return{err:e}}
-  componentDidCatch(){try{const s=document.getElementById('spl');if(s)s.classList.add('hide')}catch(e){}}
+  componentDidCatch(e,info){
+    try{const s=document.getElementById('spl');if(s)s.classList.add('hide')}catch(x){}
+    try{localStorage.setItem(LAST_ERR_KEY,JSON.stringify({at:Date.now(),where:this.props.name||'app',msg:String((e&&e.message)||e),stack:String((e&&e.stack)||'').slice(0,1500),comp:String((info&&info.componentStack)||'').slice(0,1500)}))}catch(x){}
+    this.setState({info});
+  }
+  details(){const e=this.state.err,info=this.state.info;
+    const comps=String((info&&info.componentStack)||'').split('\n').map(l=>l.trim().replace(/^at\s+/,'').split(/[\s@(]/)[0]).filter(Boolean).slice(0,5).join(' ‹ ');
+    const at=String((e&&e.stack)||'').split('\n').find(l=>/\.js/.test(l))||'';
+    return[(this.props.name||'app')+' · '+((e&&e.name)||'Error')+': '+((e&&e.message)||String(e)),comps?'in '+comps:'',at.trim().slice(0,160)].filter(Boolean).join('\n')}
   render(){
-    if(this.state.err)return ce('div',{style:{position:'fixed',inset:0,zIndex:300,minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},
-      ce('div',{style:{fontFamily:WORDMARK,fontSize:24,fontWeight:600}},'Instapaper'),
-      ce('div',{style:{fontSize:14,color:'#76767c'}},'Something went wrong. Your articles are safe.'),
-      ce('button',{onClick:()=>location.reload(),style:{padding:'12px 26px',borderRadius:11,background:'#1c1c1e',color:'#fff',fontSize:15,fontWeight:600}},'Reload'));
-    return this.props.children;
+    if(!this.state.err)return this.props.children;
+    const det=this.details();const retry=()=>this.setState({err:null,info:null});
+    const btn=(label,fn,dark)=>ce('button',{key:label,onClick:fn,style:{padding:'11px 18px',borderRadius:11,background:dark?'#1c1c1e':'#efeff1',color:dark?'#fff':'#1c1c1e',fontSize:14.5,fontWeight:600}},label);
+    const inner=[
+      ce('div',{key:'w',style:{fontFamily:WORDMARK,fontSize:this.props.inline?19:24,fontWeight:600}},this.props.inline?'This screen hit a problem':'Instapaper'),
+      ce('div',{key:'m',style:{fontSize:14,color:'#76767c'}},'Something went wrong. Your articles are safe.'),
+      ce('pre',{key:'d',style:{margin:0,maxWidth:'100%',maxHeight:150,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',textAlign:'left',fontSize:11.5,lineHeight:1.45,color:'#5a5a60',background:'#f4f4f6',borderRadius:10,padding:'10px 12px',fontFamily:'ui-monospace,Menlo,monospace'}},det),
+      ce('div',{key:'b',style:{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'center'}},
+        btn('Try again',retry,true),btn('Copy details',()=>{copyText(det+'\n\n'+String((this.state.err&&this.state.err.stack)||'').slice(0,1200));try{const t=document.activeElement;t&&(t.textContent='Copied')}catch(x){}}),
+        this.props.inline?null:btn('Reload',()=>location.reload()))];
+    if(this.props.inline)return ce('div',{style:{display:'flex',flexDirection:'column',alignItems:'center',gap:12,fontFamily:UIF,padding:'40px 22px',textAlign:'center',background:'#fff',color:'#1c1c1e',borderRadius:14,margin:16}},inner);
+    return ce('div',{style:{position:'fixed',inset:0,zIndex:300,minHeight:'100dvh',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',gap:14,fontFamily:UIF,padding:30,textAlign:'center',background:'#fff',color:'#1c1c1e'}},inner);
   }
 }
 
@@ -8849,7 +8868,7 @@ function App(){
         })():null):null,
       backupDue&&!selecting?h(BackupBanner,{T,never:backupNever,onExport:exportBackup,onLater:snoozeBackup}):null,
       h('div',{ref:listScrollRef,className:'sy',style:{flex:1,overflowY:'auto',WebkitOverflowScrolling:'touch',paddingBottom:'calc('+((ttsUI?100:16)+(showTabs?NAV_LIFT:0))+'px + '+(showTabs?SAFE_B:'0px')+')'}},
-        h('div',{key:scope.type+':'+(scope.id||''),className:'pgin'},body)),
+        h('div',{key:scope.type+':'+(scope.id||''),className:'pgin'},h(Boundary,{name:scope.type,inline:true},body))),
       selecting?h('div',{style:{flexShrink:0,borderTop:'1px solid '+T.hair,background:T.bg,paddingBottom:SAFE_B}},
         selecting.mode==='playlist'
           ?h('button',{onClick:()=>{if(selecting.ids.length){const ids=selecting.ids;setSelecting(null);startTts(ids)}},disabled:!selecting.ids.length,className:'act98',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:9,width:'calc(100% - 32px)',margin:'10px 16px',padding:'14px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15.5,fontWeight:600,opacity:selecting.ids.length?1:.4}},Icons.headphones(19),'Play '+(selecting.ids.length||'')+' article'+(selecting.ids.length===1?'':'s'))
@@ -8983,7 +9002,7 @@ function App(){
       onOpenBrowser:u=>setBrowserO({url:u||''}),
       vaultSession:vaultSess}):null,
 
-    browserO?h(Browser,{T,sites:data.sites||[],
+    browserO?h(Boundary,{name:'browser'},h(Browser,{T,sites:data.sites||[],
       onSites:fn=>update(d=>({...d,sites:fn(d.sites||[])})),
       folders:data.siteFolders||[],
       onFolders:fn=>update(d=>({...d,siteFolders:fn(d.siteFolders||[])})),
@@ -8995,7 +9014,7 @@ function App(){
       initialUrl:browserO.url,
       agentProps:{S,data,update,toastFn,onSaveUrl:saveFromBrowser,onSaveNote:md=>saveQuickNote(md)},
       onMenu:()=>setSidebar(true),
-      onClose:()=>{clearBrowserReturn();setBrowserO(null)}}):null,
+      onClose:()=>{clearBrowserReturn();setBrowserO(null)}})):null,
 
     ttsUI&&!ttsOpen?(()=>{const cur=data.articles.find(a=>a.id===ttsUI.queue[ttsUI.qi]);
       return h(MiniPlayer,{T,lift:showTabs,ui:ttsUI,title:cur?cur.title:'Listening…',onToggle:ttsToggle,onNextArticle:()=>ttsJumpArticle(1),onStop:ttsStop,onOpen:()=>setTtsOpen(true)})})():null,
