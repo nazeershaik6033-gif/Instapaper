@@ -115,6 +115,8 @@ html.vgap .appframe{height:calc(var(--app-h,100dvh) + var(--vgap,0px))}
 .spin{animation:spk 800ms linear infinite}
 @keyframes ppk{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
 .ppin{transform-origin:bottom right;animation:ppk 190ms cubic-bezier(.2,.9,.2,1) both}
+.addtile{animation:addk 360ms cubic-bezier(.2,1.3,.4,1) backwards}
+@keyframes addk{from{transform:translateY(10px) scale(.86);opacity:0}to{transform:none;opacity:1}}
 :root{--uif:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}
 /* ---- motion: Settings → Display & Motion (rich · subtle · off); iPhone Reduce Motion is respected ---- */
 @keyframes suk2{from{transform:translateY(70px) scale(.985);opacity:0}to{transform:none;opacity:1}}

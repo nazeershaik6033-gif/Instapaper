@@ -1915,17 +1915,30 @@ function ARow({T,icon,label,sub,danger,onClick,right,active}){
 }
 
 /* AssistiveTouch-style quick-action grid (the restyled "+" popup) */
-function TouchGrid({onClose,actions,anchorBottom,center}){
+/* "+" menu: a frosted panel in the app's theme, with duotone icons on soft rounded tiles that pop in one by one */
+const duo=(d,extra)=>[h('path',Object.assign({d,fill:'currentColor',fillOpacity:.16,stroke:'none'},extra||{})),P(d,extra)];
+const AddIcons={
+  link:s=>Svg({size:s},P('M9.6 14.4a3.6 3.6 0 0 0 5.1 0l3.4-3.4a3.6 3.6 0 0 0-5.1-5.1l-1.2 1.2'),P('M14.4 9.6a3.6 3.6 0 0 0-5.1 0l-3.4 3.4a3.6 3.6 0 0 0 5.1 5.1l1.2-1.2')),
+  note:s=>Svg({size:s},...duo('M6.2 3.8h11.6c1.3 0 2.4 1.1 2.4 2.4v8.2l-5.8 5.8H6.2c-1.3 0-2.4-1.1-2.4-2.4V6.2c0-1.3 1.1-2.4 2.4-2.4Z'),P('M14.4 20.2v-3.4c0-1.3 1.1-2.4 2.4-2.4h3.4'),P('M7.8 8.6h8.4M7.8 12h5')),
+  camera:s=>Svg({size:s},...duo('M3.8 9c0-1.3 1.1-2.4 2.4-2.4h1.5l1.4-2h5.8l1.4 2h1.5c1.3 0 2.4 1.1 2.4 2.4v8.4c0 1.3-1.1 2.4-2.4 2.4H6.2c-1.3 0-2.4-1.1-2.4-2.4V9Z'),h('circle',{cx:12,cy:13,r:3.3,stroke:'currentColor',strokeWidth:1.7,fill:'none'})),
+  photos:s=>Svg({size:s},P('M7.5 3.8h9.8c1.6 0 2.9 1.3 2.9 2.9v9.8'),...duo('M3.8 9.8c0-1.3 1.1-2.4 2.4-2.4h7.8c1.3 0 2.4 1.1 2.4 2.4v8c0 1.3-1.1 2.4-2.4 2.4H6.2c-1.3 0-2.4-1.1-2.4-2.4v-8Z'),P('M4 17.4l3.6-3.4 2.6 2.4 1.8-1.6 4.1 3.6'),h('circle',{cx:12.4,cy:11.2,r:1.2,fill:'currentColor'})),
+  files:s=>Svg({size:s},...duo('M6.2 2.8h6.6l5 5v11.4c0 1.1-.9 2-2 2H6.2c-1.1 0-2-.9-2-2V4.8c0-1.1.9-2 2-2Z'),P('M12.6 3v3.6c0 .7.6 1.2 1.2 1.2h3.8'),P('M7.8 12.4h6.4M7.8 15.8h4.4')),
+  folder:s=>Svg({size:s},...duo('M3.6 7.2c0-1.3 1.1-2.4 2.4-2.4h3.3l2.1 2.2h6.6c1.3 0 2.4 1.1 2.4 2.4v7.6c0 1.3-1.1 2.4-2.4 2.4H6c-1.3 0-2.4-1.1-2.4-2.4V7.2Z'),P('M12 10.6v5M9.5 13.1h5'))
+};
+function TouchGrid({T,onClose,actions,anchorBottom,center}){
+  const dark=isDarkTheme(T.id);
   return h('div',{style:{position:'fixed',inset:0,zIndex:75}},
-    h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:'rgba(0,0,0,.3)'}}),
+    h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:dark?'rgba(0,0,0,.45)':'rgba(0,0,0,.18)'}}),
     h('div',{className:'ppin',style:{position:'fixed',right:center?0:14,left:center?0:'auto',margin:center?'0 auto':0,transformOrigin:center?'bottom center':'bottom right',bottom:anchorBottom,
-      width:'min(78vw,300px)',background:'rgba(40,40,44,.92)',backdropFilter:'blur(22px)',WebkitBackdropFilter:'blur(22px)',
-      border:'1px solid rgba(255,255,255,.08)',borderRadius:24,padding:'16px 8px 12px',boxShadow:'0 16px 50px rgba(0,0,0,.5)',
-      display:'grid',gridTemplateColumns:'repeat(3,1fr)',gap:'2px'}},
-      actions.map((a,i)=>h('button',{key:i,onClick:()=>{onClose();a.onClick()},className:'act90 trt',
-        style:{display:'flex',flexDirection:'column',alignItems:'center',gap:6,padding:'10px 2px',color:'#fff'}},
-        h('span',{style:{width:46,height:46,borderRadius:'50%',background:'rgba(255,255,255,.15)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},a.icon),
-        h('span',{style:{fontSize:10.5,fontWeight:500,textAlign:'center',lineHeight:1.15,color:'rgba(255,255,255,.9)',maxWidth:74}},a.label)))));
+      width:'min(84vw,316px)',background:dark?'rgba(34,34,38,.86)':hexA(T.bg,.86),color:T.fg,backdropFilter:'saturate(180%) blur(28px)',WebkitBackdropFilter:'saturate(180%) blur(28px)',
+      border:'0.5px solid '+(dark?'rgba(255,255,255,.12)':'rgba(0,0,0,.08)'),borderRadius:26,padding:'14px 8px 10px',
+      boxShadow:'0 18px 50px rgba(0,0,0,'+(dark?.55:.18)+'), inset 0 0.5px 0 rgba(255,255,255,'+(dark?.08:.7)+')',
+      display:'grid',gridTemplateColumns:'repeat(3,1fr)',rowGap:4}},
+      actions.map((a,i)=>h('button',{key:i,onClick:()=>{onClose();a.onClick()},className:'act90 trt addtile',
+        style:{display:'flex',flexDirection:'column',alignItems:'center',gap:7,padding:'8px 2px',color:T.fg,animationDelay:(40+i*35)+'ms'}},
+        h('span',{style:{width:54,height:54,borderRadius:18,background:dark?'rgba(255,255,255,.09)':hexA(T.fg,.06),border:'0.5px solid '+(dark?'rgba(255,255,255,.08)':hexA(T.fg,.06)),
+          display:'flex',alignItems:'center',justifyContent:'center',color:T.fg}},a.icon),
+        h('span',{style:{fontSize:11.5,fontWeight:560,textAlign:'center',lineHeight:1.15,color:T.fg,opacity:.88,maxWidth:84}},a.label)))));
 }
 
 function PrimaryBtn({T,label,onClick,danger,disabled,style}){
@@ -8678,13 +8691,13 @@ function App(){
     addS?h(AddSheet,{T,folders:data.folders,prefill:addS.prefill,defaultFolder:scope.type==='folder'?scope.id:null,
       onSave:addByUrl,onSaveStub:saveStub,onClose:()=>setAddS(null)}):null,
 
-    sheet&&sheet.type==='plus'?h(TouchGrid,{onClose:()=>setSheet(null),center:showTabs,anchorBottom:showTabs?'calc('+(NAV_LIFT+(ttsUI?72:8))+'px + '+SAFE_B+')':'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
-      {icon:Icons.link(24),label:'Save a link',onClick:()=>setAddS({prefill:''})},
-      {icon:Icons.note(24),label:'Note to self',onClick:()=>setSheet({type:'quickNote'})},
-      {icon:Icons.camera(24),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
-      {icon:Icons.image(24),label:'Photo library',onClick:()=>pickFiles('image/*')},
-      {icon:Icons.file(24),label:'Upload files',onClick:()=>pickFiles('')},
-      {icon:Icons.folder(24),label:'New folder',onClick:()=>setSheet({type:'folder'})}
+    sheet&&sheet.type==='plus'?h(TouchGrid,{T,onClose:()=>setSheet(null),center:showTabs,anchorBottom:showTabs?'calc('+(NAV_LIFT+(ttsUI?72:8))+'px + '+SAFE_B+')':'calc('+(ttsUI?94:24)+'px + 70px + '+SAFE_B+')',actions:[
+      {icon:AddIcons.link(25),label:'Save a link',onClick:()=>setAddS({prefill:''})},
+      {icon:AddIcons.note(25),label:'Note to self',onClick:()=>setSheet({type:'quickNote'})},
+      {icon:AddIcons.camera(25),label:'Take photo',onClick:()=>pickFiles('image/*','environment')},
+      {icon:AddIcons.photos(25),label:'Photo library',onClick:()=>pickFiles('image/*')},
+      {icon:AddIcons.files(25),label:'Files & books',onClick:()=>pickFiles('')},
+      {icon:AddIcons.folder(25),label:'New folder',onClick:()=>setSheet({type:'folder'})}
     ]}):null,
 
     sheet&&sheet.type==='quickNote'?h(QuickNoteSheet,{T,onClose:()=>setSheet(null),onSave:saveQuickNote}):null,
