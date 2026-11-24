@@ -4735,7 +4735,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const frame=h('div',{'data-noswipe':'1',style:Object.assign(max?{position:'fixed',inset:0,zIndex:300,background:'#000',fontFamily:UIF}:{position:'relative',height:height||'min(66vh,600px)',borderRadius:embedded?0:18,overflow:'hidden',background:'#000',margin:embedded?0:'10px 0 4px'},hidden?{display:'none'}:{})},
     top,
     posts.length?h('div',{ref,onScroll,className:'sy',style:{position:'absolute',inset:0,overflowY:'auto',scrollSnapType:'y mandatory',overscrollBehavior:'contain'}},posts.map(slide))
-      :h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#bbb',fontSize:14,padding:30,textAlign:'center'}},'Nothing here yet — tap Refresh, or pick another group.'),
+      :h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#bbb',fontSize:14,padding:30,textAlign:'center'}},embedded?'Nothing new here today — tap Refresh, or pick another channel.':'Nothing here yet — tap Refresh, or pick another group.'),
     moreSheet);
   /* full screen lives on <body>, above the app's own header and + button */
   return max?ReactDOM.createPortal(frame,document.body):frame;
@@ -4842,13 +4842,21 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const [view,setViewS]=useState(()=>{try{return localStorage.getItem('insta_routine_view')||'today'}catch(e){return'today'}});
   const [rsrc,setRsrcS]=useState(()=>{try{return localStorage.getItem('insta_routine_src')||'youtube'}catch(e){return'youtube'}});
   const setRsrc=k=>{setRsrcS(k);try{localStorage.setItem('insta_routine_src',k)}catch(e){}};
-  const [mSrc,setMSrcS]=useState(()=>{try{return localStorage.getItem('insta_routine_msrc')||'all'}catch(e){return'all'}});
-  const setMSrc=k=>{setMSrcS(k);try{localStorage.setItem('insta_routine_msrc',k)}catch(e){}};
+  const setMSrc=k=>{setRsrc(k);setMSel(null)}; // Today and Manage share one selected app
   const [pday,setPday]=useState(null);const [filterOpen,setFilterOpen]=useState(false);
   const [ytPl,setYtPl]=useState(null); // YouTube playlist picker: {sel:[urls], link}
-  const visAll=items.filter(i=>!snoozedNow(i.id));
-  const mEff=mSrc!=='all'&&visAll.some(i=>srcOf(i)===mSrc)?mSrc:'all';
-  const vis=view==='today'||mEff==='all'?visAll:visAll.filter(i=>srcOf(i)===mEff);
+  const [todayAcct,setTodayAcct]=useState(null); // Today: one channel picked from the circles row
+  const [mSel,setMSel]=useState(null); // Manage: ids ticked in Select mode (null = off)
+  const [mDelAsk,setMDelAsk]=useState(false);
+  const lpRef=useRef({t:0,fired:false});
+  const visAll=items.filter(i=>!snoozedNow(i.id)&&srcOf(i)!=='web');
+  /* the apps you follow (Web is gone); the selected one drives Today, Manage and Past days */
+  const appList=SRC_DEF.filter(([k])=>k!=='web'&&visAll.some(it=>srcOf(it)===k));
+  const appK=appList.some(([k])=>k===rsrc)?rsrc:(appList[0]?appList[0][0]:'youtube');
+  const mEff=appK;
+  const vis=view==='today'?visAll:visAll.filter(i=>srcOf(i)===appK);
+  // once: Web sources are removed (you asked for Web to go)
+  useEffect(()=>{if(!brief.webRemovedV1)onBrief(b=>b.webRemovedV1?b:{...b,webRemovedV1:true,items:(b.items||[]).filter(it=>srcOf(it)!=='web')})},[brief.webRemovedV1]);
   const slots=(brief.slots&&brief.slots.length?brief.slots:BRIEF_SLOTS0).slice().sort((a,b)=>tmin(a.time)-tmin(b.time));
   // The clock has to tick: a PWA stays open for days, and without a re-render the
   // routine window never rolls over, so Catch-up would never sweep or refresh.
@@ -5193,7 +5201,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const unseenOf=list=>(list||[]).filter(e=>!seenMap[e.url]);
   const catchDays=useMemo(()=>{
     const byDay=new Map();
-    for(const entry of briefLog){
+    const appOf=li=>{const full=items.find(x=>x.id===li.id);return full?srcOf(full):(li.kind==='youtube'?'youtube':li.kind==='telegram'?'telegram':'web')};
+    for(const entry0 of briefLog){
+      // only the selected app's sources
+      const entry={...entry0,items:(entry0.items||[]).filter(li=>appOf(li)===appK)};if(!entry.items.length)continue;
       // Group by the day the routine window belongs to, not by the moment the
       // app noticed it: a Monday window swept on Wednesday is still Monday.
       const ets=entry.dayTs||entry.snapshotAt;
@@ -5208,7 +5219,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       d.total=d.entries.reduce((n,e)=>n+e.items.reduce((m,i)=>m+(i.entries||[]).length,0),0);
     }
     return days;
-  },[briefLog,seenMap]);
+  },[briefLog,seenMap,appK,items]);
   const missedTotal=catchDays.reduce((n,d)=>n+d.unseen,0);
   const curDay=(day==='_kept'&&kept.length)?'_kept':(catchDays.find(d=>d.key===day)||catchDays[0]||null);
   const isKept=url=>kept.some(k=>k.url===url);
@@ -5350,13 +5361,25 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     ungrouped.length?tabChip('_other','Other',{color:T.sub,n:groupNewCount(ungrouped)}):null,
     h('button',{onClick:()=>{setGName('');setGrp({})},className:'act90','aria-label':'New group',
       style:{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',width:34,height:34,borderRadius:17,border:'1px dashed '+T.hair,color:T.sub}},Icons.plus(15)));
-  const presentM=SRC_DEF.filter(([k])=>visAll.some(it=>srcOf(it)===k));
-  const srcRowM=presentM.length>1?h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:7,overflowX:'auto',padding:'6px 14px 2px'}},
-    [['all','All']].concat(presentM).map(([k,l])=>{const on=mEff===k;
-      return h('button',{key:k,onClick:()=>setMSrc(k),className:'act95','aria-pressed':on,style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:32,padding:'0 12px',borderRadius:16,fontSize:13,fontWeight:on?700:550,
-        background:on?T.fg:'transparent',color:on?T.bg:T.meta,border:'1px solid '+(on?T.fg:T.hair)}},
-        k!=='all'?h('span',{style:{display:'flex'}},SRC_ICON[k](14)):null,k==='x'?null:l,
-        h('span',{style:{fontSize:11,opacity:.55}},String(k==='all'?visAll.length:visAll.filter(it=>srcOf(it)===k).length)))})):null;
+  const appRowM=h('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'6px 14px 6px'}},
+    h('div',{className:'sx','data-noswipe':'1',style:{flex:1,minWidth:0,display:'flex',gap:7,overflowX:'auto'}},
+      appList.map(([k,l])=>{const on=appK===k;
+        return h('button',{key:k,onClick:()=>setMSrc(k),className:'act95','aria-pressed':on,'aria-label':l,style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:34,padding:'0 13px',borderRadius:17,fontSize:14,fontWeight:on?700:600,
+          background:on?T.fg:'transparent',color:on?T.bg:T.meta,border:'1px solid '+(on?T.fg:T.hair)}},
+          h('span',{style:{display:'flex'}},SRC_ICON[k](15)),k==='x'?null:l,
+          h('span',{style:{fontSize:11.5,opacity:.55,fontWeight:700}},String(visAll.filter(it=>srcOf(it)===k).length)))})),
+    h('button',{onClick:()=>setTabP(activeTab==='catchup'?'all':'catchup'),className:'act95','aria-label':'Past days','aria-pressed':activeTab==='catchup',
+      style:{position:'relative',flexShrink:0,width:34,height:34,borderRadius:17,display:'flex',alignItems:'center',justifyContent:'center',border:'1px solid '+(activeTab==='catchup'?T.fg:T.hair),background:activeTab==='catchup'?T.fg:'transparent',color:activeTab==='catchup'?T.bg:T.meta}},
+      Icons.clock(16),missedTotal&&activeTab!=='catchup'?h('span',{style:{position:'absolute',top:-5,right:-6,minWidth:18,height:18,padding:'0 5px',borderRadius:9,background:'#d62976',color:'#fff',fontSize:10.5,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center'}},missedTotal>99?'99+':String(missedTotal)):null));
+  const gChip=(id,label,n,fn,on)=>h('button',{key:id,onClick:fn,className:'act95','aria-pressed':!!on,style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:32,padding:'0 12px',borderRadius:9,fontSize:13.5,fontWeight:600,whiteSpace:'nowrap',
+    background:on?T.fg:T.card,color:on?T.bg:T.fg}},label,n!=null?h('span',{style:{fontSize:11.5,opacity:.55,fontWeight:700}},String(n)):null);
+  const groupRowM=h('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'2px 14px 8px'}},
+    h('div',{className:'sx','data-noswipe':'1',style:{flex:1,minWidth:0,display:'flex',gap:7,overflowX:'auto'}},
+      gChip('all','All',vis.length,()=>setTabP('all'),activeTab==='all'),
+      mGroups.map(g=>gChip(g.id,g.name,vis.filter(i=>i.groupId===g.id).length,()=>setTabP(g.id),activeTab===g.id)),
+      ungrouped.length&&mGroups.length?gChip('_other','Not in a group',ungrouped.length,()=>setTabP('_other'),activeTab==='_other'):null,
+      h('button',{onClick:()=>{setGName('');setGrp({})},className:'act95','aria-label':'New group',style:{flexShrink:0,width:32,height:32,borderRadius:9,display:'flex',alignItems:'center',justifyContent:'center',background:T.card,color:T.meta}},Icons.plus(15))),
+    h('button',{onClick:()=>setMSel(mSel?null:[]),className:'act95',style:{flexShrink:0,height:32,padding:'0 12px',borderRadius:9,fontSize:13.5,fontWeight:650,color:mSel?T.bg:T.accent,background:mSel?T.fg:hexA(T.accent,.12)}},mSel?'Cancel':'Select'));
   const focusOpts=[['new','New'],['completed','Done']]; /* tap again to show everything */
   const focusRow=(activeTab!=='catchup'&&tabList.length)?h('div',{className:'sx','data-noswipe':'1',style:{display:'flex',gap:6,overflowX:'auto',padding:'2px 14px 10px'}},
     focusOpts.map(([v,l])=>{const active=focus===v;
@@ -5456,6 +5479,56 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       h('div',{style:{fontSize:11.5,color:T.sub,lineHeight:1.5,margin:'10px 2px 0'}},'Missed updates are kept for 14 days. Pin anything you want to keep longer; opening an item marks it read.'));
   };
 
+  /* ---- Manage: a YouTube-Subscriptions-style list ----------------------------
+     App chips (+ 🕘 this app's past days) → group chips that filter → thin section
+     headers → rows: avatar, name, @handle · N new, a blue dot for new, chevron.
+     Tap a row for its actions; long-press (or Select) ticks several at once. */
+  const handleOf=it=>it.socialHandle?'@'+String(it.socialHandle).replace(/^@/,''):it.kind==='telegram'&&it.handle?'@'+it.handle
+    :(String(it.url||'').match(/youtube\.com\/(@[\w.\-]+)/)||[])[1]||(it.kind==='youtube'?'YouTube channel':domainOf(it.url||''));
+  const newOf=it=>hasFeed(it)&&!win.future?newEntries(it).length:0;
+  const flipSel=id=>setMSel(cur=>{const c=cur||[];return c.includes(id)?c.filter(x=>x!==id):c.concat([id])});
+  const setDoneMany=(ids,on)=>{if(!win.key){toastFn('No routine window is open right now');return}
+    onBrief(b=>{const map=normalizeDone(b.done);const cur=new Set(map[win.key]||[]);ids.forEach(id=>on?cur.add(id):cur.delete(id));map[win.key]=[...cur];return{...b,done:map}});
+    toastFn((on?'Marked done: ':'Marked not done: ')+ids.length);setMSel(null)};
+  const lpStart=it=>{lpRef.current.fired=false;clearTimeout(lpRef.current.t);lpRef.current.t=setTimeout(()=>{lpRef.current.fired=true;vibrate(10);setMSel(cur=>cur&&cur.includes(it.id)?cur:(cur||[]).concat([it.id]))},460)};
+  const lpEnd=()=>clearTimeout(lpRef.current.t);
+  const subRow=it=>{const n=newOf(it),done=doneIds.includes(it.id),selOn=!!(mSel&&mSel.includes(it.id));const nm=String(it.name||'Item');
+    return h('button',{key:it.id,onClick:()=>{if(lpRef.current.fired){lpRef.current.fired=false;return}mSel?flipSel(it.id):setAct(it)},
+      onTouchStart:()=>lpStart(it),onTouchEnd:lpEnd,onTouchMove:lpEnd,onContextMenu:e=>{e.preventDefault();setMSel(cur=>(cur||[]).includes(it.id)?cur:(cur||[]).concat([it.id]))},
+      className:'act98',style:{display:'flex',alignItems:'center',gap:13,width:'100%',textAlign:'left',padding:'9px 4px',color:T.fg,background:selOn?hexA(T.accent,.08):'transparent',borderRadius:12,WebkitTouchCallout:'none',userSelect:'none'}},
+      mSel?h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(selOn?T.accent:T.hair),background:selOn?T.accent:'transparent',color:'#fff'}},selOn?Icons.check(13):null):null,
+      h('span',{style:{position:'relative',width:46,height:46,borderRadius:23,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:groupColor(it.id),color:'#fff',fontSize:18,fontWeight:800,opacity:done?.55:1}},
+        nm.replace(/^@/,'').charAt(0).toUpperCase(),
+        h('span',{style:{position:'absolute',right:-3,bottom:-3,width:19,height:19,borderRadius:10,background:T.bg,display:'flex',alignItems:'center',justifyContent:'center'}},
+          h('span',{style:{display:'flex',color:done?'#2f9e44':T.meta}},done?Icons.checkCircle(17,true):(SRC_ICON[srcOf(it)]||SRC_ICON.web)(12)))),
+      h('span',{style:{flex:1,minWidth:0}},
+        h('span',{style:{display:'block',fontSize:15.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.6:1}},nm),
+        h('span',{style:{display:'block',fontSize:13,color:T.sub,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+          handleOf(it),n?h('span',{style:{color:T.accent,fontWeight:600}},' · '+n+' new'):null,done?' · Done':'')),
+      n&&!mSel?h('span',{style:{width:9,height:9,borderRadius:5,background:T.accent,flexShrink:0}}):null,
+      mSel?null:h('span',{style:{display:'flex',color:T.hair,flexShrink:0}},Icons.chevR(15)))};
+  const secHead=(g,list)=>{const key=g?g.id:'_other';
+    return h('div',{key:'h'+key,style:{position:'sticky',top:0,zIndex:2,background:T.bg,display:'flex',alignItems:'center',gap:8,padding:'14px 4px 7px',borderBottom:'1px solid '+T.hair,marginBottom:2}},
+      h('span',{style:{flex:1,minWidth:0,fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(g?g.name:'Not in a group')+'  ·  '+list.length),
+      shortsBtn(key),
+      mSel?null:h('button',{onClick:()=>{const pp=(g&&g.platform)||mPlat;setEdit({groupId:g?g.id:null,kind:pp?(pp==='telegram'?'telegram':'social'):'youtube',platform:pp&&pp!=='telegram'?pp:undefined,name:'',url:''})},className:'act90','aria-label':'Add to '+(g?g.name:'this app'),style:{display:'flex',color:T.accent,padding:4}},Icons.plus(17)),
+      g&&!mSel?h('button',{onClick:()=>setManage(true),className:'act95',style:{fontSize:13,fontWeight:600,color:T.accent,padding:'2px 2px'}},'Edit'):null)};
+  const subsView=()=>{
+    const sections=activeTab==='all'?mGroups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)})).filter(x=>x.list.length).concat(ungrouped.length?[{g:null,list:ungrouped}]:[])
+      :activeTab==='_other'?[{g:null,list:ungrouped}]:[{g:mGroups.find(x=>x.id===activeTab)||null,list:tabList}];
+    const shown=sections.map(({g,list})=>({g,list:list.filter(matchQ)})).filter(x=>x.list.length||!q);
+    if(!shown.length)return h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},q?'Nothing matches “'+query.trim()+'”.':'No accounts here yet.');
+    return h('div',null,shown.map(({g,list})=>{const key=g?g.id:'_other';
+      return h('div',{key,style:{marginBottom:6}},secHead(g,list),shorts&&!shorts.max?shortsEl(key):null,
+        list.length?list.map(subRow):h('div',{style:{fontSize:13.5,color:T.sub,padding:'14px 4px'}},'No accounts in this group yet — tap + to add one.'))}));
+  };
+  const selBar=mSel?h('div',{className:'fdin',style:{position:'fixed',left:12,right:12,bottom:'calc('+(NAV_LIFT+8)+'px + '+SAFE_B+')',zIndex:45,background:T.sheet,border:'1px solid '+T.hair,borderRadius:18,boxShadow:'0 10px 34px rgba(0,0,0,.18)',padding:'10px 10px 10px 14px',display:'flex',alignItems:'center',gap:6}},
+    h('span',{style:{flex:1,minWidth:0,fontSize:14,fontWeight:650,color:T.fg}},mSel.length+' selected'),
+    h('button',{onClick:()=>{const all=vis.filter(matchQ).map(i=>i.id);setMSel(mSel.length===all.length?[]:all)},className:'act95',style:{fontSize:13,fontWeight:600,color:T.accent,padding:'8px 6px'}},mSel.length&&mSel.length===vis.filter(matchQ).length?'None':'All'),
+    h('button',{disabled:!mSel.length,onClick:()=>setDoneMany(mSel,true),className:'act95',style:{padding:'8px 11px',borderRadius:12,background:T.card,color:T.fg,fontSize:13,fontWeight:650,opacity:mSel.length?1:.4}},'Done'),
+    h('button',{disabled:!mSel.length,onClick:()=>setDoneMany(mSel,false),className:'act95',style:{padding:'8px 11px',borderRadius:12,background:T.card,color:T.fg,fontSize:13,fontWeight:650,opacity:mSel.length?1:.4}},'Not done'),
+    h('button',{disabled:!mSel.length,onClick:()=>setMDelAsk(true),className:'act95','aria-label':'Delete selected',style:{display:'flex',padding:'8px 9px',borderRadius:12,background:hexA(T.danger,.12),color:T.danger,opacity:mSel.length?1:.4}},Icons.trash(17))):null;
+
   /* ---- routine list views ---------------------------------------------- */
   const allView=()=>{
     const sections=mGroups.map(g=>({g,list:vis.filter(i=>i.groupId===g.id)}));
@@ -5488,7 +5561,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       flist.length?flist.map(itemRow)
         :h('div',{style:{fontSize:13.5,color:T.sub,padding:'16px 4px',lineHeight:1.5}},
           tabList.length?'Nothing matches this filter.':'No channels or sites in this group yet.'),
-      h('button',{onClick:()=>setEdit({groupId:gid,kind:'link',name:'',url:''}),className:'act98',
+      h('button',{onClick:()=>setEdit({groupId:gid,kind:mPlat?(mPlat==='telegram'?'telegram':'social'):'youtube',platform:mPlat&&mPlat!=='telegram'?mPlat:undefined,name:'',url:''}),className:'act98',
         style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',marginTop:10,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.accent,fontSize:13.5,fontWeight:600}},
         Icons.plus(17),'Add to '+(g?g.name:'Other')));
   };
@@ -5523,13 +5596,14 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     onTool:vtool,txOf,onOpen:p=>openEntry(p.e),onClose:()=>setPlaylist(null),onPaper:onMakePaper?()=>onMakePaper(playlist):null}):null;
   if(view==='today'){
     /* One row of source chips (only sources you follow, each with its New count) · ☰ group & day filter · ⋯ */
-    const presentSrcs=SRC_DEF.filter(([k])=>visAll.some(it=>srcOf(it)===k));
-    const srcK=presentSrcs.some(([k])=>k===rsrc)?rsrc:(presentSrcs[0]?presentSrcs[0][0]:'youtube');
-    const grp=todayTab==='_other'||groups.some(x=>x.id===todayTab)?todayTab:'all';
+    const presentSrcs=appList;
+    const srcK=appK;
+    const grp='all'; // Today filters by account (circles), not by group
+    const acct=todayAcct&&visAll.some(it=>it.id===todayAcct&&srcOf(it)===srcK)?todayAcct:null;
     const dayObj=pday?(catchDays.find(d=>d.key===pday)||null):null;
     const inGrp=it=>grp==='all'||(grp==='_other'?(!it.groupId||!groups.some(x=>x.id===it.groupId)):it.groupId===grp);
     const todayAll=todayPosts('all').filter(p=>!p.card);
-    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it))
+    const posts=(dayObj?earlierPosts(dayObj):todayAll).filter(p=>srcOf(p.it)===srcK&&inGrp(p.it)&&(!acct||p.it.id===acct))
       .map((p,i)=>[p,i]).sort((a,b)=>(isShortEntry(a[0].e)-isShortEntry(b[0].e))||(a[1]-b[1])).map(x=>x[0]);
     const srcNew=k=>todayAll.filter(p=>p.isNew&&srcOf(p.it)===k).length;
     const isSocSrc=!['youtube','web'].includes(srcK);
@@ -5543,15 +5617,21 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       return h('button',{key:k,onClick:()=>setRsrc(k),'aria-pressed':on,'aria-label':l+(n?', '+n+' new':''),title:l,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:34,padding:named?'0 13px':'0 12px',borderRadius:17,fontSize:14,fontWeight:700},
         on?{background:'#fff',color:'#000',border:'1px solid #fff'}:{})},h('span',{style:{display:'flex'}},SRC_ICON[k](15)),named?l:null,
         n?h('span',{style:{fontSize:11.5,fontWeight:700,opacity:.6}},n>99?'99+':n):null)};
-    /* second row: All · each group (with its New count for this source) · 🕘 past days */
+    /* YouTube: a story-style row of channel circles under the app chips — gradient ring = new videos;
+       tap one to see only that channel, tap it again (or All) for everything. Social apps show their own. */
     const inDay=dayObj?earlierPosts(dayObj):todayAll;
-    const grpNew=g=>inDay.filter(p=>p.isNew&&srcOf(p.it)===srcK&&(g==='all'||(g==='_other'?(!p.it.groupId||!groups.some(x=>x.id===p.it.groupId)):p.it.groupId===g))).length;
-    const rowGroups=groups.filter(x=>visAll.some(it=>it.groupId===x.id&&srcOf(it)===srcK));
-    const rowOther=groups.length>0&&visAll.some(it=>srcOf(it)===srcK&&(!it.groupId||!groups.some(x=>x.id===it.groupId)));
-    const grpChip=(id,label,dot)=>{const on=grp===id;const n=id==='all'?0:grpNew(id);
-      return h('button',{key:id,onClick:()=>setTodayTab(id),'aria-pressed':on,className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:30,padding:'0 12px',borderRadius:15,fontSize:13,fontWeight:650},
-        on?{background:'rgba(255,255,255,.9)',color:'#000',border:'1px solid transparent'}:{})},
-        dot?h('span',{style:{width:7,height:7,borderRadius:4,background:dot,flexShrink:0}}):null,label,n?h('span',{style:{opacity:.6,fontWeight:700}},n>99?'99+':n):null)};
+    const chNew=id=>inDay.filter(p=>p.isNew&&p.it.id===id).length;
+    const channels=!isSocSrc?visAll.filter(it=>srcOf(it)===srcK).map(it=>({it,n:chNew(it.id)}))
+      .sort((a,b)=>(b.n-a.n)||String(a.it.name||'').localeCompare(String(b.it.name||''))):[];
+    const IG_RING='conic-gradient(from 210deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)';
+    const circ=(key,label,inner,bg,ring,on,fn)=>h('button',{key,onClick:fn,'aria-pressed':on,'aria-label':label,className:'act95',style:{flexShrink:0,width:66,display:'flex',flexDirection:'column',alignItems:'center',gap:5,color:'#fff'}},
+      h('span',{style:{display:'block',width:58,height:58,borderRadius:29,padding:2.5,background:ring?IG_RING:'rgba(255,255,255,.26)',boxShadow:on?'0 0 0 2px #fff':'none',transition:'box-shadow 160ms'}},
+        h('span',{style:{display:'flex',width:'100%',height:'100%',borderRadius:'50%',border:'2.5px solid #000',alignItems:'center',justifyContent:'center',background:bg,fontWeight:800,fontSize:20,color:'#fff'}},inner)),
+      h('span',{style:{fontSize:11,lineHeight:1.15,maxWidth:66,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',fontWeight:on?700:500,opacity:on||!acct?1:.62}},label));
+    const chName=it=>String(it.name||'Channel').replace(/\s*·\s*YouTube$/i,'');
+    const circlesRow=channels.length?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 10px 0',pointerEvents:'auto'}},
+      circ('_all','All',Icons.play(20,true),'#1c1c1f',!acct&&channels.some(c=>c.n),!acct,()=>setTodayAcct(null)),
+      channels.map(({it,n})=>circ(it.id,chName(it),chName(it).charAt(0).toUpperCase(),groupColor(it.id),n>0,acct===it.id,()=>setTodayAcct(acct===it.id?null:it.id)))):null;
     const totalNew=todayAll.filter(p=>p.isNew).length;
     const bad=(failN||proxyDown)&&!refreshing;
     const statusLow=statusText.charAt(0).toLowerCase()+statusText.slice(1);
@@ -5564,15 +5644,15 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       if(p==='telegram'){const t=tgHandle(it.url||'')||hh;if(!t){toastFn('Couldn’t read this channel’s name');return}return linkFeed(it,{kind:'telegram',handle:t,platform:'telegram'})}
       const P=SOCIAL[p];const f=P&&P.feed&&hh?P.feed(hh):'';if(!f){toastFn('This account needs a feed link');return}
       return linkFeed(it,{kind:'rss',feedUrl:f,platform:p,socialHandle:hh})};
-    const padTop=124;
+    const padTop=circlesRow?176:92;
     const layer=h('div',{'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},
       isSocSrc&&SOC?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',
         platform:srcK,isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),
         onProfile:it=>openExternalUrl(it.url),onSetFeed:(it,url)=>linkFeed(it,{kind:'rss',feedUrl:url}),onAutoFeed:autoFeed,
         notesOf:url=>(brief.notes||{})[url]||'',onNote:(url,t)=>onBrief(b=>{const n=Object.assign({},b.notes||{});if(t)n[url]=t;else delete n[url];return{...b,notes:n}}),
         emptyHint:dayObj?'Nothing from these accounts that day.':'No new posts today.'}):
-      h(RoutineShorts,{key:'today-'+srcK+grp+(dayObj?dayObj.key:''),T,title:dayObj?dayObj.label:'Today',color:T.accent,
-        posts,max:false,embedded:true,header:false,height:'100%',padTop:padTop+46,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
+      h(RoutineShorts,{key:'today-'+srcK+(acct||'')+(dayObj?dayObj.key:''),T,title:dayObj?dayObj.label:'Today',color:T.accent,
+        posts,max:false,embedded:true,header:false,height:'100%',padTop:padTop,padBottom:'calc('+NAV_LIFT+'px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
         isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
       h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(10px + '+SAFE_T+') 0 16px',background:'linear-gradient(to bottom,rgba(0,0,0,.8),rgba(0,0,0,.45) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
@@ -5585,14 +5665,13 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
           refreshing?h('span',{style:{display:'flex',color:'#fff',animation:'spk 900ms linear infinite',flexShrink:0,marginLeft:6}},Icons.refresh(14)):null,
           h('div',{style:{flex:1}}),
           h('button',{onClick:()=>setTodayMenu(true),'aria-label':'Routine menu',className:'act90',style:{display:'flex',alignItems:'center',justifyContent:'center',width:36,height:26,color:'rgba(255,255,255,.75)',flexShrink:0}},Icons.dots(19))),
-        h('div',{className:'sx',style:{display:'flex',gap:7,overflowX:'auto',padding:'0 12px',pointerEvents:'auto'}},
-          presentSrcs.length?presentSrcs.map(srcChip):h('span',{style:{color:'#fff',fontSize:14,fontWeight:600,padding:'8px 4px'}},'My Routine')),
-        h('div',{className:'sx',style:{display:'flex',gap:7,overflowX:'auto',padding:'8px 12px 0',pointerEvents:'auto'}},
-          grpChip('all','All'),
-          rowGroups.map(x=>grpChip(x.id,x.name,groupColor(x.id))),
-          rowOther?grpChip('_other','Other','rgba(255,255,255,.5)'):null,
-          h('button',{onClick:()=>setFilterOpen(true),'aria-label':dayObj?'Day: '+dayObj.label:'Past days',className:'act95',style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',gap:6,height:30,padding:dayObj?'0 12px 0 10px':'0 10px',borderRadius:15,fontSize:13,fontWeight:650},
-            dayObj?{background:'rgba(255,255,255,.9)',color:'#000',border:'1px solid transparent'}:{})},Icons.clock(15),dayObj?dayObj.label:null))));
+        h('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'0 12px',pointerEvents:'auto'}},
+          h('div',{className:'sx',style:{flex:1,minWidth:0,display:'flex',gap:7,overflowX:'auto'}},
+            presentSrcs.length?presentSrcs.map(srcChip):h('span',{style:{color:'#fff',fontSize:14,fontWeight:600,padding:'8px 4px'}},'My Routine')),
+          h('button',{onClick:()=>setFilterOpen(true),'aria-label':dayObj?'Day: '+dayObj.label:'Past days',className:'act95',style:Object.assign({},glass,{position:'relative',flexShrink:0,display:'flex',alignItems:'center',gap:6,height:34,padding:dayObj?'0 12px 0 10px':'0 9px',borderRadius:17,fontSize:13,fontWeight:650},
+            dayObj?{background:'#fff',color:'#000',border:'1px solid #fff'}:{})},Icons.clock(16),dayObj?dayObj.label:null,
+            !dayObj&&missedTotal?h('span',{style:{position:'absolute',top:-5,right:-5,minWidth:18,height:18,padding:'0 5px',borderRadius:9,background:'#d62976',color:'#fff',fontSize:10.5,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center'}},missedTotal>99?'99+':missedTotal):null)),
+        circlesRow));
     /* ☰ — which group and which day */
     const fRow=(label,sub,on,fn,dot,key)=>h('button',{key,onClick:fn,className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'12px 20px',color:T.fg,borderBottom:'1px solid '+T.hair}},
       dot?h('span',{style:{width:8,height:8,borderRadius:4,background:dot,flexShrink:0}}):null,
@@ -5672,24 +5751,22 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       iconBtn(Icons.search(19),toggleSearch,'Search',{active:searchOpen}),
       iconBtn(aiBusy?h(Spinner,{T,size:16}):Icons.ai(19),runDigest,'Summarize what’s new',{badge:newCount>0?(newCount>99?'99+':String(newCount)):'',disabled:aiBusy}),
       iconBtn(Icons.dots(20),()=>setMoreOpen(true),'More')),
-    srcRowM,
-    (storiesOn&&(total||briefLog.length||kept.length))?storyRow:null,
+    appRowM,
+    ((total||briefLog.length||kept.length)&&activeTab!=='catchup')?groupRowM:null,
     (total||briefLog.length||kept.length)?refreshBar:null,
     fixRow,
-    focusRow,
     searchRow,
     /* Rail and content sit side by side: the rail scrolls (and sticks) on its
        own, the pane beside it holds whichever tab is selected. With nothing
        set up at all there is no rail to show — just the empty state. */
     (total||briefLog.length||kept.length)
       ?h('div',Object.assign({},swipeH,{style:{display:'flex',alignItems:'flex-start',gap:9,padding:'2px 12px 0'}}),
-        storiesOn?null:rail,
         h('div',{style:{flex:1,minWidth:0}},
           activeTab!=='catchup'&&win.future?h('div',{style:{fontSize:13,color:T.sub,padding:'10px 2px',lineHeight:1.5}},'This routine begins at '+fmtClock(curSlot.time)+'. New content since your last check will appear here then.'):null,
           activeTab==='catchup'?catchupView()
-            :total?(activeTab==='all'?allView():groupView())
+            :total?subsView()
             :h('div',{style:{fontSize:13.5,color:T.sub,padding:'16px 2px',lineHeight:1.5}},'No channels or sites yet — tap + Group to start one, then add sources to it.'),
-          h('div',{style:{height:'calc(96px + '+SAFE_B+')'}}))) // clears the floating + button
+          h('div',{style:{height:'calc('+(mSel?170:96)+'px + '+SAFE_B+')'}}))) // clears the floating + button (and the Select bar)
       :h('div',{style:{padding:'2px 14px 0'}},
         h(EmptyState,{T,icon:Icons.sun(40),title:'My Routine',sub:'Group the social apps, websites and YouTube channels you go through each day, then check them off.'}),
         h('div',{style:{height:'calc(24px + '+SAFE_B+')'}})),
@@ -5744,6 +5821,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('button',{onClick:()=>{setManage(false);setGName('');setGrp({})},className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:4,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'New group'),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:14,lineHeight:1.5}},'Deleting a group keeps its channels — they move to "Other".'))):null,
 
+    selBar,
+    mDelAsk&&mSel&&mSel.length?h(Sheet,{T,title:'Delete '+mSel.length+' source'+(mSel.length===1?'':'s')+'?',onClose:()=>setMDelAsk(false)},
+      h('div',{style:{padding:'2px 20px 18px'}},
+        h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.5,marginBottom:14}},mSel.map(id=>(items.find(x=>x.id===id)||{}).name).filter(Boolean).slice(0,6).join(', ')+(mSel.length>6?' and '+(mSel.length-6)+' more':'')+'. Their saved posts go too.'),
+        h('button',{onClick:()=>{const ids=mSel;onBrief(b=>{const fd=Object.assign({},b.feeds);ids.forEach(id=>delete fd[id]);return{...b,items:b.items.filter(x=>!ids.includes(x.id)),feeds:fd}});setMDelAsk(false);setMSel(null);toastFn('Deleted '+ids.length)},className:'act96',
+          style:{width:'100%',padding:'13px',borderRadius:11,background:T.danger,color:'#fff',fontSize:15,fontWeight:650}},'Delete'))):null,
     slotSheet?slotSheetEl():null,
 
     act?h(Sheet,{T,onClose:()=>setAct(null)},
@@ -5774,7 +5857,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     edit?h(Sheet,{T,title:edit.id?'Edit item':'Add item',onClose:()=>setEdit(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
         h('div',{style:{display:'flex',flexWrap:'wrap',gap:6,marginBottom:12}},
-          [['link','Site / app'],['youtube','YouTube'],['telegram','Telegram'],['rss','RSS / News'],['social','Social']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
+          [['youtube','YouTube'],['social','Social'],['telegram','Telegram']].map(([k,lbl])=>h('button',{key:k,onClick:()=>setEdit({...edit,kind:k}),className:'act95',style:{flex:'1 0 auto',padding:'9px 10px',borderRadius:10,fontSize:13,fontWeight:600,border:'1px solid '+(edit.kind===k?T.accent:T.hair),color:edit.kind===k?T.accent:T.sub,background:edit.kind===k?T.card:'transparent'}},lbl))),
         edit.kind==='social'?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginBottom:12}},
           Object.keys(SOCIAL).map(p=>{const on=(edit.platform||'instagram')===p;return h('button',{key:p,onClick:()=>setEdit({...edit,platform:p}),className:'act95',
             style:{flexShrink:0,display:'flex',alignItems:'center',gap:6,padding:'7px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:on?SOCIAL[p].c:'transparent',color:on?'#fff':T.fg,border:'1px solid '+(on?SOCIAL[p].c:T.hair)}},SOCIAL[p].label)})):null,
