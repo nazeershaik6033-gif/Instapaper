@@ -21,12 +21,14 @@ function bdb(){
       if(!db.objectStoreNames.contains('files'))db.createObjectStore('files',{keyPath:'id'});
       if(!db.objectStoreNames.contains('parsed'))db.createObjectStore('parsed',{keyPath:'id'});
     };
-    r.onsuccess=e=>res(e.target.result);r.onerror=()=>rej(r.error);
+    r.onsuccess=e=>{const db=e.target.result;db.onclose=db.onversionchange=()=>{_db=null;try{db.close()}catch(x){}};res(db)};r.onerror=()=>{_db=null;rej(r.error)};
   });
   return _db;
 }
-function tx(store,mode,fn){return bdb().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,mode);let out;const r=fn(t.objectStore(store));
+/* iOS can drop the connection of a backgrounded app; a closed connection reopens once */
+function tx1(store,mode,fn){return bdb().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,mode);let out;const r=fn(t.objectStore(store));
   if(r)r.onsuccess=()=>{out=r.result};t.oncomplete=()=>res(out);t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)}))}
+function tx(store,mode,fn){return tx1(store,mode,fn).catch(e=>{if(e&&e.name==='InvalidStateError'){_db=null;return tx1(store,mode,fn)}throw e})}
 const dbAll=s=>tx(s,'readonly',st=>st.getAll());
 const dbGet=(s,id)=>tx(s,'readonly',st=>st.get(id));
 const dbPut=(s,v)=>tx(s,'readwrite',st=>st.put(v));
