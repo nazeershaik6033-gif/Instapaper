@@ -3754,6 +3754,7 @@ function ThreadDetail({T,S,thread,feedCache,media,articles,onBack,onPatch,onEdit
    pills, then large rounded image cards (category, bold title, date). The latest post leads as a
    featured card; the rest sit in a two-column grid. Feed management lives behind "Manage". */
 const BLOG_COVERS=[['#c9d6df','#52616b'],['#f6d5c3','#b0563d'],['#d7e3d0','#4f6f52'],['#e5dcf3','#6a4c93'],['#f3e3c3','#a0742c'],['#cfe0ef','#2f5d8a'],['#efd3d7','#8e4552'],['#dfe7e2','#355c56']];
+const BLOG_SAVED='_saved'; // the Blogs entry that holds posts you saved, each with a label
 function blogCover(name){let x=0;for(const c of String(name||''))x=(x*31+c.charCodeAt(0))>>>0;return BLOG_COVERS[x%BLOG_COVERS.length]}
 function BlogCover({e,name,site,ratio,radius,big}){
   const [bad,setBad]=useState(false);
@@ -3768,36 +3769,41 @@ function BlogCover({e,name,site,ratio,radius,big}){
 }
 const blogDate=ms=>{if(!ms)return'';const d=Date.now()-ms;if(d<3600000)return Math.max(1,Math.round(d/60000))+' min ago';if(d<86400000)return Math.round(d/3600000)+'h ago';
   return new Date(ms).toLocaleDateString([],{month:'short',day:'numeric',year:new Date(ms).getFullYear()===new Date().getFullYear()?undefined:'numeric'})};
-function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMarkAll,lastFetch,toastFn}){
+function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMarkAll,lastFetch,toastFn,onUnsave}){
   const [cat,setCat]=useState(()=>{try{return localStorage.getItem('insta_blogs_cat')||'all'}catch(e){return'all'}});
   const [shown,setShown]=useState(13);
   const pick=c=>{setCat(c);setShown(13);try{localStorage.setItem('insta_blogs_cat',c)}catch(e){}};
   useEffect(()=>{const f=()=>pick('books');window.addEventListener('insta-books-show',f);return()=>window.removeEventListener('insta-books-show',f)},[]);
+  useEffect(()=>{const f=e=>e&&e.detail&&pick(e.detail);window.addEventListener('insta-blogs-cat',f);return()=>window.removeEventListener('insta-blogs-cat',f)},[]);
   const books=window.InstaBooks?window.InstaBooks.useBooks():null;
   const gName=id=>{const g=groups.find(x=>x.id===id);return g?g.name:''};
+  /* chips: New (unread posts from blogs you follow) · Books · each of your labels (posts you saved) */
   const posts=[];
   for(const f of feeds){
-    if(!f.feedUrl)continue;const c=blogFeeds[f.id];if(!c||!c.entries)continue;
+    const c=blogFeeds[f.id];if(!c||!c.entries)continue;
+    if(f.id===BLOG_SAVED){for(const e of c.entries)posts.push({e,f,saved:true,isNew:false,group:'lbl:'+(e.label||'Saved')});continue}
+    if(!f.feedUrl)continue;
     const since=seen[f.id]||0;
-    for(const e of c.entries)posts.push({e,f,isNew:e.publishedMs>since,group:f.groupId&&groups.some(g=>g.id===f.groupId)?f.groupId:'_other'});
+    for(const e of c.entries)posts.push({e,f,isNew:e.publishedMs>since,group:'feed'});
   }
   posts.sort((a,b)=>(b.e.publishedMs||0)-(a.e.publishedMs||0));
   const newN=posts.filter(p=>p.isNew).length;
-  const cats=[['all','All posts'],window.InstaBooks?['books','Books'+(books&&books.length?' · '+books.length:'')]:null,newN?['new','New · '+newN]:null].filter(Boolean)
-    .concat(groups.filter(g=>posts.some(p=>p.group===g.id)).map(g=>[g.id,g.name]))
-    .concat(posts.some(p=>p.group==='_other')&&groups.length?[['_other','Other']]:[]);
-  const cur=cats.some(c=>c[0]===cat)?cat:'all';
+  const labels=[...new Set(posts.filter(p=>p.saved).map(p=>p.e.label||'Saved'))];
+  const cats=[['new','New · '+newN],window.InstaBooks?['books','Books'+(books&&books.length?' · '+books.length:'')]:null].filter(Boolean)
+    .concat(labels.map(l=>['lbl:'+l,l+' · '+posts.filter(p=>p.group==='lbl:'+l).length]));
+  const cur=cats.some(c=>c[0]===cat)?cat:'new';
   const q=String(query||'').trim().toLowerCase();
-  const list=posts.filter(p=>(cur==='all'||(cur==='new'?p.isNew:p.group===cur))&&(!q||(p.e.title||'').toLowerCase().includes(q)||p.f.name.toLowerCase().includes(q)||(p.e.excerpt||'').toLowerCase().includes(q)));
+  const list=posts.filter(p=>(cur==='new'?p.isNew:p.group===cur)&&(!q||(p.e.title||'').toLowerCase().includes(q)||p.f.name.toLowerCase().includes(q)||(p.e.excerpt||'').toLowerCase().includes(q)));
   const loading=feeds.some(f=>f.feedUrl&&!(blogFeeds[f.id]&&blogFeeds[f.id].entries));
-  const label=p=>p.f.name;
+  const label=p=>p.saved?(p.e.author||domainOf(p.e.url)||'Saved'):p.f.name;
   const openP=p=>onOpen({title:p.e.title,url:p.e.url,source:p.f.name,publishedAt:p.e.publishedMs});
   const meta=p=>h('div',{style:{display:'flex',alignItems:'center',gap:6,fontSize:11.5,color:T.sub,marginTop:6}},
     p.isNew?h('span',{style:{width:6,height:6,borderRadius:3,background:'#d4564a',flexShrink:0}}):null,
     h('span',null,blogDate(p.e.publishedMs)),p.e.author?h('span',{style:{overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'· '+p.e.author):null,
-    busyUrl===p.e.url?h(Spinner,{T,size:11}):null);
+    busyUrl===p.e.url?h(Spinner,{T,size:11}):null,
+    p.saved&&onUnsave?h('span',{role:'button',onClick:ev=>{ev.stopPropagation();onUnsave(p.e.url)},style:{marginLeft:'auto',color:T.sub,fontWeight:600,padding:'2px 4px'}},'Remove'):null);
   const card=p=>h('button',{key:p.e.url,onClick:()=>openP(p),className:'act98',style:{display:'block',width:'100%',textAlign:'left',color:T.fg,minWidth:0}},
-    h(BlogCover,{e:p.e,name:p.f.name,site:p.f.site,ratio:'78%'}),
+    h(BlogCover,{e:p.e,name:p.saved?(p.e.label||'Saved'):p.f.name,site:p.f.site,ratio:'78%'}),
     h('div',{style:{fontSize:11.5,color:T.sub,marginTop:9,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},label(p)),
     h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,letterSpacing:'-.01em',marginTop:3,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},p.e.title),
     meta(p));
@@ -3823,7 +3829,7 @@ function BlogsMagazine({T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen,onMar
     loading&&!posts.length?h('div',{style:{display:'flex',alignItems:'center',justifyContent:'center',gap:10,color:T.sub,fontSize:13.5,padding:'30px 0'}},h(Spinner,{T,size:16}),'Fetching the latest posts…'):null,
     !loading&&!list.length?h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'30px 10px'}},q?'No posts match “'+query.trim()+'”.':cur==='new'?'Nothing new — you’re all caught up.':'No posts yet. Add blogs under Manage.'):null,
     lead?h('button',{onClick:()=>openP(lead),className:'act98',style:{display:'block',width:'100%',textAlign:'left',color:T.fg,marginBottom:22}},
-      h(BlogCover,{e:lead.e,name:lead.f.name,site:lead.f.site,ratio:'62%',radius:20,big:true}),
+      h(BlogCover,{e:lead.e,name:lead.saved?(lead.e.label||'Saved'):lead.f.name,site:lead.f.site,ratio:'62%',radius:20,big:true}),
       h('div',{style:{display:'flex',alignItems:'center',gap:8,marginTop:12}},
         h('span',{style:{fontSize:11,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',color:T.accent}},'Latest'),
         h('span',{style:{fontSize:12,color:T.sub}},label(lead))),
@@ -3878,7 +3884,8 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   /* Shared from another app: the iPhone shortcut "Send to Instapaper Blogs" copies the link; Paste reads it
      and asks: follow that blog, or keep just this post (under "Saved posts"). */
   const [shared,setShared]=useState(null); // {url,title,image,excerpt,loading} | {help:true}
-  const SAVED_FEED='_saved';
+  const SAVED_FEED=BLOG_SAVED;
+  const savedLabels=[...new Set(((blogFeeds[SAVED_FEED]||{}).entries||[]).map(e=>e.label||'Saved'))];
   /* iPhone Shortcuts' "Copy to Clipboard" with a URL puts a *URL* on the clipboard, not plain text, and
      readText() alone sees nothing — so read every type (uri-list, plain, html) before giving up. */
   const readClip=async()=>{
@@ -3902,12 +3909,14 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     setShared({manual:true,denied:r.denied,types:r.types,err:r.err,draft:''}); // couldn't read it: a box to paste into by hand
   };
   const followShared=u=>{let site=u;try{site=new URL(u).origin+'/'}catch(e){}setShared(null);setEdit({groupId:null,name:'',url:site,fromShare:true})};
-  const saveSharedPost=x=>{const u=x.url;
+  const saveSharedPost=(x,label)=>{const u=x.url;const lb=String(label||'Saved').trim()||'Saved';
     onFeeds(list=>list.some(f=>f.id===SAVED_FEED)?list:list.concat([{id:SAVED_FEED,name:'Saved posts',site:'',feedUrl:'',groupId:null}]));
     onBlogFeeds(m=>{const cur=(m[SAVED_FEED]&&m[SAVED_FEED].entries)||[];
-      const e={url:u,title:x.title||domainOf(u)||u,publishedMs:Date.now(),excerpt:x.excerpt||'',image:x.image||'',author:domainOf(u)};
+      const e={url:u,title:x.title||domainOf(u)||u,publishedMs:Date.now(),excerpt:x.excerpt||'',image:x.image||'',author:domainOf(u),label:lb};
       return{...m,[SAVED_FEED]:{fetchedAt:Date.now(),entries:[e].concat(cur.filter(y=>y.url!==u))}}});
-    setShared(null);toastFn('Saved to Blogs — under “Saved posts”')};
+    setShared(null);try{localStorage.setItem('insta_blogs_cat','lbl:'+lb)}catch(e){}setMode('mag');
+    setTimeout(()=>{try{window.dispatchEvent(new CustomEvent('insta-blogs-cat',{detail:'lbl:'+lb}))}catch(e){}},60);toastFn('Saved under “'+lb+'”')};
+  const unsavePost=u=>onBlogFeeds(m=>{const cur=(m[SAVED_FEED]&&m[SAVED_FEED].entries)||[];return{...m,[SAVED_FEED]:{fetchedAt:Date.now(),entries:cur.filter(y=>y.url!==u)}}});
   const [moveIt,setMoveIt]=useState(null); // feed being moved to a group
   const [grp,setGrp]=useState(null); // {} new | {rename:id}
   const [gName,setGName]=useState('');
@@ -4004,8 +4013,8 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   const totalNew=feeds.reduce((n,f)=>n+(f.feedUrl?newEntriesFor(f).length:0),0);
   const q=query.trim().toLowerCase();
   const matchQ=f=>!q||f.name.toLowerCase().includes(q);
-  const sections=groups.map(g=>({g,list:feeds.filter(f=>f.groupId===g.id)}));
-  const ungrouped=feeds.filter(f=>!f.groupId||!groups.some(g=>g.id===f.groupId));
+  const sections=groups.map(g=>({g,list:feeds.filter(f=>f.groupId===g.id&&f.id!==BLOG_SAVED)}));
+  const ungrouped=feeds.filter(f=>f.id!==BLOG_SAVED&&(!f.groupId||!groups.some(g=>g.id===f.groupId)));
   if(ungrouped.length)sections.push({g:null,list:ungrouped});
 
   const rowBtn=(icon,onClick,active,label,disabled)=>h('button',{onClick,disabled,'aria-label':label,className:'act98',style:{position:'relative',flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',padding:'9px 12px',borderRadius:10,background:active?T.accent:'transparent',color:active?'#fff':T.sub,border:'1px solid '+(active?T.accent:T.hair),opacity:disabled?.5:1}},icon);
@@ -4013,7 +4022,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     rowBtn(icon,onClick,false,label,disabled),
     badge?h('span',{style:{position:'absolute',top:-4,right:-4,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.danger,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none'}},badge):null);
 
-  const mag=mode==='mag'&&(feeds.some(f=>f.feedUrl)||(()=>{try{return localStorage.getItem('insta_blogs_cat')==='books'}catch(e){return false}})());
+  const mag=mode==='mag'&&(feeds.some(f=>f.feedUrl||f.id===BLOG_SAVED)||(()=>{try{return localStorage.getItem('insta_blogs_cat')==='books'}catch(e){return false}})());
   const lastFetch=Math.max(0,...feeds.map(f=>(blogFeeds[f.id]||{}).fetchedAt||0));
   return h('div',null,
     h('div',{className:'sx',style:{display:'flex',gap:8,padding:'12px 14px 4px',alignItems:'center',overflowX:'auto'}},
@@ -4034,7 +4043,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
           style:{flex:1,minWidth:0,border:'none',background:'transparent',color:T.fg,fontSize:15,outline:'none'}}),
         query?h('button',{onClick:()=>setQuery(''),className:'act90','aria-label':'Clear search',style:{display:'flex',color:T.sub,flexShrink:0,padding:2}},Icons.x(17)):null)):null,
     mag?h(Fragment,null,
-      h(BlogsMagazine,{T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen:open,lastFetch,toastFn,
+      h(BlogsMagazine,{T,feeds,groups,blogFeeds,seen,query,busyUrl,onOpen:open,lastFetch,toastFn,onUnsave:unsavePost,
         onMarkAll:()=>{const now=Date.now();onSeen(m=>{const n={...m};feeds.forEach(f=>{n[f.id]=now});return n});toastFn('All caught up')}}),
       h('div',{style:{height:'calc(30px + '+SAFE_B+')'}})):
     h('div',{style:{padding:'2px 14px 0'}},
@@ -4106,7 +4115,17 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
             h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},shared.loading?'Reading the page…':(shared.title||domainOf(shared.url)||shared.url)),
             h('div',{style:{fontSize:12,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(shared.url)||shared.url)))),
       h(ARow,{T,icon:Icons.rss(20),label:'Follow this blog',sub:'Its new posts keep arriving in Blogs — pick a group next',onClick:()=>followShared(shared.url)}),
-      h(ARow,{T,icon:Icons.pin?Icons.pin(20):Icons.download(20),label:'Save just this post',sub:'Keep it in Blogs, under “Saved posts”',onClick:()=>saveSharedPost(shared)}),
+      shared.pick?h('div',{style:{padding:'4px 20px 10px'}},
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:8}},'Save under which label?'),
+        h('div',{style:{display:'flex',flexWrap:'wrap',gap:8,marginBottom:10}},
+          (savedLabels.length?savedLabels:['Saved','Read later']).map(l=>h('button',{key:l,onClick:()=>saveSharedPost(shared,l),className:'act95',
+            style:{padding:'9px 14px',borderRadius:18,fontSize:14,fontWeight:600,background:T.card,color:T.fg,border:'1px solid '+T.hair}},l))),
+        h('div',{style:{display:'flex',gap:8}},
+          h('input',{value:shared.newLabel||'',onChange:e=>setShared(x=>x&&{...x,newLabel:e.target.value}),onKeyDown:e=>{if(e.key==='Enter'&&(shared.newLabel||'').trim())saveSharedPost(shared,shared.newLabel)},
+            placeholder:'New label, e.g. Finance',style:{flex:1,minWidth:0,boxSizing:'border-box',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'11px 12px',fontSize:16}}),
+          h('button',{disabled:!(shared.newLabel||'').trim(),onClick:()=>saveSharedPost(shared,shared.newLabel),className:'act95',
+            style:{padding:'0 16px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:650,opacity:(shared.newLabel||'').trim()?1:.4}},'Save')))
+      :h(ARow,{T,icon:Icons.pin?Icons.pin(20):Icons.download(20),label:'Save just this post',sub:'Pick a label to keep it under',onClick:()=>setShared(x=>x&&{...x,pick:true})}),
       h('div',{style:{padding:'12px 20px 4px'}},h('button',{onClick:()=>setShared({help:true}),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'How the share shortcut works'))):null,
     shared&&shared.help?h(Sheet,{T,title:'Share to Blogs from any app',onClose:()=>setShared(null),maxH:'92%'},
       h('div',{style:{padding:'0 20px 18px',fontSize:14,color:T.fg,lineHeight:1.55}},
