@@ -1,4 +1,4 @@
-/* Instapaper — Books (a ReadEra-style reader)
+/* Evolve — Books (a ReadEra-style reader)
    Upload EPUB, PDF, MOBI/AZW3, FB2, DOCX, TXT or Markdown files and read them on-device, offline:
    - swipe/tap page turns (or continuous scroll), resume exactly where you left off
    - shelves (Reading · To read · Finished · Favourites), bookmarks, highlights with notes

@@ -1,4 +1,4 @@
-/* Instapaper — premium reading app (PWA)
+/* Evolve — premium reading app (PWA)
    All premium features unlocked, free forever. */
 'use strict';
 const {Fragment,useState,useEffect,useMemo,useRef,useCallback,useDeferredValue,createElement:ce}=React;
@@ -89,7 +89,7 @@ async function openRouterChat(key,model,messages,maxTokens,onWait){
   for(let attempt=0;;attempt++){
     try{res=await fetchWithTimeout('https://openrouter.ai/api/v1/chat/completions',{
       method:'POST',
-      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Instapaper PWA'},
+      headers:{'Authorization':'Bearer '+key,'Content-Type':'application/json','X-Title':'Evolve PWA'},
       body:JSON.stringify({model,messages:messages.map(m=>Array.isArray(m.content)?{...m,content:m.content.map(p=>p.type==='image'?{type:'image_url',image_url:{url:'data:'+p.mime+';base64,'+p.data}}:{type:'text',text:p.text||''})}:m),max_tokens:maxTokens||2048,temperature:0.4,stream:true})
     },120000)}
     catch(e){
@@ -1776,7 +1776,7 @@ const WELCOME_HTML=[
 function makeSeed(){
   const html=WELCOME_HTML,text=htmlToText(html),words=countWords(text);
   return{
-    id:'welcome',url:'',title:'Welcome to Instapaper',source:'Instapaper',author:'your reading app',
+    id:'welcome',url:'',title:'Welcome to Evolve',source:'Evolve',author:'your reading app',
     image:'',html,text,excerpt:text.slice(0,220),words,readMin:readMinutes(words),
     isVideo:false,videoId:null,publishedAt:Date.now(),addedAt:Date.now(),
     liked:false,archived:false,folderId:null,tags:[],progress:0,opens:0,highlights:[]
@@ -2386,7 +2386,7 @@ function Sidebar({T,scope,folders,counts,onScope,onClose,onFolderLongPress,onBro
         border:'0.5px solid '+(dark?'rgba(255,255,255,.1)':'rgba(0,0,0,.06)'),boxShadow:'0 20px 60px rgba(0,0,0,.28)',color:T.fg,display:'flex',flexDirection:'column',overflow:'hidden'}},
       h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:11,padding:'16px 14px 10px'}},
         h('span',{style:{width:36,height:36,borderRadius:11,background:T.fg,color:T.bg,display:'flex',alignItems:'center',justifyContent:'center',fontFamily:'Georgia,serif',fontWeight:800,fontSize:19,flexShrink:0}},'I'),
-        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:16,fontWeight:750,letterSpacing:'-.01em'}},'Instapaper'),
+        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:16,fontWeight:750,letterSpacing:'-.01em'}},'Evolve'),
           h('div',{style:{fontSize:12,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},sum)),
         edit?h('button',{onClick:()=>setEdit(false),className:'act95',style:{padding:'6px 12px',borderRadius:14,background:T.fg,color:T.bg,fontSize:13,fontWeight:700}},'Done'):null),
       edit?h('div',{style:{flexShrink:0,padding:'0 14px 8px',fontSize:12,color:T.sub,lineHeight:1.45}},'Use the arrows to reorder and ● / ○ to show or hide. Folded sections open while editing.'):
@@ -4014,7 +4014,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   const [busyUrl,setBusyUrl]=useState('');
   const [act,setAct]=useState(null); // feed for long-press action sheet
   const [edit,setEdit]=useState(null); // {id?,groupId,name,url}
-  /* Shared from another app: the iPhone shortcut "Send to Instapaper Blogs" copies the link; Paste reads it
+  /* Shared from another app: the iPhone shortcut "Send to Evolve Blogs" copies the link; Paste reads it
      and asks: follow that blog, or keep just this post (under "Saved posts"). */
   const [shared,setShared]=useState(null); // {url,title,image,excerpt,loading} | {help:true}
   const SAVED_FEED=BLOG_SAVED;
@@ -4233,8 +4233,8 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
 
     shared&&shared.manual?h(Sheet,{T,title:'Paste the link',onClose:()=>setShared(null)},
       h('div',{style:{padding:'0 18px 18px'}},
-        h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},shared.denied?'iPhone didn’t let Instapaper read the clipboard — next time tap the little “Paste” bubble that appears by the button. For now, tap the box and choose Paste:'
-          :shared.types&&!shared.types.length?'The clipboard is empty. Share a link with the shortcut first, or tap the box and choose Paste:':'Instapaper couldn’t find a link on the clipboard. Tap the box below and choose Paste:'),
+        h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},shared.denied?'iPhone didn’t let Evolve read the clipboard — next time tap the little “Paste” bubble that appears by the button. For now, tap the box and choose Paste:'
+          :shared.types&&!shared.types.length?'The clipboard is empty. Share a link with the shortcut first, or tap the box and choose Paste:':'Evolve couldn’t find a link on the clipboard. Tap the box below and choose Paste:'),
         h('input',{autoFocus:true,value:shared.draft||'',onChange:e=>{const v=e.target.value;const u=urlIn(v);if(u)openShared(u);else setShared(x=>x&&{...x,draft:v})},
           placeholder:'Tap here, then Paste',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'13px',fontSize:16}}),
@@ -4263,15 +4263,15 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     shared&&shared.help?h(Sheet,{T,title:'Share to Blogs from any app',onClose:()=>setShared(null),maxH:'92%'},
       h('div',{style:{padding:'0 20px 18px',fontSize:14,color:T.fg,lineHeight:1.55}},
 
-        h('div',{style:{color:T.sub,fontSize:13,marginBottom:12}},'One-time setup in the Shortcuts app (about a minute). After that: in any app tap Share → “Send to Instapaper Blogs”, open Instapaper, go to Blogs and tap Paste.'),
-        ['Open the Shortcuts app and tap + to make a new shortcut. Name it “Send to Instapaper Blogs”.',
+        h('div',{style:{color:T.sub,fontSize:13,marginBottom:12}},'One-time setup in the Shortcuts app (about a minute). After that: in any app tap Share → “Send to Evolve Blogs”, open Evolve, go to Blogs and tap Paste.'),
+        ['Open the Shortcuts app and tap + to make a new shortcut. Name it “Send to Evolve Blogs”.',
          'Tap the ⓘ (Details) at the bottom and turn on “Show in Share Sheet”. Then set what it receives to URLs, Safari web pages and Text (turn the rest off).',
          'Add the action “Get URLs from Input”. It uses the Shortcut Input.',
          'Add the action “Get Item from List” and leave it on First Item.',
          'Add the action “Text” and put the “Item from List” variable in it (so the link is copied as plain text).',
          'Add the action “Copy to Clipboard” — it copies the Text.',
-         'Add the action “Show Notification” with the text: Link copied — open Instapaper › Blogs › Paste.',
-         'Tap Done. Try it: in Safari, tap Share, scroll the app row, tap “Send to Instapaper Blogs” (tap Edit Actions there to move it up).'
+         'Add the action “Show Notification” with the text: Link copied — open Evolve › Blogs › Paste.',
+         'Tap Done. Try it: in Safari, tap Share, scroll the app row, tap “Send to Evolve Blogs” (tap Edit Actions there to move it up).'
         ].map((t,i)=>h('div',{key:i,style:{display:'flex',gap:12,padding:'9px 0',borderTop:i?'1px solid '+T.hair:'none'}},
           h('span',{style:{width:24,height:24,borderRadius:12,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:T.fg,color:T.bg,fontSize:12.5,fontWeight:700}},String(i+1)),
           h('span',{style:{flex:1}},t))),
@@ -6766,7 +6766,7 @@ function AISheet({T,S,article,articles,brief,initialView,update,onClose,onSaveCo
     setBusy('');
   };
   /* Claude-app provider: compose the request and hand it to the Claude app —
-     no API key, no waiting inside Instapaper */
+     no API key, no waiting inside Evolve */
   const usingClaude=(S.aiProvider||'openrouter')==='claude';
   const claudeArticleBlock=()=>ctx?'\n\n----- '+(isVid?'VIDEO':'ARTICLE')+' -----\n'+(ctx.title||'')+(ctx.url?'\nSource: '+ctx.url:'')+(ctx.text?'\n\n'+String(ctx.text).slice(0,6000):''):'';
   const handOff=p=>{if(openInClaude(p+claudeArticleBlock(),toastFn))onClose()};
@@ -7896,7 +7896,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
         sub:'Clears the cached app and reloads. Your saved articles, notes, photos & settings stay.',
         onClick:()=>onForceReload&&onForceReload()}),
       h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
-        'Instapaper · v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
+        'Evolve · v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
   }else if(page==='homepage'){
     const opts=[
       ['brief','My Routine','The channels & videos you check each day',Icons.phone(20)],
@@ -8043,7 +8043,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
         (S.aiProvider||'openrouter')==='claude'
           ?h(Fragment,null,
             h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.6,marginBottom:10}},'No API key needed. Summarize, Translate, Rewrite, and Ask open ready-made in the ',h('strong',null,''+chatName()+' app'),' (or '+chatSite()+' in the browser) with the article attached — answers appear in '+chatName()+', where you can keep chatting.'),
-            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the '+chatName()+' app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Instapaper? Switch to OpenRouter or Gemini with a free API key.'))
+            h('div',{style:{padding:'12px 14px',borderRadius:10,background:T.card,fontSize:12.5,color:T.meta,lineHeight:1.6}},'💡 Install the '+chatName()+' app from the App Store / Play Store for the smoothest hand-off. Prefer results inside Evolve? Switch to OpenRouter or Gemini with a free API key.'))
           :(S.aiProvider||'openrouter')==='gemini'
           ?h(Fragment,null,
             h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'Uses Google\u2019s Gemini API directly \u2014 generous free tier. Get a key at ',h('a',{href:'https://aistudio.google.com/apikey',target:'_blank',rel:'noopener',style:{color:T.accent}},'aistudio.google.com/apikey'),'.'),
@@ -8468,7 +8468,7 @@ function sortArticles(arr,sort){
 }
 function scopeTitle(scope,folders){
   switch(scope.type){
-    case 'home':return 'Instapaper';
+    case 'home':return 'Evolve';
     case 'search':return 'Search';
     case 'liked':return 'Liked';
     case 'archive':return 'Archive';
@@ -8484,7 +8484,7 @@ function scopeTitle(scope,folders){
     case 'brief':return 'Daily Brief';
     case 'tag':return '#'+scope.id;
     case 'folder':{const f=folders.find(f=>f.id===scope.id);return f?f.name:'Folder'}
-    default:return 'Instapaper';
+    default:return 'Evolve';
   }
 }
 const EMPTY_STATES={
@@ -8519,7 +8519,7 @@ class Boundary extends React.Component{
     const det=this.details();const retry=()=>this.setState({err:null,info:null});
     const btn=(label,fn,dark)=>ce('button',{key:label,onClick:fn,style:{padding:'11px 18px',borderRadius:11,background:dark?'#1c1c1e':'#efeff1',color:dark?'#fff':'#1c1c1e',fontSize:14.5,fontWeight:600}},label);
     const inner=[
-      ce('div',{key:'w',style:{fontFamily:WORDMARK,fontSize:this.props.inline?19:24,fontWeight:600}},this.props.inline?'This screen hit a problem':'Instapaper'),
+      ce('div',{key:'w',style:{fontFamily:WORDMARK,fontSize:this.props.inline?19:24,fontWeight:600}},this.props.inline?'This screen hit a problem':'Evolve'),
       ce('div',{key:'m',style:{fontSize:14,color:'#76767c'}},'Something went wrong. Your articles are safe.'),
       ce('pre',{key:'d',style:{margin:0,maxWidth:'100%',maxHeight:150,overflow:'auto',whiteSpace:'pre-wrap',wordBreak:'break-word',textAlign:'left',fontSize:11.5,lineHeight:1.45,color:'#5a5a60',background:'#f4f4f6',borderRadius:10,padding:'10px 12px',fontFamily:'ui-monospace,Menlo,monospace'}},det),
       ce('div',{key:'b',style:{display:'flex',gap:8,flexWrap:'wrap',justifyContent:'center'}},
@@ -9256,7 +9256,7 @@ function App(){
   }else{
     /* one slim bar (☰ · title · ✦ · settings) that slides away while you scroll down */
     const folderName=scope.type==='folder'?((data.folders||[]).find(f=>f.id===scope.id)||{}).name:'';
-    const pageTitle=scope.type==='tag'?'#'+scope.id:folderName||({home:'Home',brief:'My Routine',blogs:'Blogs',headlines:'Headlines',photos:'Photos',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags',videos:'Videos',search:'Search'}[scope.type]||'Instapaper');
+    const pageTitle=scope.type==='tag'?'#'+scope.id:folderName||({home:'Home',brief:'My Routine',blogs:'Blogs',headlines:'Headlines',photos:'Photos',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags',videos:'Videos',search:'Search'}[scope.type]||'Evolve');
     const searching=isArticleScope&&(searchOpenH||!!query);
     const closeSearch=()=>{setSearchOpenH(false);setQuery('');setSearchScope('all');try{document.activeElement&&document.activeElement.blur()}catch(e){}if(scope.type==='search')setScope({type:'home'})};
     header=h('div',{style:{flexShrink:0,overflow:'hidden',height:44,background:T.bg,position:'relative',zIndex:3}},
