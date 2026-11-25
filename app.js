@@ -919,7 +919,22 @@ function sourceUrlsOf(brief){
 /* One tap to set up (or update) server-side refresh. First time: GitHub's "new file" page with
    routine-sources.json already filled in — just press Commit. After that the file exists, so the
    list goes to the clipboard and the file's edit page opens to paste into. */
-const sourcesJson=brief=>JSON.stringify({urls:sourceUrlsOf(brief)},null,1);
+/* Social accounts (Telegram, Instagram, X, …) for your own RSS feed (scripts/build-social-feed.mjs).
+   Instagram and X need an RSS.app link pasted into the account; without one they're listed so the
+   app can say which ones are missing. */
+function socialAccountsOf(brief){
+  const out=[],seen=new Set();
+  ((brief&&brief.items)||[]).forEach(it=>{
+    let a=null;
+    if(it.kind==='telegram'&&it.handle)a={platform:'telegram',handle:it.handle,name:it.name||'@'+it.handle,profile:'https://t.me/'+it.handle};
+    else if(it.platform&&SOCIAL[it.platform])a={platform:it.platform,handle:it.socialHandle||it.handle||'',name:it.name||'',profile:it.url||'',feed:it.kind==='rss'?(it.feedUrl||''):''};
+    if(!a)return;const k=a.platform+':'+(a.handle||a.feed).toLowerCase();if(seen.has(k))return;seen.add(k);out.push(a);
+  });
+  return out;
+}
+const sourcesJson=brief=>{const accounts=socialAccountsOf(brief);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)},null,1)};
+/* the custom feed's links + each account's status, published by the server job */
+function socialFeedIndexUrl(){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/index.json?t='+Math.floor(Date.now()/60000)}
 function sourcesGithubUrl(brief,exists,inline){
   const{owner,repo}=repoSlug(),base='https://github.com/'+owner+'/'+repo;
   if(exists)return base+'/edit/main/routine-sources.json';
@@ -7724,6 +7739,37 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 }
 
 /* ============================== settings ============================== */
+/* Settings → Behavior → My social RSS feed: the links the server job publishes (all accounts, and one
+   per platform) to open in any RSS reader, plus which accounts still need an RSS.app link. */
+function SocialFeedBox({T,brief}){
+  const [ix,setIx]=useState(null),[err,setErr]=useState(false),[copied,setCopied]=useState('');
+  useEffect(()=>{let alive=true;
+    fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000).then(r=>r.ok?r.json():null).then(j=>{if(alive){if(j&&j.links)setIx(j);else setErr(true)}},()=>{if(alive)setErr(true)});
+    return()=>{alive=false}},[]);
+  const mine=socialAccountsOf(brief);
+  const NAMES={all:'All accounts',telegram:'Telegram',instagram:'Instagram',x:'X',threads:'Threads',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
+  const copy=(k,u)=>{copyText(u);setCopied(k);setTimeout(()=>setCopied(''),2000)};
+  const noLink=mine.filter(a=>a.platform!=='telegram'&&!a.feed);
+  const bad=ix?ix.accounts.filter(a=>a.status!=='ok'&&a.status!=='needs-feed-link'):[];
+  const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
+  return h('div',{style:{padding:'0 20px'}},
+    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app. After adding or removing accounts, tap “Update sources on GitHub” above.'),
+    !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts in My Routine yet.')
+    :ix?h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
+      Object.keys(ix.links).map(k=>h('div',{key:k,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{fontSize:14.5,fontWeight:600}},NAMES[k]||k),
+          h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ix.links[k])),
+        h('button',{onClick:()=>copy(k,ix.links[k]),className:'act95',style:{padding:'7px 12px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,flexShrink:0}},copied===k?'Copied ✓':'Copy'))),
+      h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
+      bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
+    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” above and commit; the feed appears within 15 minutes.':'Loading…'),
+    noLink.length?h('div',{style:{marginTop:12,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+      h('div',{style:{fontSize:13.5,fontWeight:600,marginBottom:4}},noLink.length+(noLink.length===1?' account needs':' accounts need')+' an RSS.app link'),
+      h('div',{style:{...small,marginBottom:8}},'Instagram and X have no public feed. For each: tap it to copy its profile link and open RSS.app, make a feed there, then in My Routine → Manage → Edit the account, paste the RSS.app link in “Bridge feed link”.'),
+      h('div',{style:{display:'flex',flexWrap:'wrap',gap:6}},noLink.map(a=>h('button',{key:a.platform+a.handle,onClick:()=>{copyText(a.profile||'');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
+        style:{padding:'6px 10px',borderRadius:14,fontSize:12.5,fontWeight:600,background:T.search,color:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null);
+}
 function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const [engSaved,setEngSaved]=useState('');
@@ -7887,9 +7933,11 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
             snapshotWasSeen()?'Update sources on GitHub':'Save sources to GitHub'),
           h('button',{onClick:()=>{
               const urls=sourceUrlsOf(data.brief);
-              copyText(JSON.stringify({urls},null,2));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
+              copyText(sourcesJson(data.brief));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
             className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
             srcCopied>0?'Copied '+srcCopied+' sources ✓':'Copy my sources'))),
+      head('My social RSS feed'),
+      h(SocialFeedBox,{T,brief:data.brief}),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
