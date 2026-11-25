@@ -1769,51 +1769,122 @@ function makeSeed(){
 }
 
 /* ============================== storage ============================== */
-/* The library (articles with their full text, highlights, routine, settings…) lives in
-   IndexedDB. It used to be one localStorage entry, but Safari caps localStorage at ~5 MB,
-   so a few hundred saved articles hit "Storage is full". IndexedDB gets a share of the
-   disk instead. It is read once before the first render (bootStore); an existing
-   localStorage copy is moved over on first run. If IndexedDB can't be opened at all
-   (some private windows) the app falls back to localStorage as before. */
-const STORE_DB='instapaper-store';
-let _storeDB=null,STORE_IDB=true,STORE_BOOT=null,STORE_BYTES=0;
+/* The library lives in IndexedDB, one record per article plus one record for everything
+   else (settings, folders, routine, feeds…). It used to be a single localStorage entry,
+   which Safari caps at ~5 MB, so a few hundred saved articles hit "Storage is full".
+   - Saves write only the articles that changed (updates are immutable, so a changed
+     article is a new object), which keeps a 50 MB library as quick to save as a small one.
+   - Everything in one save is one transaction: it lands completely or not at all.
+   - iOS sometimes drops the database connection while the app is in the background;
+     a failed save reconnects and tries again before giving up.
+   - The old localStorage copy is moved over once, then freed.
+   - If IndexedDB can't be opened at all (some private windows) the app falls back to
+     localStorage as before. */
+const STORE_DB='instapaper-store',META_KEY_IDB='meta';
+let _storeDB=null,STORE_IDB=true,STORE_BOOT=null;
+/* what IndexedDB holds right now: the meta record's text, and id → the article object last written */
+const STORE_SAVED={meta:null,arts:new Map()};
 function storeDB(){
   if(_storeDB)return _storeDB;
-  _storeDB=new Promise((res,rej)=>{
+  const p=new Promise((res,rej)=>{
     let r;try{r=indexedDB.open(STORE_DB,1)}catch(e){return rej(e)}
     const to=setTimeout(()=>rej(new Error('IndexedDB open timed out')),5000); // an iOS bug can leave open() hanging
-    r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('kv'))db.createObjectStore('kv')};
-    r.onsuccess=e=>{clearTimeout(to);res(e.target.result)};
+    r.onupgradeneeded=e=>{const db=e.target.result;
+      if(!db.objectStoreNames.contains('kv'))db.createObjectStore('kv');
+      if(!db.objectStoreNames.contains('articles'))db.createObjectStore('articles');
+    };
+    r.onsuccess=e=>{clearTimeout(to);const db=e.target.result;
+      const drop=()=>{if(_storeDB===p)_storeDB=null;try{db.close()}catch(x){}};
+      db.onclose=drop;db.onversionchange=drop; // reconnect on the next save
+      res(db)};
     r.onerror=()=>{clearTimeout(to);rej(r.error)};
   });
-  return _storeDB;
+  _storeDB=p;p.catch(()=>{if(_storeDB===p)_storeDB=null});
+  return p;
 }
-function storeGet(){return storeDB().then(db=>new Promise((res,rej)=>{const r=db.transaction('kv','readonly').objectStore('kv').get(STORE_KEY);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}))}
-function storePut(s){return storeDB().then(db=>new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(s,STORE_KEY);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)}))}
+const reqP=r=>new Promise((res,rej)=>{r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)});
+/* Reads the whole library. Resolves {meta, arts} or null when nothing is stored yet. */
+function storeRead(){return storeDB().then(db=>{
+  const t=db.transaction(['kv','articles'],'readonly');
+  return Promise.all([reqP(t.objectStore('kv').get(META_KEY_IDB)),reqP(t.objectStore('articles').getAll())]);
+}).then(([meta,arts])=>{
+  if(typeof meta!=='string'||!meta)return null;
+  return{meta,arts:arts||[]};
+})}
+/* Rebuild the plain library object from the stored records, and remember what is stored. */
+function assembleStore(rec){
+  const d=JSON.parse(rec.meta);
+  const byId=new Map();
+  rec.arts.forEach(s=>{try{const a=JSON.parse(s);if(a&&a.id!=null)byId.set(String(a.id),a)}catch(e){}});
+  const order=Array.isArray(d.articleOrder)?d.articleOrder:[],extra=Array.isArray(d.articleExtra)?d.articleExtra:[];
+  const out=[],used=new Set();
+  order.forEach(k=>{
+    if(k&&typeof k==='object'){const a=extra[k.x];if(a)out.push(a);return}
+    const a=byId.get(String(k));if(a&&!used.has(String(k))){used.add(String(k));out.push(a)}
+  });
+  byId.forEach((a,id)=>{if(!used.has(id))out.push(a)}); // stored but missing from the order: keep it, never drop it
+  delete d.articleOrder;delete d.articleExtra;d.articles=out;
+  STORE_SAVED.meta=rec.meta;STORE_SAVED.arts=new Map();
+  out.forEach(a=>{if(a&&a.id!=null&&!STORE_SAVED.arts.has(String(a.id)))STORE_SAVED.arts.set(String(a.id),a)});
+  return d;
+}
+/* Write d to IndexedDB: changed/new articles, removed ones, and the meta record, in one transaction. */
+function idbWrite(d){
+  const arts=Array.isArray(d.articles)?d.articles:[];
+  const prev=STORE_SAVED.arts,next=new Map(),order=[],extra=[],puts=[];
+  arts.forEach(a=>{
+    if(!a||a.id==null||next.has(String(a.id))){order.push({x:extra.length});extra.push(a);return} // no id or a duplicate id: keep it inside meta
+    const id=String(a.id);next.set(id,a);order.push(id);
+    if(prev.get(id)!==a)puts.push([id,JSON.stringify(a)]);
+  });
+  const dels=[];prev.forEach((a,id)=>{if(!next.has(id))dels.push(id)});
+  const metaObj=Object.assign({},d,{articleOrder:order,articleExtra:extra});delete metaObj.articles;
+  const meta=JSON.stringify(metaObj);
+  if(!puts.length&&!dels.length&&meta===STORE_SAVED.meta)return Promise.resolve();
+  return storeDB().then(db=>new Promise((res,rej)=>{
+    const t=db.transaction(['kv','articles'],'readwrite'),as=t.objectStore('articles');
+    puts.forEach(([id,s])=>as.put(s,id));dels.forEach(id=>as.delete(id));
+    if(meta!==STORE_SAVED.meta)t.objectStore('kv').put(meta,META_KEY_IDB);
+    t.oncomplete=()=>{STORE_SAVED.meta=meta;STORE_SAVED.arts=next;res()};
+    t.onerror=e=>{e&&e.preventDefault&&e.preventDefault()};
+    t.onabort=()=>rej(t.error||new Error('save aborted'));
+  }));
+}
 function bootStore(){
   const fromLS=()=>{try{return localStorage.getItem(STORE_KEY)}catch(e){return null}};
   try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{})}catch(e){} // ask not to be evicted
-  return storeGet().then(v=>{
-    if(typeof v==='string'&&v)return v;
-    const ls=fromLS();if(!ls)return null;
-    // first run with IndexedDB: move the localStorage copy over, then free localStorage
-    return storePut(ls).then(()=>{try{localStorage.removeItem(STORE_KEY)}catch(e){}return ls},()=>ls);
-  },()=>{STORE_IDB=false;return fromLS()}).then(s=>{STORE_BOOT=s;STORE_BYTES=(s||'').length;return s});
+  return storeRead().then(rec=>{
+    if(rec){STORE_BOOT=assembleStore(rec);return}
+    const ls=fromLS();if(!ls)return;
+    let d;try{d=JSON.parse(ls)}catch(e){return}
+    STORE_BOOT=d;
+    // first run with IndexedDB: copy the localStorage library over, and only then free localStorage
+    return idbWrite(d).then(()=>{try{localStorage.removeItem(STORE_KEY)}catch(e){}},()=>{STORE_IDB=false});
+  },()=>{STORE_IDB=false;try{STORE_BOOT=JSON.parse(fromLS()||'null')}catch(e){STORE_BOOT=null}});
 }
-const STORE_FULL_MSG='Storage is full. Delete some articles (or clear the archive in Settings) so new saves can be kept offline.';
-function writeStore(d,onFull){
-  let s;try{s=JSON.stringify(d)}catch(e){return}
-  STORE_BYTES=s.length;
-  if(STORE_IDB){storePut(s).catch(e=>{
-    // IndexedDB refused (quota, or it went away): try localStorage so the change isn't lost
-    try{localStorage.setItem(STORE_KEY,s)}catch(x){onFull&&onFull(e)}
-  });return}
-  try{localStorage.setItem(STORE_KEY,s)}catch(e){onFull&&onFull(e)}
+const STORE_FULL_MSG='Your iPhone is out of space, so the latest changes couldn’t be saved. Free up some space (or delete old articles), and they’ll save again.';
+const STORE_FAIL_MSG='Couldn’t save your latest changes. Close the app fully and open it again.';
+const isQuota=e=>!!e&&(e.name==='QuotaExceededError'||e.code===22||/quota|space/i.test(String(e.message||'')));
+const fmtBytes=n=>n>=1e9?(n/1e9).toFixed(1)+' GB':n>=1e6?(n/1e6).toFixed(n>=1e8?0:1)+' MB':Math.max(1,Math.round(n/1e3))+' KB';
+/* Saves run one at a time, and a queued save that a newer one supersedes is skipped (the
+   newer one carries its changes), so an old snapshot can never land after a newer one. */
+let storeChain=Promise.resolve(),storeLatest=null;
+function writeStore(d,onFail,onOk){
+  if(STORE_IDB){
+    storeLatest=d;
+    storeChain=storeChain.then(()=>{
+      if(storeLatest!==d)return;
+      // a dropped connection (iOS does this to backgrounded apps) gets one fresh retry before we tell anyone
+      return idbWrite(d).catch(e=>{if(isQuota(e))throw e;_storeDB=null;return idbWrite(storeLatest)})
+        .then(()=>{onOk&&onOk()},e=>{console.warn('save failed',e);onFail&&onFail(isQuota(e)?STORE_FULL_MSG:STORE_FAIL_MSG)});
+    });
+    return;
+  }
+  try{localStorage.setItem(STORE_KEY,JSON.stringify(d));onOk&&onOk()}catch(e){onFail&&onFail('Storage is full. Delete some articles (or clear the archive in Settings) so new saves can be kept offline.')}
 }
 function loadStore(){
-  let d=null;
-  try{d=JSON.parse(STORE_BOOT||'null')}catch(e){d=null}
-  STORE_BOOT=null; // the parsed copy is in React state now; let the string go
+  let d=STORE_BOOT;
+  STORE_BOOT=null; // it lives in React state from here on
   if(!d||typeof d!=='object')d={};
   d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
@@ -1824,7 +1895,7 @@ function loadStore(){
   d.folders=Array.isArray(d.folders)?d.folders:[];
   d.articles.forEach(a=>{a.tags=Array.isArray(a.tags)?a.tags:[];a.highlights=Array.isArray(a.highlights)?a.highlights:[]});
   // Once: videos that only came in to hold a transcript (no like, folder or tags) leave Home; Save brings one back
-  if(!d.settings.routineOnlyV1){d.articles.forEach(a=>{if(a.isVideo&&!a.isEdition&&!a.liked&&!a.folderId&&!a.tags.length&&((a.transcript&&String(a.transcript).trim())||(a.editions&&Object.keys(a.editions).length)))a.routineOnly=true});d.settings.routineOnlyV1=true}
+  if(!d.settings.routineOnlyV1){d.articles=d.articles.map(a=>(a.isVideo&&!a.isEdition&&!a.liked&&!a.folderId&&!a.tags.length&&((a.transcript&&String(a.transcript).trim())||(a.editions&&Object.keys(a.editions).length)))?{...a,routineOnly:true}:a);d.settings.routineOnlyV1=true}
   d.sites=Array.isArray(d.sites)?d.sites:[];
   d.siteFolders=Array.isArray(d.siteFolders)?d.siteFolders:[];
   d.siteHistory=Array.isArray(d.siteHistory)?d.siteHistory:[]; // browser visit log (most visited / history)
@@ -1881,14 +1952,19 @@ function mediaDB(){
       if(!db.objectStoreNames.contains('media'))db.createObjectStore('media',{keyPath:'id'});
       if(!db.objectStoreNames.contains('albums'))db.createObjectStore('albums',{keyPath:'id'});
     };
-    r.onsuccess=e=>res(e.target.result);
-    r.onerror=()=>rej(r.error);
+    r.onsuccess=e=>{const db=e.target.result;db.onclose=db.onversionchange=()=>{_mediaDB=null;try{db.close()}catch(x){}};res(db)};
+    r.onerror=()=>{_mediaDB=null;rej(r.error)};
   });
   return _mediaDB;
 }
-function idbAll(store){return mediaDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(store,'readonly').objectStore(store).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)}))}
-function idbPut(store,val){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).put(val);t.oncomplete=()=>res(val);t.onerror=()=>rej(t.error)}))}
-function idbDel(store,id){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)}))}
+/* iOS can drop the connection of a backgrounded app; a closed connection reopens once */
+const idbRetry=f=>f().catch(e=>{if(e&&e.name==='InvalidStateError'){_mediaDB=null;return f()}throw e});
+function idbAll(store){return idbRetry(()=>idbAll1(store))}
+function idbPut(store,val){return idbRetry(()=>idbPut1(store,val))}
+function idbDel(store,id){return idbRetry(()=>idbDel1(store,id))}
+function idbAll1(store){return mediaDB().then(db=>new Promise((res,rej)=>{const r=db.transaction(store,'readonly').objectStore(store).getAll();r.onsuccess=()=>res(r.result||[]);r.onerror=()=>rej(r.error)}))}
+function idbPut1(store,val){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).put(val);t.oncomplete=()=>res(val);t.onerror=()=>rej(t.error)}))}
+function idbDel1(store,id){return mediaDB().then(db=>new Promise((res,rej)=>{const t=db.transaction(store,'readwrite');t.objectStore(store).delete(id);t.oncomplete=()=>res();t.onerror=()=>rej(t.error)}))}
 
 /* ============================== icons ============================== */
 function Svg(props,...kids){
@@ -7648,7 +7724,7 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 }
 
 /* ============================== settings ============================== */
-function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
+function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const [engSaved,setEngSaved]=useState('');
   const fileRef=useRef(null);
@@ -7944,7 +8020,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,onForceReload,onExport,on
   }else if(page==='data'){
     content=h(Fragment,null,
       h('div',{style:{padding:'10px 20px 6px',fontSize:13,color:T.sub,lineHeight:1.55}},
-        data.articles.length+' articles \u00b7 '+Math.round(usageKB)+' KB stored on this device. There is no cloud account \u2014 your backup file IS your sync. Export it here and import it on another device.'),
+        data.articles.length+' articles \u00b7 '+fmtBytes(usageKB*1024)+' stored on this device'+(storeQuota?' ('+fmtBytes(Math.max(0,storeQuota-usageKB*1024))+' more available)':'')+'. There is no cloud account \u2014 your backup file IS your sync. Export it here and import it on another device.'),
       h(ARow,{T,icon:Icons.download(20),label:'Export backup',sub:'Articles, notes, highlights, sites, settings \u2014 and your encrypted vault',onClick:onExport}),
       h(ARow,{T,icon:Icons.upload(20),label:'Import backup',sub:'Restore from an exported file',onClick:()=>{if(fileRef.current)fileRef.current.click()}}),
       h('input',{ref:fileRef,type:'file',accept:'.json,application/json',style:{display:'none'},onChange:e=>{const f=e.target.files&&e.target.files[0];if(f)onImport(f);e.target.value=''}}),
@@ -8345,12 +8421,15 @@ function App(){
   const dataRef=useRef(data);
   const persist=useMemo(()=>{
     let t=null,pending=null,warned=false;
-    const onFull=()=>{if(!warned){warned=true;alert(STORE_FULL_MSG)}};
-    const flush=()=>{clearTimeout(t);t=null;if(pending){const d=pending;pending=null;writeStore(d,onFull)}};
+    const onFail=msg=>{if(!warned){warned=true;alert(msg)}};
+    const onOk=()=>{warned=false}; // warn again if a later save fails after this one worked
+    const flush=()=>{clearTimeout(t);t=null;if(pending){const d=pending;pending=null;writeStore(d,onFail,onOk)}};
     const fn=d=>{pending=d;clearTimeout(t);t=setTimeout(flush,350)};
     fn.flush=flush;
     return fn;
   },[]);
+  /* keep whatever loadStore fixed up or migrated (only what changed is written) */
+  useEffect(()=>{persist(dataRef.current)},[persist]);
   /* save right away when the app is backgrounded or closed, so the last change isn't lost */
   useEffect(()=>{
     const onHide=()=>{if(document.visibilityState==='hidden')persist.flush()};
@@ -9020,7 +9099,12 @@ function App(){
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();libData.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
-  const usageKB=useMemo(()=>{if(!settingsOpen)return STORE_BYTES/1024;try{return JSON.stringify(data).length/1024}catch(e){return STORE_BYTES/1024}},[settingsOpen,data]);
+  /* Settings → storage line: what this app uses on the device, and how much more it may use */
+  const [storeEst,setStoreEst]=useState(null);
+  useEffect(()=>{if(!settingsOpen)return;let alive=true;
+    try{navigator.storage.estimate().then(e=>{if(alive&&e)setStoreEst({usage:e.usage||0,quota:e.quota||0})},()=>{})}catch(e){}
+    return()=>{alive=false}},[settingsOpen,data.articles.length]);
+  const usageKB=storeEst?storeEst.usage/1024:0;
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
   const backupDue=useMemo(()=>{
@@ -9332,7 +9416,7 @@ function App(){
         else eraseAll();
       }}):null,
 
-    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,onClose:()=>setSettingsOpen(false),
+    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,storeQuota:storeEst?storeEst.quota:0,onClose:()=>setSettingsOpen(false),
       onForceReload:forceReload,
       onExport:exportBackup,onImport:importBackup,
       onClearArchived:()=>setSheet({type:'confirm',kind:'clearArchive'}),
