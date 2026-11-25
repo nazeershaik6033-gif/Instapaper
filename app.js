@@ -3874,6 +3874,25 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   const [busyUrl,setBusyUrl]=useState('');
   const [act,setAct]=useState(null); // feed for long-press action sheet
   const [edit,setEdit]=useState(null); // {id?,groupId,name,url}
+  /* Shared from another app: the iPhone shortcut "Send to Instapaper Blogs" copies the link; Paste reads it
+     and asks: follow that blog, or keep just this post (under "Saved posts"). */
+  const [shared,setShared]=useState(null); // {url,title,image,excerpt,loading} | {help:true}
+  const SAVED_FEED='_saved';
+  const pasteShared=async()=>{
+    let t='';try{t=await navigator.clipboard.readText()}catch(e){}
+    const u=extractFirstUrl(t)||(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(String(t).trim())?'https://'+String(t).trim():'');
+    if(!u){setShared({help:true,empty:true});return}
+    setShared({url:u,title:'',loading:true});
+    try{const r=await fetchArticleData(u);setShared(x=>x&&x.url===u?{...x,title:r.title||'',image:r.image||'',excerpt:r.excerpt||'',loading:false}:x)}
+    catch(e){setShared(x=>x&&x.url===u?{...x,loading:false}:x)}
+  };
+  const followShared=u=>{let site=u;try{site=new URL(u).origin+'/'}catch(e){}setShared(null);setEdit({groupId:null,name:'',url:site,fromShare:true})};
+  const saveSharedPost=x=>{const u=x.url;
+    onFeeds(list=>list.some(f=>f.id===SAVED_FEED)?list:list.concat([{id:SAVED_FEED,name:'Saved posts',site:'',feedUrl:'',groupId:null}]));
+    onBlogFeeds(m=>{const cur=(m[SAVED_FEED]&&m[SAVED_FEED].entries)||[];
+      const e={url:u,title:x.title||domainOf(u)||u,publishedMs:Date.now(),excerpt:x.excerpt||'',image:x.image||'',author:domainOf(u)};
+      return{...m,[SAVED_FEED]:{fetchedAt:Date.now(),entries:[e].concat(cur.filter(y=>y.url!==u))}}});
+    setShared(null);toastFn('Saved to Blogs — under “Saved posts”')};
   const [moveIt,setMoveIt]=useState(null); // feed being moved to a group
   const [grp,setGrp]=useState(null); // {} new | {rename:id}
   const [gName,setGName]=useState('');
@@ -3985,6 +4004,8 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
     h('div',{className:'sx',style:{display:'flex',gap:8,padding:'12px 14px 4px',alignItems:'center',overflowX:'auto'}},
       feeds.length?h('div',{style:{display:'inline-flex',background:T.card,borderRadius:11,padding:3,gap:2,flexShrink:0}},
         [['mag','Latest'],['manage','Manage']].map(([k,l])=>h('button',{key:k,onClick:()=>setMode(k),className:'act95',style:{padding:'6px 12px',borderRadius:8,fontSize:13,fontWeight:650,background:(mode===k)?T.bg:'transparent',color:(mode===k)?T.fg:T.sub,boxShadow:mode===k?'0 1px 3px rgba(0,0,0,.12)':'none'}},l))):null,
+      h('button',{onClick:pasteShared,className:'act95','aria-label':'Paste a shared link',title:'Paste a link shared with the shortcut',
+        style:{flexShrink:0,display:'inline-flex',alignItems:'center',gap:6,height:32,padding:'0 12px',borderRadius:16,background:hexA(T.accent,.12),color:T.accent,fontSize:13,fontWeight:650}},Icons.link(15),'Paste'),
       h('div',{style:{flex:1}}),
       rowBtn(Icons.search(17),toggleSearch,searchOpen,'Search'),
       mag?null:rowBtn(Icons.plus(17),()=>{setGName('');setGrp({})},false,'New group'),
@@ -4053,6 +4074,31 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onGroups(gs=>gs.map(g=>g.id===grp.rename?{...g,name:nm}:g));else onGroups(gs=>gs.concat([{id:uid(),name:nm}]));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
 
+    shared&&!shared.help?h(Sheet,{T,title:'Shared link',onClose:()=>setShared(null)},
+      h('div',{style:{padding:'0 18px 6px'}},
+        h('div',{style:{display:'flex',gap:12,alignItems:'center',padding:'10px 12px',borderRadius:12,background:T.card,marginBottom:12}},
+          shared.image?h('img',{src:shared.image,alt:'',style:{width:56,height:56,borderRadius:8,objectFit:'cover',flexShrink:0}}):null,
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:14.5,fontWeight:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},shared.loading?'Reading the page…':(shared.title||domainOf(shared.url)||shared.url)),
+            h('div',{style:{fontSize:12,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},domainOf(shared.url)||shared.url)))),
+      h(ARow,{T,icon:Icons.rss(20),label:'Follow this blog',sub:'Its new posts keep arriving in Blogs — pick a group next',onClick:()=>followShared(shared.url)}),
+      h(ARow,{T,icon:Icons.pin?Icons.pin(20):Icons.download(20),label:'Save just this post',sub:'Keep it in Blogs, under “Saved posts”',onClick:()=>saveSharedPost(shared)}),
+      h('div',{style:{padding:'12px 20px 4px'}},h('button',{onClick:()=>setShared({help:true}),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'How the share shortcut works'))):null,
+    shared&&shared.help?h(Sheet,{T,title:'Share to Blogs from any app',onClose:()=>setShared(null),maxH:'92%'},
+      h('div',{style:{padding:'0 20px 18px',fontSize:14,color:T.fg,lineHeight:1.55}},
+        shared.empty?h('div',{style:{padding:'10px 12px',borderRadius:10,background:hexA(T.accent,.12),color:T.accent,fontSize:13,fontWeight:600,marginBottom:12}},'There’s no link on the clipboard yet. Share one with the shortcut below, then tap Paste.'):null,
+        h('div',{style:{color:T.sub,fontSize:13,marginBottom:12}},'One-time setup in the Shortcuts app (about a minute). After that: in any app tap Share → “Send to Instapaper Blogs”, open Instapaper, go to Blogs and tap Paste.'),
+        ['Open the Shortcuts app and tap + to make a new shortcut. Name it “Send to Instapaper Blogs”.',
+         'Tap the ⓘ (Details) at the bottom and turn on “Show in Share Sheet”. Then set what it receives to URLs, Safari web pages and Text (turn the rest off).',
+         'Add the action “Get URLs from Input”. It uses the Shortcut Input.',
+         'Add the action “Get Item from List” and leave it on First Item.',
+         'Add the action “Copy to Clipboard”.',
+         'Add the action “Show Notification” with the text: Link copied — open Instapaper › Blogs › Paste.',
+         'Tap Done. Try it: in Safari, tap Share, scroll the app row, tap “Send to Instapaper Blogs” (tap Edit Actions there to move it up).'
+        ].map((t,i)=>h('div',{key:i,style:{display:'flex',gap:12,padding:'9px 0',borderTop:i?'1px solid '+T.hair:'none'}},
+          h('span',{style:{width:24,height:24,borderRadius:12,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:T.fg,color:T.bg,fontSize:12.5,fontWeight:700}},String(i+1)),
+          h('span',{style:{flex:1}},t))),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:12}},'Why the extra step: iPhone doesn’t let a shortcut hand links to a home-screen app like this one, so the link travels by the clipboard. When you tap Paste, iPhone may ask to allow pasting — tap Allow Paste.'))):null,
     edit?h(Sheet,{T,title:edit.id?'Edit blog':'Add blog',onClose:()=>setEdit(null)},
       h('div',{style:{padding:'4px 18px 18px'}},
         h('input',{value:edit.name,onChange:e=>setEdit({...edit,name:e.target.value}),placeholder:'Name (optional)',
@@ -4061,6 +4107,12 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
           onKeyDown:e=>{if(e.key==='Enter')saveFeed(edit)},
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:6}}),
         h('div',{style:{fontSize:11.5,color:T.sub,marginBottom:12,lineHeight:1.45}},'Paste a blog homepage — we\'ll find its feed automatically. Sites without a feed open in the browser.'),
+        !edit.id&&groups.length?h('div',{style:{marginBottom:12}},
+          h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,marginBottom:6}},'Group'),
+          h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto'}},
+            [{id:null,name:'No group'}].concat(groups).map(g=>{const on=(edit.groupId||null)===g.id;
+              return h('button',{key:g.id||'_none',onClick:()=>setEdit({...edit,groupId:g.id}),className:'act95',style:{flexShrink:0,padding:'7px 12px',borderRadius:15,fontSize:13,fontWeight:600,
+                background:on?T.fg:'transparent',color:on?T.bg:T.fg,border:'1px solid '+(on?T.fg:T.hair)}},g.name)}))):null,
         h('button',{onClick:()=>saveFeed(edit),disabled:busy||!normalizeUrl(edit.url),className:'act96',style:{display:'flex',alignItems:'center',justifyContent:'center',gap:8,width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600,opacity:(busy||!normalizeUrl(edit.url))?.6:1}},busy?h(Spinner,{T,size:15}):null,busy?'Finding feed…':(edit.id?'Save':'Add')))):null);
 }
 
