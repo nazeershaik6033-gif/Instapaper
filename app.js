@@ -1946,10 +1946,11 @@ function useLongPress(cb){
   };
 }
 
-/* portal: render on <body>. Needed under an animated page (.pgin keeps a transform), where
-   position:fixed would otherwise pin the sheet to the page, not the screen, and sit under the tab bar. */
-function Sheet({T,onClose,title,children,maxH,z,portal}){
-  if(portal)return ReactDOM.createPortal(h(Sheet,{T,onClose,title,children,maxH,z}),document.body);
+/* Every sheet renders on <body>, above the floating tab bar and full-screen layers (editions sit at 400).
+   Inside the page they were trapped: iOS makes the scrolling list (-webkit-overflow-scrolling) its own
+   stacking layer, so the tab bar covered them, and an animated parent pinned them to the page. */
+function Sheet({T,onClose,title,children,maxH,z,portal,inline}){
+  if(!inline)return ReactDOM.createPortal(h(Sheet,{T,onClose,title,children,maxH,z:1000+(z||70),inline:true}),document.body);
   return h('div',{style:{position:'fixed',inset:0,zIndex:z||70}},
     h('div',{onClick:onClose,className:'fdin',style:{position:'absolute',inset:0,background:T.overlay}}),
     h('div',{className:'shn',style:{position:'absolute',left:0,right:0,bottom:0,background:T.sheet,color:T.fg,borderRadius:'16px 16px 0 0',maxHeight:maxH||'88%',display:'flex',flexDirection:'column',boxShadow:'0 -8px 40px rgba(0,0,0,.25)'}},
@@ -2147,7 +2148,7 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
   const dark=overVideo||isDarkTheme(T.id);
   const idx=NAV_ITEMS.findIndex(n=>n[0]===active);
   const fg=overVideo?'#ffffff':T.fg, onFg=overVideo?'#000000':T.bg;
-  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(8px + '+SAFE_BF+')',zIndex:plusOpen?76:35,
+  return h('nav',{'aria-label':'Sections',style:{position:'fixed',left:0,right:0,bottom:'calc(8px + '+SAFE_BF+')',zIndex:plusOpen?1076:35,
       display:'flex',justifyContent:'center',padding:'0 14px',pointerEvents:'none'}},
     h('div',{style:{pointerEvents:'auto',width:'auto',padding:6,borderRadius:30,
         background:dark?'rgba(30,30,34,.74)':hexA(T.bg,.8),backdropFilter:'saturate(180%) blur(24px)',WebkitBackdropFilter:'saturate(180%) blur(24px)',
@@ -3881,14 +3882,14 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   /* iPhone Shortcuts' "Copy to Clipboard" with a URL puts a *URL* on the clipboard, not plain text, and
      readText() alone sees nothing — so read every type (uri-list, plain, html) before giving up. */
   const readClip=async()=>{
-    let denied=false;
-    try{if(navigator.clipboard&&navigator.clipboard.read){const items=await navigator.clipboard.read();
-      for(const it of items)for(const type of ['text/uri-list','text/plain','text/html']){if(!(it.types||[]).includes(type))continue;
-        const t=await (await it.getType(type)).text();
-        const v=type==='text/html'?((t.match(/href=["']([^"']+)/)||[])[1]||t):t;if(v&&v.trim())return{text:v}}}}
-    catch(e){if(e&&e.name==='NotAllowedError')denied=true}
-    try{const t=await navigator.clipboard.readText();if(t&&t.trim())return{text:t}}catch(e){if(e&&e.name==='NotAllowedError')denied=true}
-    return{text:'',denied}};
+    const cb=navigator.clipboard;if(!cb)return{text:'',err:'no clipboard'};
+    if(cb.read){
+      try{const items=await cb.read();const seen=[];
+        for(const it of items)for(const type of (it.types||[])){seen.push(type);if(!/^text\/|url/i.test(type))continue;
+          try{const t=await (await it.getType(type)).text();const v=/html/.test(type)?((t.match(/href=["']([^"']+)/)||[])[1]||t):t;if(v&&v.trim())return{text:v,types:seen}}catch(e){}}
+        return{text:'',types:seen}}
+      catch(e){return{text:'',denied:!!(e&&e.name==='NotAllowedError'),err:(e&&e.name)||'error'}}}
+    try{const t=await cb.readText();return{text:t||''}}catch(e){return{text:'',denied:!!(e&&e.name==='NotAllowedError'),err:(e&&e.name)||'error'}}};
   const urlIn=t=>extractFirstUrl(t)||(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(String(t||'').trim())?'https://'+String(t).trim():'');
   const openShared=async u=>{
     setShared({url:u,title:'',loading:true});
@@ -3898,7 +3899,7 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
   const pasteShared=async()=>{
     const r=await readClip();const u=urlIn(r.text);
     if(u){openShared(u);return}
-    setShared({manual:true,denied:r.denied,draft:''}); // couldn't read it: a box to paste into by hand
+    setShared({manual:true,denied:r.denied,types:r.types,err:r.err,draft:''}); // couldn't read it: a box to paste into by hand
   };
   const followShared=u=>{let site=u;try{site=new URL(u).origin+'/'}catch(e){}setShared(null);setEdit({groupId:null,name:'',url:site,fromShare:true})};
   const saveSharedPost=x=>{const u=x.url;
@@ -4090,11 +4091,13 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
 
     shared&&shared.manual?h(Sheet,{T,title:'Paste the link',onClose:()=>setShared(null)},
       h('div',{style:{padding:'0 18px 18px'}},
-        h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},shared.denied?'iPhone didn’t let Instapaper read the clipboard (tap “Paste” on the little bubble next time). For now:':'Instapaper couldn’t read the clipboard. Tap the box below, then tap Paste:'),
+        h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},shared.denied?'iPhone didn’t let Instapaper read the clipboard — next time tap the little “Paste” bubble that appears by the button. For now, tap the box and choose Paste:'
+          :shared.types&&!shared.types.length?'The clipboard is empty. Share a link with the shortcut first, or tap the box and choose Paste:':'Instapaper couldn’t find a link on the clipboard. Tap the box below and choose Paste:'),
         h('input',{autoFocus:true,value:shared.draft||'',onChange:e=>{const v=e.target.value;const u=urlIn(v);if(u)openShared(u);else setShared(x=>x&&{...x,draft:v})},
           placeholder:'Tap here, then Paste',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
           style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'13px',fontSize:16}}),
-        h('button',{onClick:()=>setShared({help:true}),style:{marginTop:14,fontSize:12.5,color:T.accent,fontWeight:600}},'Set up the share shortcut'))):null,
+        h('button',{onClick:()=>setShared({help:true}),style:{marginTop:14,fontSize:12.5,color:T.accent,fontWeight:600}},'Set up the share shortcut'),
+        h('div',{style:{fontSize:10.5,color:T.sub,marginTop:10,opacity:.7}},'Clipboard check: '+(shared.err?shared.err:shared.types?(shared.types.join(', ')||'nothing'):'—')))):null,
     shared&&!shared.help&&!shared.manual?h(Sheet,{T,title:'Shared link',onClose:()=>setShared(null)},
       h('div',{style:{padding:'0 18px 6px'}},
         h('div',{style:{display:'flex',gap:12,alignItems:'center',padding:'10px 12px',borderRadius:12,background:T.card,marginBottom:12}},
