@@ -7769,6 +7769,25 @@ function SocialFeedBox({T,brief,update}){
     fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000).then(r=>r.ok?r.json():null).then(j=>{if(alive){if(j&&j.links)setIx(j);else setErr(true)}},()=>{if(alive)setErr(true)});
     return()=>{alive=false}},[]);
   const mine=socialAccountsOf(brief);
+  /* add accounts right here: pick a platform, type or paste handles (several at once) */
+  const [addP,setAddP]=useState('instagram'),[addTxt,setAddTxt]=useState('');
+  const addAccounts=()=>{
+    const have=new Set(mine.map(a=>a.platform+':'+(a.handle||'').toLowerCase()));
+    const raws=addTxt.split(/[\s,;\n]+/).map(x=>x.trim()).filter(Boolean);
+    const fresh=[];let skipped=0;
+    raws.forEach(r=>{
+      const hh=addP==='telegram'?tgHandle(r):socialHandle(addP,r);
+      if(!hh||!/^[\w.]{2,}$/.test(hh)){skipped++;return}
+      const k=addP+':'+hh.toLowerCase();if(have.has(k)){skipped++;return}have.add(k);
+      const base={id:uid(),groupId:null,addedAt:Date.now(),channelId:'',feedUrl:''};
+      fresh.push(addP==='telegram'
+        ?{...base,kind:'telegram',handle:hh,url:'https://t.me/'+hh,name:'@'+hh}
+        :{...base,kind:'link',handle:hh,url:SOCIAL[addP].profile(hh),platform:addP,socialHandle:hh,name:'@'+hh+' · '+SOCIAL[addP].label});
+    });
+    if(fresh.length){update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).concat(fresh)}}));setAddTxt('')}
+    setNote(fresh.length?'✓ Added '+fresh.length+(fresh.length===1?' account':' accounts')+(addP==='telegram'?'. Telegram needs no link.':'. Now get its RSS.app link below.')+(skipped?' ('+skipped+' skipped: duplicate or not a handle)':''):'Nothing added: type a handle like natgeo (or paste a profile link).');
+    setTimeout(()=>setNote(''),6000);
+  };
   const NAMES={all:'All accounts',telegram:'Telegram',instagram:'Instagram',x:'X',threads:'Threads',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
   const copy=(k,u)=>{copyText(u);setCopied(k);setTimeout(()=>setCopied(''),2000)};
   const noLink=mine.filter(a=>a.platform!=='telegram'&&!a.feed);
@@ -7776,7 +7795,7 @@ function SocialFeedBox({T,brief,update}){
   const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
   return h('div',{style:{padding:'0 20px'}},
     h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app. After adding or removing accounts, tap “Update sources on GitHub” above.'),
-    !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts in My Routine yet.')
+    !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts yet. Add them below.')
     :ix?h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
       Object.keys(ix.links).map(k=>h('div',{key:k,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
         h('div',{style:{flex:1,minWidth:0}},
@@ -7786,6 +7805,15 @@ function SocialFeedBox({T,brief,update}){
       h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
       bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
     :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” above and commit; the feed appears within 15 minutes.':'Loading…'),
+    h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+      h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
+      h('div',{style:{display:'flex',gap:6,marginBottom:8}},[['instagram','Instagram'],['x','X'],['telegram','Telegram']].map(([k,l])=>h('button',{key:k,onClick:()=>setAddP(k),className:'act95',
+        style:{padding:'6px 12px',borderRadius:14,fontSize:13,fontWeight:600,background:addP===k?T.fg:T.search,color:addP===k?T.bg:T.fg}},l))),
+      h('textarea',{value:addTxt,onChange:e=>setAddTxt(e.target.value),rows:2,autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        placeholder:addP==='telegram'?'Channel names, e.g. telugutechnews (or t.me links)':'Handles, e.g. natgeo  nasa  (or profile links), one or many',
+        style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:9,padding:'10px 11px',fontSize:14,resize:'none',fontFamily:'inherit'}}),
+      h('button',{onClick:addAccounts,disabled:!addTxt.trim(),className:'act95',
+        style:{marginTop:8,padding:'9px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:addTxt.trim()?1:.5}},'Add')),
     noLink.length||pending?h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
       h('div',{style:{fontSize:14,fontWeight:650,marginBottom:4}},noLink.length+(noLink.length===1?' account needs':' accounts need')+' an RSS.app link'),
       pending&&mine.find(a=>a.id===pending)?h('div',{style:{marginBottom:10}},
