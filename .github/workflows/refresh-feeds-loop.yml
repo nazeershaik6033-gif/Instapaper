@@ -4,7 +4,8 @@ name: Refresh feeds (every 15 min)
 # This job doesn't depend on the scheduler. One run stays alive for ~5.5 hours and refreshes
 # feeds.json every 15 minutes, then starts the next run of itself (a workflow_dispatch made with
 # the job's own token is allowed to start a run). Free on a public repo.
-# Each pass also builds your social RSS feed (scripts/build-social-feed.mjs) on the `social-feed` branch.
+# Each pass first applies any "sources" issue the app opened for you (one tap in the app), then
+# refreshes, and builds your social RSS feed (scripts/build-social-feed.mjs) on the `social-feed` branch.
 #   Start it:  Actions -> "Refresh feeds (every 15 min)" -> Run workflow (it also starts when this file changes on main)
 #   Stop it:   cancel the running job, or Actions -> this workflow -> ... -> Disable workflow
 on:
@@ -15,9 +16,10 @@ on:
 permissions:
   contents: write
   actions: write
-concurrency:
-  group: refresh-feeds-loop
-  cancel-in-progress: false   # the next run waits for this one to finish, so only one loop ever runs
+  issues: write
+# No `concurrency` group on purpose: a queued run would wait hours behind an older loop. Instead the
+# newest run cancels every older run of this workflow as its first step, so there is only ever one loop
+# and a changed workflow file takes over straight away.
 jobs:
   loop:
     runs-on: ubuntu-latest
@@ -26,6 +28,14 @@ jobs:
       EVERY_MIN: 15
       RUN_FOR_MIN: 330
     steps:
+      - name: Take over from any older loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow refresh-feeds-loop.yml --limit 50 \
+              --json databaseId,status \
+              --jq ".[] | select(.databaseId != $GITHUB_RUN_ID) | select(.status == \"in_progress\" or .status == \"queued\" or .status == \"pending\" or .status == \"waiting\") | .databaseId" \
+            | while read -r id; do echo "cancelling older run $id"; gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true; done
       - uses: actions/checkout@v4
         with:
           ref: main
@@ -45,11 +55,33 @@ jobs:
               && git add -A && git commit -q -m "$2 $(date -u +%FT%TZ)" \
               && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" "$2" )
           }
+          # Apply "sources" issues opened by the repo owner (the app's "Update sources on GitHub" button):
+          # write routine-sources.json, commit it to main, answer and close the issue.
+          apply_issues() {
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open --author "$GITHUB_REPOSITORY_OWNER" --limit 20 \
+                --json number,title,authorAssociation \
+                --jq '[.[] | select(.authorAssociation == "OWNER") | select(.title | ascii_downcase | startswith("sources"))] | sort_by(.number) | .[].number' |
+            while read -r n; do
+              gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/issue.txt"
+              if why=$(node scripts/apply-sources.mjs "$RUNNER_TEMP/issue.txt" routine-sources.json 2>&1); then
+                git config user.name "feed-refresh[bot]"; git config user.email "feed-refresh@users.noreply.github.com"
+                git add routine-sources.json
+                if git diff --cached --quiet; then msg="Already up to date: $why"
+                elif git commit -q -m "Update routine sources from the app (issue #$n)" && git push -q origin HEAD:main; then msg="Applied: $why. The feeds refresh within 15 minutes."
+                else msg="Could not push to main (is it protected?). Nothing was changed."; git reset -q --hard FETCH_HEAD; fi
+              else msg="Not applied: $why"; fi
+              echo "issue #$n: $msg"
+              gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$msg" || true
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" || true
+            done
+          }
           end=$(( $(date +%s) + RUN_FOR_MIN * 60 ))
           while :; do
             started=$(date +%s)
             # pick up source-list or script changes on main without restarting the loop
-            git fetch -q --depth 1 origin main && git checkout -q FETCH_HEAD -- routine-sources.json scripts/ || true
+            # always start a pass from the newest main (new sources, scripts, workflow tweaks)
+            git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD || true
+            apply_issues || true
             pub="$RUNNER_TEMP/pub"; rm -rf "$pub"; mkdir -p "$pub/feeds" "$pub/social"
             if [ -f routine-sources.json ] && node scripts/refresh-feeds.mjs routine-sources.json "$pub/feeds/feeds.json"; then
               publish "$pub/feeds" feeds-data && echo "feeds published $(date -u +%T)" || echo "feeds publish failed $(date -u +%T)"
