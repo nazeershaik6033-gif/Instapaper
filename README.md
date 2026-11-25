@@ -242,7 +242,7 @@ To stop it, cancel the running job or disable the workflow. Free because the rep
 **Your own social RSS feed.** Each pass also builds RSS feeds from the Telegram, Instagram and X accounts in My Routine
 (`scripts/build-social-feed.mjs`) on the `social-feed` branch: `all.xml` (every account, newest first) plus one file per
 platform (`telegram.xml`, `instagram.xml`, `x.xml`). Open them in Feedly, Reeder, Inoreader or any RSS app; the links (with
-Copy buttons) are in **Settings → Behavior → My social RSS feed**. Telegram channels are read from their public `t.me/s/`
+Copy buttons) are in **Settings → Social RSS feed**. Telegram channels are read from their public `t.me/s/`
 page for free. Instagram and X have no public feed, so each account needs a feed link from RSS.app pasted into the account
 in My Routine (Manage → Edit → *Bridge feed link*); the same Settings section lists the accounts still missing one. After
 adding or removing accounts, tap **Update sources on GitHub** so the server knows about them.

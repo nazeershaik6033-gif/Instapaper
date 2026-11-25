@@ -7794,7 +7794,7 @@ function SocialFeedBox({T,brief,update}){
   const bad=ix?ix.accounts.filter(a=>a.status!=='ok'&&a.status!=='needs-feed-link'):[];
   const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
   return h('div',{style:{padding:'0 20px'}},
-    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app. After adding or removing accounts, tap “Update sources on GitHub” above.'),
+    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app. After adding or removing accounts, tap “Update sources on GitHub” at the bottom of this page.'),
     !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts yet. Add them below.')
     :ix?h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
       Object.keys(ix.links).map(k=>h('div',{key:k,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
@@ -7804,7 +7804,7 @@ function SocialFeedBox({T,brief,update}){
         h('button',{onClick:()=>copy(k,ix.links[k]),className:'act95',style:{padding:'7px 12px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,flexShrink:0}},copied===k?'Copied ✓':'Copy'))),
       h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
       bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
-    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” above and commit; the feed appears within 15 minutes.':'Loading…'),
+    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” at the bottom of this page and commit; the feed appears within 15 minutes.':'Loading…'),
     h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
       h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
       h('div',{style:{display:'flex',gap:6,marginBottom:8}},[['instagram','Instagram'],['x','X'],['telegram','Telegram']].map(([k,l])=>h('button',{key:k,onClick:()=>setAddP(k),className:'act95',
@@ -7828,7 +7828,7 @@ function SocialFeedBox({T,brief,update}){
         onClick:()=>{copyText(a.profile||'');pend(a.id||'');setNote('');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
         style:{padding:'7px 11px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.id===pending?T.fg:T.search,color:a.id===pending?T.bg:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null,
     note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null,
-    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” above (and press Commit) so the server starts building your feed.'):null);
+    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” at the bottom of this page (and press Commit) so the server starts building your feed.'):null);
 }
 function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
@@ -7868,7 +7868,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
     h('span',{style:{display:'flex',color:T.meta}},icon),
     h('span',{style:{flex:1,fontSize:16}},label),
     h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
-  const PAGE_TITLES={homepage:'Home page',display:'Display & Motion',appearance:'Appearance',behavior:'Behavior',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
+  const PAGE_TITLES={homepage:'Home page',display:'Display & Motion',appearance:'Appearance',behavior:'Behavior',socialrss:'Social RSS feed',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
@@ -7886,6 +7886,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
         navRow('Display & Motion','display',Icons.sun(20)),
         navRow('Appearance','appearance',Icons.contrast(20)),
         navRow('Behavior','behavior',Icons.bolt(20)),
+        navRow('Social RSS feed','socialrss',Icons.rss(20)),
         navRow('Voices','voices',Icons.headphones(20)),
         navRow('AI Assistant','ai',Icons.ai(20)),
         navRow('Browser & Sites','sites',Icons.globe(20)),
@@ -7996,8 +7997,6 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
               copyText(sourcesJson(data.brief));setSrcCopied(urls.length);setTimeout(()=>setSrcCopied(0),2500)},
             className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
             srcCopied>0?'Copied '+srcCopied+' sources ✓':'Copy my sources'))),
-      head('My social RSS feed'),
-      h(SocialFeedBox,{T,brief:data.brief,update}),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
@@ -8108,6 +8107,14 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
             style:{padding:'8px 14px',borderRadius:18,fontSize:13,fontWeight:600,flexShrink:0,background:(S.whisperModel||'small')===id?T.fg:T.card,color:(S.whisperModel||'small')===id?T.bg:T.fg}},label))),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:6,lineHeight:1.5}},
           (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+(txOnMac(S)?'Rough time on an Apple-silicon Mac for a 1-hour video: Tiny ~2 min \u00b7 Small ~8 min \u00b7 Medium ~20 min \u00b7 Large v3 ~45 min.':'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min.')+' Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
+  }else if(page==='socialrss'){
+    content=h(Fragment,null,
+      h(SocialFeedBox,{T,brief:data.brief,update}),
+      head('Send to the server'),
+      h('div',{style:{padding:'0 20px 12px'}},
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'After adding accounts or links, send your sources to GitHub so the server builds the feed. GitHub opens a file: press Commit.'),
+        h('button',{onClick:()=>setupServerRefresh(data.brief,()=>{}),className:'act95',
+          style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},snapshotWasSeen()?'Update sources on GitHub':'Save sources to GitHub')));
   }else if(page==='sites'){
     const curEng=window.InstaSearch?window.InstaSearch.engineOf(S):'google';
     const pickEng=e=>{set({agent:Object.assign({},S.agent||{},{engine:e})});setEngSaved(e)};
