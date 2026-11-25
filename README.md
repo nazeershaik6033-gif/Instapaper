@@ -1,4 +1,4 @@
-# Instapaper — Your Personal Reading App
+# Folio — Your Personal Reading App
 
 A premium read-it-later app, rebuilt as an installable web app (PWA). **Every premium feature is unlocked, free forever — no subscription.** Everything is stored privately on your device.
 
@@ -9,7 +9,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🗂️ **Sidebar (☰)** — a floating frosted card (~270px) with today's summary, a search that filters the menu or searches your library, and sections **Read** (Home, Liked, Archive) · **Follow** (My Routine, Headlines, Blogs) · **Library** (Books, Scans & Docs, Photos, Notes, Threads, Tags) · **Folders**, each foldable. Live counts (unread, new in My Routine and Blogs, books in progress, items per folder); **Edit** reorders or hides items; Browse · Focus · Edit · Settings sit in the bottom row
 - 🏠 **Home** keeps its title bar and filter chips fixed while you scroll (no more jumping list); a small ⇕ chip folds or opens every date group (This week, Last week, …) at once. Edition cards on Home follow your theme, and Settings everywhere uses a proper cog icon
 - 🧭 **My Routine top bar** — a quiet status line (*Morning · 15 new · updated 4m ago* — tap the window to switch it, tap the time to refresh, ⋯ for the menu), source chips with New counts, and a second row of group chips (All · each group with its count · 🕘 past days). Under each video: *Channel · 5h · New*, and a single ⋯ More button holds everything: Done, Save, transcript, newspaper, AI summary, translate, notes, share, copy link and open
-- 🔗 **Share to Blogs from any app (iPhone)** — a 6-step “Send to Instapaper Blogs” shortcut (steps inside the app: Blogs → Paste → How the share shortcut works) copies the shared link; in Blogs tap **Paste** and choose *Follow this blog* (Add blog opens with the site filled in and a group picker) or *Save just this post* (kept under “Saved posts”)
+- 🔗 **Share to Blogs from any app (iPhone)** — a 6-step “Send to Folio Blogs” shortcut (steps inside the app: Blogs → Paste → How the share shortcut works) copies the shared link; in Blogs tap **Paste** and choose *Follow this blog* (Add blog opens with the site filled in and a group picker) or *Save just this post* (kept under “Saved posts”)
 - 🎬 **Shorts for a channel or a section** — in the My Routine list, ▶ on a channel with new videos (and *▶ Shorts · N new* on a section header) opens a full-screen feed of just those, new first; swipe left (or from the left edge) to close. Today has no floating bar and the same swipe returns to the list. Videos marked Done count down the channel's “N new”, and a channel with none left shows Done
 - 🐋 **DeepSeek app** — Settings → AI → *DeepSeek app* sends every no-key AI hand-off (Summarize, Translate, Rewrite, Ask, Open in…, library / routine / blogs briefings) to DeepSeek instead of Claude; the Transcript sheet has a *DeepSeek app* option next to Claude. DeepSeek can't be pre-filled by a link, so the prompt is copied and you paste it
 - 📇 **My Routine, redesigned** — one selected app (YouTube · Instagram · X · Telegram…; no All, no Web) drives everything. Today: app chips with a 🕘 past-days button for that app, and for YouTube a row of channel circles (gradient ring = new) that filters the feed. Manage: a YouTube-Subscriptions-style list — avatar, name, @handle · N new, blue dot — under thin group headers, with group chips to filter and **Select** (or long-press) to mark several done / not done or delete them
@@ -128,7 +128,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 **Browser & Logged-In Sites**
 - 🌐 Built-in browser (sidebar → Browse, or Settings → Logged-In Sites): Google search by default, popups allowed, one-tap "Open in browser" for sites that refuse embedding
 - 💾 **Save / Share from the browser** — reading any page in the built-in browser? Tap **Save** to download & clean it straight into your reading list, or **Share** to send the link out via the system share sheet
-- 📥 **Share into Instapaper** — once installed to your home screen, Instapaper appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
+- 📥 **Share into Folio** — once installed to your home screen, Folio appears in your phone's share sheet, so you can share a link from any app and it lands in your Save dialog
 - ⭐ Save your favorite sites with favicons — add, rename, reorder, remove
 - 🎯 **Icons that always look right** — each site's icon is fetched sharp, and if a site has no usable icon you get a clean coloured letter tile instead of a blurry generic globe or an empty square
 - 📋 **Scannable list, not a sparse grid** — bookmarks are compact rows showing the site name, its address, and when you last opened it, so a whole screen of links fits at a glance
@@ -142,7 +142,7 @@ A premium read-it-later app, rebuilt as an installable web app (PWA). **Every pr
 - 🔐 **Encrypted password vault** — AES-256-GCM with a passcode (PBKDF2, 310k iterations); copy username/password with one tap while logging in. Nothing ever leaves your device; backups carry the vault still encrypted.
 
 **In-app browser & Browser Agent** (✦ in the browser's header, or ⋯ on a bookmark → Open in app browser)
-- Safari-style tabs, back/forward, find on page, share, and one-tap **Save page to Instapaper**; tabs are remembered between launches
+- Safari-style tabs, back/forward, find on page, share, and one-tap **Save page to Folio**; tabs are remembered between launches
 - **Smart** view renders any page on your phone without its scripts (so it always opens; links, forms and dropdowns work, script-heavy sites are pre-rendered remotely); **Live** view shows the real site — tap the badge in the address bar to switch
 - ✦ **Browser Agent** — a rebuild of [browser-use](https://github.com/browser-use/browser-use) that runs on the iPhone: give it a task and it searches, opens pages, clicks, types, scrolls, reads whole pages with AI, manages tabs, keeps a todo.md and notes, saves pages to your library, and reports back with sources. Live step timeline, pause/resume/stop, follow-ups, continue, run history; answers can be copied, shared, read aloud or saved as notes
 - Models: **Gemini** (free key, recommended), OpenRouter, Claude (Anthropic API), OpenAI, or Browser Use Cloud (beta). Settings: max steps, actions per step, thinking, flash mode, highlights, allowed domains, custom instructions, search engine

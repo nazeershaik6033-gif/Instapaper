@@ -1,4 +1,4 @@
-/* Instapaper — Newspaper editions of video transcripts.
+/* Folio — Newspaper editions of video transcripts.
    A transcript (pasted from youtubetotranscript.com or any other source) becomes a newspaper page:
    masthead, kicker, headline, standfirst, "In this edition" key points, section headings, pull
    quotes and a drop cap. AI only *arranges* the page — it picks the headline, summary, where each

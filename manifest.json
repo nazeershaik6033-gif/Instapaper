@@ -1,6 +1,6 @@
 {
-  "name": "Instapaper",
-  "short_name": "Instapaper",
+  "name": "Folio",
+  "short_name": "Folio",
   "description": "Save and store articles for reading: offline, on-the-go, anytime, anywhere, perfectly formatted.",
   "start_url": "./",
   "scope": "./",

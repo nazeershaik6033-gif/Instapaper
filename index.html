@@ -6,14 +6,14 @@
 <meta name="theme-color" content="#ffffff"/>
 <meta name="apple-mobile-web-app-capable" content="yes"/>
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
-<meta name="apple-mobile-web-app-title" content="Instapaper"/>
+<meta name="apple-mobile-web-app-title" content="Folio"/>
 <meta name="mobile-web-app-capable" content="yes"/>
 <meta name="description" content="Save and store articles for reading: offline, on-the-go, anytime, anywhere, perfectly formatted."/>
 <link rel="apple-touch-icon" href="icon-180.png"/>
 <link rel="apple-touch-icon" sizes="180x180" href="icon-180.png"/>
 <link rel="manifest" href="manifest.json"/>
-<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='36' height='36' viewBox='0 0 36 36'%3E%3Crect width='36' height='36' rx='7' fill='%23ffffff'/%3E%3Crect x='9' y='5' width='18' height='3' fill='%23141416'/%3E%3Crect x='15' y='5' width='6' height='26' fill='%23141416'/%3E%3Crect x='9' y='28' width='18' height='3' fill='%23141416'/%3E%3C/svg%3E"/>
-<title>Instapaper</title>
+<link rel="icon" type="image/svg+xml" href="data:image/svg+xml,%3Csvg%20xmlns='http://www.w3.org/2000/svg'%20viewBox='0%200%2064%2064'%3E%3Crect%20width='64'%20height='64'%20rx='14'%20fill='%23171a30'/%3E%3Cpath%20d='M19%2012h20l10%2010v27a4%204%200%200%201-4%204H19a4%204%200%200%201-4-4V16a4%204%200%200%201%204-4z'%20fill='%23f6efdf'/%3E%3Cpath%20d='M39%2012l10%2010H43a4%204%200%200%201-4-4z'%20fill='%23ff7a59'/%3E%3Cpath%20d='M23%2024h15v5H28v4h8v5h-8v9h-5z'%20fill='%23171a30'/%3E%3C/svg%3E"/>
+<title>Folio</title>
 <script>
 /* When embedded in another app (Naz Trades) inside an iframe, iOS Safari
    mis-applies "maximum-scale" / "viewport-fit=cover" and renders the app
@@ -195,7 +195,7 @@ input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;appearance:none;
 </style>
 </head>
 <body>
-<div class="spl" id="spl">Instapaper</div>
+<div class="spl" id="spl">Folio</div>
 <div id="root"></div>
 <script>
 /* Watchdog: if the app hasn't mounted shortly after load, the cached app.js
@@ -215,7 +215,7 @@ setTimeout(function(){
     try{if(navigator.serviceWorker)jobs.push(navigator.serviceWorker.getRegistrations().then(function(rs){return Promise.all(rs.map(function(r){return r.unregister()}))}))}catch(e){}
     Promise.all(jobs).then(reload,reload);
   }else if(spl){
-    spl.innerHTML='<div style="text-align:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#76767c;padding:30px;line-height:1.55">Couldn’t load Instapaper.<br/>Check your connection, then fully close and reopen the app.</div>';
+    spl.innerHTML='<div style="text-align:center;font-family:-apple-system,BlinkMacSystemFont,sans-serif;font-size:15px;color:#76767c;padding:30px;line-height:1.55">Couldn’t load Folio.<br/>Check your connection, then fully close and reopen the app.</div>';
   }
 },7000);
 </script>
