@@ -130,7 +130,7 @@ html.motion-rich .fdin{animation:fdk2 280ms cubic-bezier(.2,.8,.2,1) both}
 html.motion-rich .act95,html.motion-rich .act90{transition:transform 320ms cubic-bezier(.2,1.5,.4,1)}
 html.motion-rich .act98{transition:transform 320ms cubic-bezier(.2,1.5,.4,1),opacity 150ms,background-color 150ms}
 html.motion-rich .act98:active{transform:scale(.97);opacity:.8}
-.pgin{animation:pgk 340ms cubic-bezier(.2,.9,.2,1) both}
+.pgin{animation:pgk 340ms cubic-bezier(.2,.9,.2,1) backwards} /* "backwards", not "both": a transform kept after the animation would trap position:fixed sheets inside the page */
 html.motion-subtle .pgin{animation-duration:180ms}
 .tabpop{animation:tabk 420ms cubic-bezier(.2,1.2,.4,1) both}
 /* floating bottom nav: gliding highlight pill (squash & stretch on the move) and a springy, glowing + */
