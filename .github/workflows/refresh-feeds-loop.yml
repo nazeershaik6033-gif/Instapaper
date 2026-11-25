@@ -1,0 +1,67 @@
+name: Refresh feeds (every 30 min)
+# GitHub's cron is best-effort: on a quiet repo the "Refresh feeds (schedule)" job fires only
+# every 4-6 hours, so My Routine's server copy can be hours behind a new upload.
+# This job doesn't depend on the scheduler. One run stays alive for ~5.5 hours and refreshes
+# feeds.json every 30 minutes, then starts the next run of itself (a workflow_dispatch made with
+# the job's own token is allowed to start a run). Free on a public repo.
+#   Start it:  Actions -> "Refresh feeds (every 30 min)" -> Run workflow (it also starts when this file changes on main)
+#   Stop it:   cancel the running job, or Actions -> this workflow -> ... -> Disable workflow
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths: [.github/workflows/refresh-feeds-loop.yml]
+permissions:
+  contents: write
+  actions: write
+concurrency:
+  group: refresh-feeds-loop
+  cancel-in-progress: false   # the next run waits for this one to finish, so only one loop ever runs
+jobs:
+  loop:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    env:
+      EVERY_MIN: 30
+      RUN_FOR_MIN: 330
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Refresh every ${{ env.EVERY_MIN }} minutes
+        timeout-minutes: 340
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          publish() {
+            pub="$RUNNER_TEMP/pub"; rm -rf "$pub"; mkdir -p "$pub"
+            cp "$RUNNER_TEMP/feeds.json" "$pub/feeds.json"
+            ( cd "$pub" && git init -q -b feeds-data \
+              && git config user.name "feed-refresh[bot]" \
+              && git config user.email "feed-refresh@users.noreply.github.com" \
+              && git add feeds.json && git commit -q -m "feeds $(date -u +%FT%TZ)" \
+              && git push -q -f "https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git" feeds-data )
+          }
+          end=$(( $(date +%s) + RUN_FOR_MIN * 60 ))
+          while :; do
+            started=$(date +%s)
+            # pick up source-list or script changes on main without restarting the loop
+            git fetch -q --depth 1 origin main && git checkout -q FETCH_HEAD -- routine-sources.json scripts/refresh-feeds.mjs || true
+            if [ -f routine-sources.json ] && node scripts/refresh-feeds.mjs routine-sources.json "$RUNNER_TEMP/feeds.json"; then
+              publish && echo "published $(date -u +%T)" || echo "publish failed $(date -u +%T)"
+            else
+              echo "refresh failed $(date -u +%T)"
+            fi
+            next=$(( started + EVERY_MIN * 60 ))
+            [ "$next" -ge "$end" ] && break
+            wait_s=$(( next - $(date +%s) ))
+            if [ "$wait_s" -gt 0 ]; then sleep "$wait_s"; fi
+          done
+      - name: Start the next run
+        if: ${{ always() && !cancelled() }}
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh workflow run refresh-feeds-loop.yml --ref main --repo "$GITHUB_REPOSITORY"
