@@ -1,4 +1,4 @@
-/* Folio — Insights: the Home dashboard and the small activity log behind it.
+/* Evolve — Insights: the Home dashboard and the small activity log behind it.
    Saved items, highlights, notes, transcripts and My Routine check-offs already carry dates, so
    those compare week-on-week and month-on-month straight away. Time spent reading/watching and
    items finished/watched have no dates in the library, so they are logged per day from now on

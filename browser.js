@@ -1,4 +1,4 @@
-/* Folio — Browser + Browser Agent (React)
+/* Evolve — Browser + Browser Agent (React)
    An on-device rebuild of the browser-use agent loop for iPhone:
    - multi-tab browser with two views per tab:
        Live  — the real site in an iframe (full JavaScript, your cookies; some sites refuse embedding)
@@ -680,7 +680,7 @@ async function llmCall(cfg,messages,o){
     const m=j.choices&&j.choices[0]&&j.choices[0].message;text=m&&m.content||'';
   }else{
     const mk=withFmt=>{const b={model:cfg.model,messages:(sys?[{role:'system',content:sys}]:[]).concat(conv),max_tokens:maxT,temperature:0.2};if(withFmt)b.response_format={type:'json_object'};return b};
-    const send=b=>httpJSON('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':'Bearer '+cfg.key,'Content-Type':'application/json','X-Title':'Folio PWA'},body:JSON.stringify(b)},150000,o.onWait,'OpenRouter');
+    const send=b=>httpJSON('https://openrouter.ai/api/v1/chat/completions',{method:'POST',headers:{'Authorization':'Bearer '+cfg.key,'Content-Type':'application/json','X-Title':'Evolve PWA'},body:JSON.stringify(b)},150000,o.onWait,'OpenRouter');
     let j;
     try{j=await send(mk(json))}catch(e){if(json&&e.status===400)j=await send(mk(false));else throw e}
     const m=j.choices&&j.choices[0]&&j.choices[0].message;
@@ -735,7 +735,7 @@ const ACTIONS={
   write_file:{d:'Write (or append=true to add to) a file in your file system. Allowed: .md .txt .json .csv',p:'{"file_name": string, "content": string, "append"?: boolean}'},
   read_file:{d:'Read a file from your file system (shown once in <read_state>).',p:'{"file_name": string}'},
   replace_file_str:{d:'Replace text inside a file, e.g. "- [ ] step" → "- [x] step" in todo.md.',p:'{"file_name": string, "old_str": string, "new_str": string}'},
-  save_to_library:{d:'Save a web page to the user’s Folio reading list for offline reading (defaults to the current page). Use only when the user asks to save, bookmark or keep pages.',p:'{"url"?: string}'},
+  save_to_library:{d:'Save a web page to the user’s Evolve reading list for offline reading (defaults to the current page). Use only when the user asks to save, bookmark or keep pages.',p:'{"url"?: string}'},
   done:{d:'Finish and report to the user. text = the complete final answer in markdown (include the key facts and source links — it is the ONLY thing the user sees). success=true only if the whole request was completed. files_to_display = file names to attach.',p:'{"text": string, "success": boolean, "files_to_display"?: string[]}'}
 };
 const INDEX_ACTIONS=new Set(['click','input_text','send_keys','get_dropdown_options','select_dropdown_option']);
@@ -2181,7 +2181,7 @@ function BUBrowser(props){
     sheet==='menu'?h(Sheet,{T,onClose:()=>setSheet(null),z:95},
       active&&active.url?h(Fragment,null,
         h('div',{style:{padding:'6px 20px 10px',fontSize:13,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},active.title||active.url),
-        h(ARow,{T,icon:Icons.download(21),label:'Save page to Folio',sub:'Download it for offline reading',onClick:async()=>{setSheet(null);const m=await onSaveUrl(active.url);if(m)toastFn(m)}}),
+        h(ARow,{T,icon:Icons.download(21),label:'Save page to Evolve',sub:'Download it for offline reading',onClick:async()=>{setSheet(null);const m=await onSaveUrl(active.url);if(m)toastFn(m)}}),
         h(ARow,{T,icon:Icons.globe(21),label:active.mode==='smart'?'Switch to Live view':active.mode==='app'?'Try the full site in Smart view':'Switch to Smart view',sub:active.mode==='smart'?'The real site with scripts and your logins':active.mode==='app'?'Usually mostly blank for this site':'Always loads; works with the agent',onClick:()=>{setSheet(null);switchView()}}),
         active.mode==='smart'?h(ARow,{T,icon:BI.find(21),label:'Find on page',onClick:()=>setSheet('find')}):null,
         SXm()?h(ARow,{T,icon:SXm().icons.shield(21),label:'Shields for this site',sub:scActive&&scActive.shields?(active.mode==='smart'&&active.shield?(active.shield.blocked||0)+' blocked · '+(active.shield.hidden||0)+' removed':'Up'):'Down on this site',onClick:()=>setSheet('shield')}):null,
