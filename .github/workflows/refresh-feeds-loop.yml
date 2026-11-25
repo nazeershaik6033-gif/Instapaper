@@ -15,9 +15,9 @@ on:
 permissions:
   contents: write
   actions: write
-concurrency:
-  group: refresh-feeds-loop
-  cancel-in-progress: false   # the next run waits for this one to finish, so only one loop ever runs
+# No `concurrency` group on purpose: a queued run would wait hours behind an older loop. Instead the
+# newest run cancels every older run of this workflow as its first step, so there is only ever one loop
+# and a changed workflow file takes over straight away.
 jobs:
   loop:
     runs-on: ubuntu-latest
@@ -26,6 +26,14 @@ jobs:
       EVERY_MIN: 15
       RUN_FOR_MIN: 330
     steps:
+      - name: Take over from any older loop
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          gh run list --repo "$GITHUB_REPOSITORY" --workflow refresh-feeds-loop.yml --limit 50 \
+              --json databaseId,status \
+              --jq ".[] | select(.databaseId != $GITHUB_RUN_ID) | select(.status == \"in_progress\" or .status == \"queued\" or .status == \"pending\" or .status == \"waiting\") | .databaseId" \
+            | while read -r id; do echo "cancelling older run $id"; gh run cancel "$id" --repo "$GITHUB_REPOSITORY" || true; done
       - uses: actions/checkout@v4
         with:
           ref: main
