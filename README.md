@@ -234,10 +234,18 @@ A GitHub Action fetches the same sources from a server instead and the app reads
 The app shows that snapshot instantly, then still fetches live anything the snapshot doesn't cover or that is more than
 20 minutes old — and **Refresh** always fetches live. The status line under the tabs says how current the list really is.
 
-**Every 30 minutes, GitHub only.** The **Refresh feeds (every 30 min)** workflow (`.github/workflows/refresh-feeds-loop.yml`)
-doesn't rely on GitHub's scheduler: one run stays alive for about 5½ hours, refreshes `feeds.json` every 30 minutes, then
-starts the next run of itself. It starts by itself when that file lands on `main` (or Actions → the workflow → *Run workflow*).
+**Every 15 minutes, GitHub only.** The **Refresh feeds (every 15 min)** workflow (`.github/workflows/refresh-feeds-loop.yml`)
+doesn't rely on GitHub's scheduler: one run stays alive for about 5½ hours, refreshes `feeds.json` every 15 minutes, then
+starts the next run of itself. It starts by itself when that file changes on `main` (or Actions → the workflow → *Run workflow*).
 To stop it, cancel the running job or disable the workflow. Free because the repo is public.
+
+**Your own social RSS feed.** Each pass also builds RSS feeds from the Telegram, Instagram and X accounts in My Routine
+(`scripts/build-social-feed.mjs`) on the `social-feed` branch: `all.xml` (every account, newest first) plus one file per
+platform (`telegram.xml`, `instagram.xml`, `x.xml`). Open them in Feedly, Reeder, Inoreader or any RSS app; the links (with
+Copy buttons) are in **Settings → Behavior → My social RSS feed**. Telegram channels are read from their public `t.me/s/`
+page for free. Instagram and X have no public feed, so each account needs a feed link from RSS.app pasted into the account
+in My Routine (Manage → Edit → *Bridge feed link*); the same Settings section lists the accounts still missing one. After
+adding or removing accounts, tap **Update sources on GitHub** so the server knows about them.
 
 **On-time server refresh (optional, Cloudflare).** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a
 day at random times (the Actions history shows gaps of 5–8 hours), so the server copy can be hours old at your routine time.
