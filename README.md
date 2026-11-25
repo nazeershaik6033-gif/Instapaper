@@ -226,10 +226,10 @@ My Routine reads YouTube / Telegram / RSS in the browser through free public pro
 A GitHub Action fetches the same sources from a server instead and the app reads the result first:
 
 1. In the app tap **Fix this for good: set up server refresh** (shown in Catch-up when feeds fail), or **Settings → Behavior → Server-side refresh → Save sources to GitHub**.
-2. GitHub opens a new `routine-sources.json` with your sources already filled in — press **Commit new file**.
+2. GitHub opens a ready-made issue called “sources: update” holding your sources — press **Submit new issue**. The refresh job applies it to `routine-sources.json` (only for issues opened by the repo owner, and only if the list is well-formed), commits it to `main` and closes the issue, within 15 minutes.
 3. That commit starts the **Refresh feeds** workflow by itself (Actions tab shows the run). After that it runs on GitHub's schedule
    and publishes `feeds.json` to the `feeds-data` branch (so `main` stays clean).
-   When you add or remove sources, tap **Update sources on GitHub**: the list is copied and the file's edit page opens — paste and commit.
+   When you add or remove sources, tap **Update sources on GitHub** again and press **Submit new issue**. (A very long list doesn't fit in a link, so it is copied for you to paste into the issue's box.)
 
 The app shows that snapshot instantly, then still fetches live anything the snapshot doesn't cover or that is more than
 20 minutes old — and **Refresh** always fetches live. The status line under the tabs says how current the list really is.
@@ -245,7 +245,8 @@ platform (`telegram.xml`, `instagram.xml`, `x.xml`). Open them in Feedly, Reeder
 Copy buttons) are in **Settings → Social RSS feed**. Telegram channels are read from their public `t.me/s/`
 page for free. Instagram and X have no public feed, so each account needs a feed link from RSS.app pasted into the account
 in My Routine (Manage → Edit → *Bridge feed link*); the same Settings section lists the accounts still missing one. After
-adding or removing accounts, tap **Update sources on GitHub** so the server knows about them.
+adding or removing accounts, tap **Update sources on GitHub** and press **Submit new issue** so the server knows about them.
+Read the combined feed inside the app from the sidebar (**Follow → Social feed**) or the button at the top of **Settings → Social RSS feed**: newest first, filter by platform, tap a post to open it.
 
 **On-time server refresh (optional, Cloudflare).** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a
 day at random times (the Actions history shows gaps of 5–8 hours), so the server copy can be hours old at your routine time.

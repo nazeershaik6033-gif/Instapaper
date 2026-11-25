@@ -944,13 +944,19 @@ function sourcesGithubUrl(brief,exists,inline){
 /* GitHub fails on very long query strings (a long source list opens a blank or error page),
    so past a safe length the list goes to the clipboard and the page opens empty to paste into. */
 const GH_URL_MAX=3500;
+/* One tap: GitHub opens a ready-made issue holding your sources; press "Submit new issue" and the
+   server job applies it (and closes the issue) within 15 minutes. No file to edit, no token. */
+const sourcesCompact=brief=>{const accounts=socialAccountsOf(brief).map(({id,...a})=>a);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)})};
+function sourcesIssueUrl(brief,withBody){
+  const{owner,repo}=repoSlug(),u='https://github.com/'+owner+'/'+repo+'/issues/new?title='+encodeURIComponent('sources: update');
+  return withBody?u+'&body='+encodeURIComponent('```json\n'+sourcesCompact(brief)+'\n```'):u;
+}
 function setupServerRefresh(brief,toastFn){
-  const exists=snapshotWasSeen();
-  if(!sourceUrlsOf(brief).length){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
-  const full=sourcesGithubUrl(brief,exists),inline=!exists&&full.length<=GH_URL_MAX;
-  if(!inline){copyText(sourcesJson(brief));toastFn&&toastFn('Sources copied — paste them into the file, then press Commit')}
-  else toastFn&&toastFn('On GitHub, press “Commit new file”');
-  openExternalUrl(inline?full:sourcesGithubUrl(brief,exists,false));
+  if(!sourceUrlsOf(brief).length&&!socialAccountsOf(brief).length){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
+  const full=sourcesIssueUrl(brief,true),inline=full.length<=7000; // longer lists don't fit in a link: copy them instead
+  if(!inline){copyText('```json\n'+sourcesCompact(brief)+'\n```');toastFn&&toastFn('Sources copied. Paste them into the box, then press “Submit new issue”')}
+  else toastFn&&toastFn('On GitHub press “Submit new issue”. It applies within 15 minutes.');
+  openExternalUrl(inline?full:sourcesIssueUrl(brief,false));
 }
 /* The snapshot only changes when the GitHub job runs (a few times a day), so a
    short in-memory memo keeps the every-minute background pass from pulling the
@@ -2346,6 +2352,7 @@ function Sidebar({T,scope,folders,counts,onScope,onClose,onFolderLongPress,onBro
     archive:{icon:Icons.archive(20),label:'Archive',active:is('archive'),onClick:()=>go('archive')},
     brief:{icon:Icons.play(18),label:'My Routine',active:is('brief'),count:c.routine,onClick:()=>go('brief')},
     headlines:{icon:Icons.newspaper(20),label:'Headlines',active:is('headlines'),onClick:()=>go('headlines')},
+    social:{icon:Icons.compass(20),label:'Social feed',active:false,onClick:()=>{onClose();window.dispatchEvent(new Event('insta-social-open'))}},
     blogs:{icon:Icons.rss(20),label:'Blogs',active:is('blogs'),count:c.blogs,onClick:()=>{try{localStorage.setItem('insta_blogs_cat','all')}catch(e){}go('blogs')}},
     books:{icon:bookIcon(20),label:'Books',active:false,count:c.books,onClick:()=>{showBooksShelf();go('blogs')}},
     scans:{icon:Icons.file(20),label:'Scans & Docs',active:false,onClick:()=>{onClose();window.dispatchEvent(new Event('insta-scans-open'))}},
@@ -2354,7 +2361,7 @@ function Sidebar({T,scope,folders,counts,onScope,onClose,onFolderLongPress,onBro
     threads:{icon:Icons.thread(20),label:'Threads',active:is('threads'),onClick:()=>go('threads')},
     tags:{icon:Icons.tag(20),label:'Tags',active:is('tags'),onClick:()=>go('tags')}
   };
-  const SECTIONS=[['read','Read',['home','liked','archive']],['follow','Follow',['brief','headlines','blogs']],['library','Library',['books','scans','photos','notes','threads','tags']]];
+  const SECTIONS=[['read','Read',['home','liked','archive']],['follow','Follow',['brief','headlines','blogs','social']],['library','Library',['books','scans','photos','notes','threads','tags']]];
   const ordered=(sec,keys)=>{const o=(lay.order[sec]||[]).filter(k=>keys.includes(k));return o.concat(keys.filter(k=>!o.includes(k)))};
   const fOrder=ordered('folders',folders.map(f=>f.id));
   const move=(sec,keys,k,d)=>setLay(p=>{const arr=ordered(sec,keys);const i=arr.indexOf(k),j=i+d;if(j<0||j>=arr.length)return p;[arr[i],arr[j]]=[arr[j],arr[i]];return{...p,order:{...p.order,[sec]:arr}}});
@@ -7742,13 +7749,16 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 /* Settings → Behavior → My social RSS feed: the links the server job publishes (all accounts, and one
    per platform) to open in any RSS reader, plus which accounts still need an RSS.app link. */
 /* a feed link made on RSS.app / FetchRSS (or any .xml/.rss link) */
+const RSS_PEND_KEY='insta_rssapp_pending_v2';
+const readPend=()=>{try{const v=JSON.parse(localStorage.getItem(RSS_PEND_KEY)||'null');return v&&v.id&&Date.now()-v.at<3600000?v:null}catch(e){return null}};
+const writePend=id=>{try{id?localStorage.setItem(RSS_PEND_KEY,JSON.stringify({id,at:Date.now(),opened:false})):localStorage.removeItem(RSS_PEND_KEY)}catch(e){}};
 const isMadeFeedLink=u=>/^https?:\/\//i.test(u)&&(/\/\/(www\.)?(rss\.app|fetchrss\.com)\//i.test(u)||/\.(xml|rss)(\?|$)/i.test(u));
 function SocialFeedBox({T,brief,update}){
   const [ix,setIx]=useState(null),[err,setErr]=useState(false),[copied,setCopied]=useState('');
   /* the account whose RSS.app link is being made, and a one-line status */
-  const [pending,setPending]=useState(()=>{try{return sessionStorage.getItem('insta_rssapp_pending')||''}catch(e){return''}});
+  const [pending,setPending]=useState(()=>{const v=readPend();return v?v.id:''});
   const [note,setNote]=useState('');
-  const pend=id=>{setPending(id);try{id?sessionStorage.setItem('insta_rssapp_pending',id):sessionStorage.removeItem('insta_rssapp_pending')}catch(e){}};
+  const pend=id=>{setPending(id);writePend(id)};
   const attach=(id,url)=>{
     update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===id?{...x,kind:'rss',feedUrl:url}:x)}}));
     pend('');setNote('✓ Link added');setTimeout(()=>setNote(''),3500);
@@ -7758,9 +7768,10 @@ function SocialFeedBox({T,brief,update}){
     try{const t=await navigator.clipboard.readText();const u=extractFirstUrl(t||'');if(u&&isMadeFeedLink(u)){attach(id,u);return true}}catch(e){}
     return false;
   };
-  /* coming back from RSS.app: pick the copied link up by itself */
+  /* coming back from RSS.app: pick the copied link up by itself (iPhone may need the Paste button) */
   useEffect(()=>{
     if(!pending)return;
+    takeClipboard(pending);
     const onBack=()=>{if(document.visibilityState==='visible')takeClipboard(pending)};
     document.addEventListener('visibilitychange',onBack);
     return()=>document.removeEventListener('visibilitychange',onBack);
@@ -7804,7 +7815,7 @@ function SocialFeedBox({T,brief,update}){
         h('button',{onClick:()=>copy(k,ix.links[k]),className:'act95',style:{padding:'7px 12px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,flexShrink:0}},copied===k?'Copied ✓':'Copy'))),
       h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
       bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
-    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” at the bottom of this page and commit; the feed appears within 15 minutes.':'Loading…'),
+    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” at the bottom of this page and press “Submit new issue”; the feed appears within 15 minutes.':'Loading…'),
     h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
       h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
       h('div',{style:{display:'flex',gap:6,marginBottom:8}},[['instagram','Instagram'],['x','X'],['telegram','Telegram']].map(([k,l])=>h('button',{key:k,onClick:()=>setAddP(k),className:'act95',
@@ -7828,14 +7839,61 @@ function SocialFeedBox({T,brief,update}){
         onClick:()=>{copyText(a.profile||'');pend(a.id||'');setNote('');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
         style:{padding:'7px 11px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.id===pending?T.fg:T.search,color:a.id===pending?T.bg:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null,
     note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null,
-    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” at the bottom of this page (and press Commit) so the server starts building your feed.'):null);
+    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” at the bottom of this page (and press “Submit new issue”) so the server starts building your feed.'):null);
 }
-function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
+function socialFeedAllUrl(){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/all.xml?t='+Math.floor(Date.now()/60000)}
+/* In-app reader for your social feed: the server-built list (all accounts, newest first), or, until that exists,
+   whatever My Routine has already fetched for your Telegram / Instagram / X accounts on this phone. */
+function SocialReader({T,brief,onClose}){
+  const [posts,setPosts]=useState(null),[src,setSrc]=useState(''),[flt,setFlt]=useState('all'),[busy,setBusy]=useState(false);
+  const localPosts=()=>{
+    const out=[],feeds=brief.feeds||{};
+    (brief.items||[]).forEach(it=>{
+      const isTg=it.kind==='telegram'&&it.handle,sp=it.platform&&SOCIAL[it.platform];if(!isTg&&!sp)return;
+      const plat=isTg?'Telegram':sp.label,who=(it.name||'').replace(/\s*·\s*\w+$/,'');
+      ((feeds[it.id]||{}).entries||[]).forEach(e=>out.push({id:e.id||e.url,title:e.title||e.caption||'Post',url:e.url,publishedMs:e.publishedMs||0,thumb:e.thumb||'',excerpt:e.excerpt||'',who,plat}));
+    });
+    return out.sort((a,b)=>b.publishedMs-a.publishedMs);
+  };
+  const load=async()=>{
+    setBusy(true);
+    try{
+      const r=await fetchWithTimeout(socialFeedAllUrl(),{cache:'no-store'},9000);if(!r.ok)throw new Error('none');
+      const es=parseRssText(await r.text()).map(e=>{const m=/^(.*?)\s·\s(\w+)$/.exec(e.author||'');return{...e,who:m?m[1]:(e.author||''),plat:m?m[2]:'',title:String(e.title||'').replace(/^[^:]{1,60}:\s*/,'')}});
+      if(!es.length)throw new Error('empty');
+      setPosts(es);setSrc('server');
+    }catch(e){const l=localPosts();setPosts(l);setSrc(l.length?'phone':'')}
+    setBusy(false);
+  };
+  useEffect(()=>{load()},[]);
+  const plats=[...new Set((posts||[]).map(p=>p.plat).filter(Boolean))];
+  const shown=(posts||[]).filter(p=>flt==='all'||p.plat===flt);
+  return h('div',{style:{position:'fixed',inset:0,zIndex:190,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:{padding:'calc(10px + '+SAFE_T+') 14px 8px',display:'flex',alignItems:'center',gap:8}},
+      h('button',{onClick:onClose,'aria-label':'Close',className:'act90',style:{width:36,height:36,borderRadius:18,background:T.card,color:T.fg,display:'flex',alignItems:'center',justifyContent:'center'}},Icons.x(18)),
+      h('div',{style:{flex:1,fontSize:20,fontWeight:750}},'Social feed'),
+      h('button',{onClick:load,disabled:busy,'aria-label':'Refresh',className:'act90',style:{width:36,height:36,borderRadius:18,background:T.card,color:T.fg,display:'flex',alignItems:'center',justifyContent:'center',opacity:busy?.5:1}},Icons.refresh(18))),
+    plats.length>1?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'2px 14px 8px'}},['all'].concat(plats).map(k=>h('button',{key:k,onClick:()=>setFlt(k),className:'act95',
+      style:{padding:'7px 13px',borderRadius:16,fontSize:13.5,fontWeight:600,flexShrink:0,background:flt===k?T.fg:T.card,color:flt===k?T.bg:T.fg}},k==='all'?'All':k))):null,
+    h('div',{style:{flex:1,overflowY:'auto',padding:'4px 14px calc(24px + '+SAFE_B+')'}},
+      posts===null?h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub}},'Loading…')
+      :!shown.length?h('div',{style:{padding:'40px 16px',textAlign:'center',color:T.sub,lineHeight:1.6,fontSize:14.5}},
+        'Nothing to show yet.',h('br'),'Add your accounts in Settings → Social RSS feed, tap “Update sources on GitHub” and press “Submit new issue”. Posts appear within about 15 minutes.')
+      :h('div',{style:{display:'flex',flexDirection:'column',gap:10}},
+        src==='phone'?h('div',{style:{fontSize:12,color:T.sub,padding:'0 2px'}},'Showing what this phone has fetched so far. The combined server feed isn’t published yet.'):null,
+        shown.slice(0,150).map(p=>h('button',{key:p.id+p.url,onClick:()=>openExternalUrl(p.url),className:'act98',
+          style:{display:'flex',gap:12,textAlign:'left',padding:12,borderRadius:14,background:T.card,border:'1px solid '+T.hair,color:T.fg,width:'100%'}},
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:12,color:T.sub,marginBottom:4,fontWeight:600}},(p.who||'')+(p.plat?' · '+p.plat:'')+(p.publishedMs?' · '+fmtAgo(p.publishedMs):'')),
+            h('div',{style:{fontSize:15,lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:4,WebkitBoxOrient:'vertical'}},p.title||p.excerpt||'Post')),
+          p.thumb?h('img',{src:p.thumb,alt:'',loading:'lazy',style:{width:84,height:84,objectFit:'cover',borderRadius:10,flexShrink:0}}):null)))));
+}
+function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const [engSaved,setEngSaved]=useState('');
   const fileRef=useRef(null);
   const [srcCopied,setSrcCopied]=useState(0);
-  const [page,setPage]=useState('root');
+  const [page,setPage]=useState(initialPage||'root');
   /* live OpenRouter model catalog (cached for a day) */
   const orActive=(S.aiProvider||'openrouter')==='openrouter';
   const [orModels,setOrModels]=useState(null);
@@ -7987,7 +8045,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
           style:{width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,boxSizing:'border-box'}})),
       head('Server-side refresh (GitHub)'),
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Tap the button, then press “Commit new file” on GitHub. It starts by itself. Re-do this whenever you add or remove sources.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Tap the button, then press “Submit new issue” on GitHub. The server applies it within 15 minutes. Re-do this whenever you add or remove sources.'),
         h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
           h('button',{onClick:()=>setupServerRefresh(data.brief,msg=>{setSrcCopied(-1);setTimeout(()=>setSrcCopied(0),2500)}),
             className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},
@@ -8109,10 +8167,12 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
           (d=>d?d[0].toUpperCase()+d.slice(1)+'. ':'')((WHISPER_MODELS.find(m=>m[0]===(S.whisperModel||'small'))||[])[2])+(txOnMac(S)?'Rough time on an Apple-silicon Mac for a 1-hour video: Tiny ~2 min \u00b7 Small ~8 min \u00b7 Medium ~20 min \u00b7 Large v3 ~45 min.':'Rough time on GitHub for a 20-minute video: Tiny ~2 min \u00b7 Small ~6 min \u00b7 Medium ~15 min \u00b7 Large v3 30+ min.')+' Whisper writes the spoken language; it detects Telugu, Hindi, English and more automatically.')));
   }else if(page==='socialrss'){
     content=h(Fragment,null,
+      h('div',{style:{padding:'4px 20px 8px'}},h('button',{onClick:()=>{onClose();window.dispatchEvent(new Event('insta-social-open'))},className:'act95',
+        style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650}},'Read my social feed in the app')),
       h(SocialFeedBox,{T,brief:data.brief,update}),
       head('Send to the server'),
       h('div',{style:{padding:'0 20px 12px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'After adding accounts or links, send your sources to GitHub so the server builds the feed. GitHub opens a file: press Commit.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'After adding accounts or links, send your sources to GitHub so the server builds the feed. GitHub opens a ready-made page: press “Submit new issue”. It is applied within 15 minutes.'),
         h('button',{onClick:()=>setupServerRefresh(data.brief,()=>{}),className:'act95',
           style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},snapshotWasSeen()?'Update sources on GitHub':'Save sources to GitHub')));
   }else if(page==='sites'){
@@ -8595,6 +8655,9 @@ function App(){
   const [menuOpen,setMenuOpen]=useState(false);
   const [addS,setAddS]=useState(null);
   const [settingsOpen,setSettingsOpen]=useState(false);
+  const [settingsPage0,setSettingsPage0]=useState('root'); // page Settings opens on
+  const settingsOpenR=useRef(false);settingsOpenR.current=settingsOpen;
+  const [socialO,setSocialO]=useState(false); // in-app reader for your social feed
   const [selecting,setSelecting]=useState(null);
   const [sheet,setSheet]=useState(null);
   const [toast,setToast]=useState(null);
@@ -8748,6 +8811,18 @@ function App(){
     }catch(e){}
   },[]);
 
+  useEffect(()=>{ // back from RSS.app with a link half-made: open Settings → Social RSS feed once so it can be finished
+    const check=()=>{
+      if(document.visibilityState!=='visible')return;
+      let v=null;try{v=JSON.parse(localStorage.getItem(RSS_PEND_KEY)||'null')}catch(e){}
+      if(!v||!v.id||v.opened||Date.now()-v.at>3600000)return;
+      try{localStorage.setItem(RSS_PEND_KEY,JSON.stringify({...v,opened:true}))}catch(e){}
+      if(!settingsOpenR.current){setSettingsPage0('socialrss');setSettingsOpen(true)}
+    };
+    check();document.addEventListener('visibilitychange',check);
+    return()=>document.removeEventListener('visibilitychange',check);
+  },[]);
+  useEffect(()=>{const f=()=>setSocialO(true);window.addEventListener('insta-social-open',f);return()=>window.removeEventListener('insta-social-open',f)},[]);
   useEffect(()=>{ // scan / knowledge-base entry points raised from anywhere (Photos, sidebar, Books)
     const o=e=>setOcrO((e&&e.detail)||{});const s=()=>setScansO(true);
     window.addEventListener('insta-ocr-open',o);window.addEventListener('insta-scans-open',s);
@@ -9420,6 +9495,7 @@ function App(){
       onTurn:fn=>update(d=>({...d,turn:typeof fn==='function'?fn(d.turn):fn})),
       onExit:()=>setScope({type:'home'})}):null,
 
+    socialO?h(Boundary,{name:'social feed',inline:true},h(SocialReader,{T,brief:data.brief,onClose:()=>setSocialO(false)})):null,
     scansO&&window.InstaOCR?h(window.InstaOCR.ScansHub,{T,S,articles:data.articles,folders:data.folders||[],toastFn,
       onClose:()=>setScansO(false),onOpen:id=>{setScansO(false);openArticle(id)},onUpdate:(id,p)=>patchArticle(id,p),
       onDelete:id=>setSheet({type:'confirm',kind:'delete',ids:[id]}),onNewScan:files=>setOcrO({files})}):null,
@@ -9531,7 +9607,7 @@ function App(){
         else eraseAll();
       }}):null,
 
-    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,storeQuota:storeEst?storeEst.quota:0,onClose:()=>setSettingsOpen(false),
+    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,storeQuota:storeEst?storeEst.quota:0,initialPage:settingsPage0,onClose:()=>{setSettingsOpen(false);setSettingsPage0('root')},
       onForceReload:forceReload,
       onExport:exportBackup,onImport:importBackup,
       onClearArchived:()=>setSheet({type:'confirm',kind:'clearArchive'}),
