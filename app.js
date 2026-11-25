@@ -3878,13 +3878,27 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
      and asks: follow that blog, or keep just this post (under "Saved posts"). */
   const [shared,setShared]=useState(null); // {url,title,image,excerpt,loading} | {help:true}
   const SAVED_FEED='_saved';
-  const pasteShared=async()=>{
-    let t='';try{t=await navigator.clipboard.readText()}catch(e){}
-    const u=extractFirstUrl(t)||(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(String(t).trim())?'https://'+String(t).trim():'');
-    if(!u){setShared({help:true,empty:true});return}
+  /* iPhone Shortcuts' "Copy to Clipboard" with a URL puts a *URL* on the clipboard, not plain text, and
+     readText() alone sees nothing — so read every type (uri-list, plain, html) before giving up. */
+  const readClip=async()=>{
+    let denied=false;
+    try{if(navigator.clipboard&&navigator.clipboard.read){const items=await navigator.clipboard.read();
+      for(const it of items)for(const type of ['text/uri-list','text/plain','text/html']){if(!(it.types||[]).includes(type))continue;
+        const t=await (await it.getType(type)).text();
+        const v=type==='text/html'?((t.match(/href=["']([^"']+)/)||[])[1]||t):t;if(v&&v.trim())return{text:v}}}}
+    catch(e){if(e&&e.name==='NotAllowedError')denied=true}
+    try{const t=await navigator.clipboard.readText();if(t&&t.trim())return{text:t}}catch(e){if(e&&e.name==='NotAllowedError')denied=true}
+    return{text:'',denied}};
+  const urlIn=t=>extractFirstUrl(t)||(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(String(t||'').trim())?'https://'+String(t).trim():'');
+  const openShared=async u=>{
     setShared({url:u,title:'',loading:true});
     try{const r=await fetchArticleData(u);setShared(x=>x&&x.url===u?{...x,title:r.title||'',image:r.image||'',excerpt:r.excerpt||'',loading:false}:x)}
     catch(e){setShared(x=>x&&x.url===u?{...x,loading:false}:x)}
+  };
+  const pasteShared=async()=>{
+    const r=await readClip();const u=urlIn(r.text);
+    if(u){openShared(u);return}
+    setShared({manual:true,denied:r.denied,draft:''}); // couldn't read it: a box to paste into by hand
   };
   const followShared=u=>{let site=u;try{site=new URL(u).origin+'/'}catch(e){}setShared(null);setEdit({groupId:null,name:'',url:site,fromShare:true})};
   const saveSharedPost=x=>{const u=x.url;
@@ -4074,7 +4088,14 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
           style:{width:'100%',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'12px 13px',fontSize:15,marginBottom:12}}),
         h('button',{onClick:()=>{const nm=gName.trim()||'Group';if(grp.rename)onGroups(gs=>gs.map(g=>g.id===grp.rename?{...g,name:nm}:g));else onGroups(gs=>gs.concat([{id:uid(),name:nm}]));setGrp(null)},className:'act96',style:{width:'100%',padding:'13px',borderRadius:11,background:T.fg,color:T.bg,fontSize:15,fontWeight:600}},grp.rename?'Rename':'Create'))):null,
 
-    shared&&!shared.help?h(Sheet,{T,title:'Shared link',onClose:()=>setShared(null)},
+    shared&&shared.manual?h(Sheet,{T,title:'Paste the link',onClose:()=>setShared(null)},
+      h('div',{style:{padding:'0 18px 18px'}},
+        h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},shared.denied?'iPhone didn’t let Instapaper read the clipboard (tap “Paste” on the little bubble next time). For now:':'Instapaper couldn’t read the clipboard. Tap the box below, then tap Paste:'),
+        h('input',{autoFocus:true,value:shared.draft||'',onChange:e=>{const v=e.target.value;const u=urlIn(v);if(u)openShared(u);else setShared(x=>x&&{...x,draft:v})},
+          placeholder:'Tap here, then Paste',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'13px',fontSize:16}}),
+        h('button',{onClick:()=>setShared({help:true}),style:{marginTop:14,fontSize:12.5,color:T.accent,fontWeight:600}},'Set up the share shortcut'))):null,
+    shared&&!shared.help&&!shared.manual?h(Sheet,{T,title:'Shared link',onClose:()=>setShared(null)},
       h('div',{style:{padding:'0 18px 6px'}},
         h('div',{style:{display:'flex',gap:12,alignItems:'center',padding:'10px 12px',borderRadius:12,background:T.card,marginBottom:12}},
           shared.image?h('img',{src:shared.image,alt:'',style:{width:56,height:56,borderRadius:8,objectFit:'cover',flexShrink:0}}):null,
@@ -4086,13 +4107,14 @@ function BlogsView({T,S,feeds,groups,blogFeeds,seen,onFeeds,onGroups,onBlogFeeds
       h('div',{style:{padding:'12px 20px 4px'}},h('button',{onClick:()=>setShared({help:true}),style:{fontSize:12.5,color:T.accent,fontWeight:600}},'How the share shortcut works'))):null,
     shared&&shared.help?h(Sheet,{T,title:'Share to Blogs from any app',onClose:()=>setShared(null),maxH:'92%'},
       h('div',{style:{padding:'0 20px 18px',fontSize:14,color:T.fg,lineHeight:1.55}},
-        shared.empty?h('div',{style:{padding:'10px 12px',borderRadius:10,background:hexA(T.accent,.12),color:T.accent,fontSize:13,fontWeight:600,marginBottom:12}},'There’s no link on the clipboard yet. Share one with the shortcut below, then tap Paste.'):null,
+
         h('div',{style:{color:T.sub,fontSize:13,marginBottom:12}},'One-time setup in the Shortcuts app (about a minute). After that: in any app tap Share → “Send to Instapaper Blogs”, open Instapaper, go to Blogs and tap Paste.'),
         ['Open the Shortcuts app and tap + to make a new shortcut. Name it “Send to Instapaper Blogs”.',
          'Tap the ⓘ (Details) at the bottom and turn on “Show in Share Sheet”. Then set what it receives to URLs, Safari web pages and Text (turn the rest off).',
          'Add the action “Get URLs from Input”. It uses the Shortcut Input.',
          'Add the action “Get Item from List” and leave it on First Item.',
-         'Add the action “Copy to Clipboard”.',
+         'Add the action “Text” and put the “Item from List” variable in it (so the link is copied as plain text).',
+         'Add the action “Copy to Clipboard” — it copies the Text.',
          'Add the action “Show Notification” with the text: Link copied — open Instapaper › Blogs › Paste.',
          'Tap Done. Try it: in Safari, tap Share, scroll the app row, tap “Send to Instapaper Blogs” (tap Edit Actions there to move it up).'
         ].map((t,i)=>h('div',{key:i,style:{display:'flex',gap:12,padding:'9px 0',borderTop:i?'1px solid '+T.hair:'none'}},
