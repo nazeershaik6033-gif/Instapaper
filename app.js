@@ -926,13 +926,13 @@ function socialAccountsOf(brief){
   const out=[],seen=new Set();
   ((brief&&brief.items)||[]).forEach(it=>{
     let a=null;
-    if(it.kind==='telegram'&&it.handle)a={platform:'telegram',handle:it.handle,name:it.name||'@'+it.handle,profile:'https://t.me/'+it.handle};
-    else if(it.platform&&SOCIAL[it.platform])a={platform:it.platform,handle:it.socialHandle||it.handle||'',name:it.name||'',profile:it.url||'',feed:it.kind==='rss'?(it.feedUrl||''):''};
+    if(it.kind==='telegram'&&it.handle)a={id:it.id,platform:'telegram',handle:it.handle,name:it.name||'@'+it.handle,profile:'https://t.me/'+it.handle};
+    else if(it.platform&&SOCIAL[it.platform])a={id:it.id,platform:it.platform,handle:it.socialHandle||it.handle||'',name:it.name||'',profile:it.url||'',feed:it.kind==='rss'?(it.feedUrl||''):''};
     if(!a)return;const k=a.platform+':'+(a.handle||a.feed).toLowerCase();if(seen.has(k))return;seen.add(k);out.push(a);
   });
   return out;
 }
-const sourcesJson=brief=>{const accounts=socialAccountsOf(brief);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)},null,1)};
+const sourcesJson=brief=>{const accounts=socialAccountsOf(brief).map(({id,...a})=>a);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)},null,1)};
 /* the custom feed's links + each account's status, published by the server job */
 function socialFeedIndexUrl(){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/index.json?t='+Math.floor(Date.now()/60000)}
 function sourcesGithubUrl(brief,exists,inline){
@@ -7741,8 +7741,30 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 /* ============================== settings ============================== */
 /* Settings → Behavior → My social RSS feed: the links the server job publishes (all accounts, and one
    per platform) to open in any RSS reader, plus which accounts still need an RSS.app link. */
-function SocialFeedBox({T,brief}){
+/* a feed link made on RSS.app / FetchRSS (or any .xml/.rss link) */
+const isMadeFeedLink=u=>/^https?:\/\//i.test(u)&&(/\/\/(www\.)?(rss\.app|fetchrss\.com)\//i.test(u)||/\.(xml|rss)(\?|$)/i.test(u));
+function SocialFeedBox({T,brief,update}){
   const [ix,setIx]=useState(null),[err,setErr]=useState(false),[copied,setCopied]=useState('');
+  /* the account whose RSS.app link is being made, and a one-line status */
+  const [pending,setPending]=useState(()=>{try{return sessionStorage.getItem('insta_rssapp_pending')||''}catch(e){return''}});
+  const [note,setNote]=useState('');
+  const pend=id=>{setPending(id);try{id?sessionStorage.setItem('insta_rssapp_pending',id):sessionStorage.removeItem('insta_rssapp_pending')}catch(e){}};
+  const attach=(id,url)=>{
+    update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===id?{...x,kind:'rss',feedUrl:url}:x)}}));
+    pend('');setNote('✓ Link added');setTimeout(()=>setNote(''),3500);
+  };
+  /* read the clipboard; true when it held a feed link and it was attached */
+  const takeClipboard=async id=>{
+    try{const t=await navigator.clipboard.readText();const u=extractFirstUrl(t||'');if(u&&isMadeFeedLink(u)){attach(id,u);return true}}catch(e){}
+    return false;
+  };
+  /* coming back from RSS.app: pick the copied link up by itself */
+  useEffect(()=>{
+    if(!pending)return;
+    const onBack=()=>{if(document.visibilityState==='visible')takeClipboard(pending)};
+    document.addEventListener('visibilitychange',onBack);
+    return()=>document.removeEventListener('visibilitychange',onBack);
+  },[pending]);
   useEffect(()=>{let alive=true;
     fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000).then(r=>r.ok?r.json():null).then(j=>{if(alive){if(j&&j.links)setIx(j);else setErr(true)}},()=>{if(alive)setErr(true)});
     return()=>{alive=false}},[]);
@@ -7764,11 +7786,21 @@ function SocialFeedBox({T,brief}){
       h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
       bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
     :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” above and commit; the feed appears within 15 minutes.':'Loading…'),
-    noLink.length?h('div',{style:{marginTop:12,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
-      h('div',{style:{fontSize:13.5,fontWeight:600,marginBottom:4}},noLink.length+(noLink.length===1?' account needs':' accounts need')+' an RSS.app link'),
-      h('div',{style:{...small,marginBottom:8}},'Instagram and X have no public feed. For each: tap it to copy its profile link and open RSS.app, make a feed there, then in My Routine → Manage → Edit the account, paste the RSS.app link in “Bridge feed link”.'),
-      h('div',{style:{display:'flex',flexWrap:'wrap',gap:6}},noLink.map(a=>h('button',{key:a.platform+a.handle,onClick:()=>{copyText(a.profile||'');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
-        style:{padding:'6px 10px',borderRadius:14,fontSize:12.5,fontWeight:600,background:T.search,color:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null);
+    noLink.length||pending?h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+      h('div',{style:{fontSize:14,fontWeight:650,marginBottom:4}},noLink.length+(noLink.length===1?' account needs':' accounts need')+' an RSS.app link'),
+      pending&&mine.find(a=>a.id===pending)?h('div',{style:{marginBottom:10}},
+        h('div',{style:{...small,color:T.fg,marginBottom:8}},
+          'Making the link for ',h('b',null,mine.find(a=>a.id===pending).name||'this account'),'. In RSS.app: paste the profile link (already copied), tap Generate, then tap ',h('b',null,'Copy'),' next to the feed link. Come back here: it is picked up by itself.'),
+        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
+          h('button',{onClick:async()=>{if(!(await takeClipboard(pending)))setNote('No feed link copied yet. Copy it in RSS.app first.')},className:'act95',
+            style:{padding:'9px 14px',borderRadius:9,background:T.accent,color:'#fff',fontSize:13.5,fontWeight:650}},'Paste the link I copied'),
+          h('button',{onClick:()=>{pend('');setNote('')},className:'act95',style:{padding:'9px 14px',borderRadius:9,background:T.search,color:T.fg,fontSize:13.5,fontWeight:600}},'Cancel'))):
+      h('div',{style:{...small,marginBottom:8}},'Instagram and X have no public feed. Tap an account: its profile link is copied and RSS.app opens. Make the feed there, copy it, and come back.'),
+      h('div',{style:{display:'flex',flexWrap:'wrap',gap:6}},noLink.map(a=>h('button',{key:a.id||a.platform+a.handle,
+        onClick:()=>{copyText(a.profile||'');pend(a.id||'');setNote('');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
+        style:{padding:'7px 11px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.id===pending?T.fg:T.search,color:a.id===pending?T.bg:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null,
+    note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null,
+    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” above (and press Commit) so the server starts building your feed.'):null);
 }
 function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
@@ -7937,7 +7969,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,onForceReload,
             className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},
             srcCopied>0?'Copied '+srcCopied+' sources ✓':'Copy my sources'))),
       head('My social RSS feed'),
-      h(SocialFeedBox,{T,brief:data.brief}),
+      h(SocialFeedBox,{T,brief:data.brief,update}),
       head('Speed reading'),
       h('div',{style:{display:'flex',alignItems:'center',gap:14,padding:'0 20px'}},
         h('input',{type:'range',min:150,max:700,step:10,value:S.wpm,onChange:e=>set({wpm:+e.target.value}),style:{flex:1,accentColor:T.accent}}),
