@@ -234,7 +234,12 @@ A GitHub Action fetches the same sources from a server instead and the app reads
 The app shows that snapshot instantly, then still fetches live anything the snapshot doesn't cover or that is more than
 20 minutes old — and **Refresh** always fetches live. The status line under the tabs says how current the list really is.
 
-**On-time server refresh.** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a
+**Every 30 minutes, GitHub only.** The **Refresh feeds (every 30 min)** workflow (`.github/workflows/refresh-feeds-loop.yml`)
+doesn't rely on GitHub's scheduler: one run stays alive for about 5½ hours, refreshes `feeds.json` every 30 minutes, then
+starts the next run of itself. It starts by itself when that file lands on `main` (or Actions → the workflow → *Run workflow*).
+To stop it, cancel the running job or disable the workflow. Free because the repo is public.
+
+**On-time server refresh (optional, Cloudflare).** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a
 day at random times (the Actions history shows gaps of 5–8 hours), so the server copy can be hours old at your routine time.
 If you deployed `worker/feed-proxy.js` on Cloudflare, its optional `scheduled` handler fixes that: add a `GH_TOKEN` secret
 (a fine-grained token for this repo with *Actions: Read and write*) and a Cron Trigger such as `45 * * * *`, and the
