@@ -1769,9 +1769,51 @@ function makeSeed(){
 }
 
 /* ============================== storage ============================== */
+/* The library (articles with their full text, highlights, routine, settings…) lives in
+   IndexedDB. It used to be one localStorage entry, but Safari caps localStorage at ~5 MB,
+   so a few hundred saved articles hit "Storage is full". IndexedDB gets a share of the
+   disk instead. It is read once before the first render (bootStore); an existing
+   localStorage copy is moved over on first run. If IndexedDB can't be opened at all
+   (some private windows) the app falls back to localStorage as before. */
+const STORE_DB='instapaper-store';
+let _storeDB=null,STORE_IDB=true,STORE_BOOT=null,STORE_BYTES=0;
+function storeDB(){
+  if(_storeDB)return _storeDB;
+  _storeDB=new Promise((res,rej)=>{
+    let r;try{r=indexedDB.open(STORE_DB,1)}catch(e){return rej(e)}
+    const to=setTimeout(()=>rej(new Error('IndexedDB open timed out')),5000); // an iOS bug can leave open() hanging
+    r.onupgradeneeded=e=>{const db=e.target.result;if(!db.objectStoreNames.contains('kv'))db.createObjectStore('kv')};
+    r.onsuccess=e=>{clearTimeout(to);res(e.target.result)};
+    r.onerror=()=>{clearTimeout(to);rej(r.error)};
+  });
+  return _storeDB;
+}
+function storeGet(){return storeDB().then(db=>new Promise((res,rej)=>{const r=db.transaction('kv','readonly').objectStore('kv').get(STORE_KEY);r.onsuccess=()=>res(r.result);r.onerror=()=>rej(r.error)}))}
+function storePut(s){return storeDB().then(db=>new Promise((res,rej)=>{const t=db.transaction('kv','readwrite');t.objectStore('kv').put(s,STORE_KEY);t.oncomplete=()=>res();t.onerror=()=>rej(t.error);t.onabort=()=>rej(t.error)}))}
+function bootStore(){
+  const fromLS=()=>{try{return localStorage.getItem(STORE_KEY)}catch(e){return null}};
+  try{navigator.storage&&navigator.storage.persist&&navigator.storage.persist().catch(()=>{})}catch(e){} // ask not to be evicted
+  return storeGet().then(v=>{
+    if(typeof v==='string'&&v)return v;
+    const ls=fromLS();if(!ls)return null;
+    // first run with IndexedDB: move the localStorage copy over, then free localStorage
+    return storePut(ls).then(()=>{try{localStorage.removeItem(STORE_KEY)}catch(e){}return ls},()=>ls);
+  },()=>{STORE_IDB=false;return fromLS()}).then(s=>{STORE_BOOT=s;STORE_BYTES=(s||'').length;return s});
+}
+const STORE_FULL_MSG='Storage is full. Delete some articles (or clear the archive in Settings) so new saves can be kept offline.';
+function writeStore(d,onFull){
+  let s;try{s=JSON.stringify(d)}catch(e){return}
+  STORE_BYTES=s.length;
+  if(STORE_IDB){storePut(s).catch(e=>{
+    // IndexedDB refused (quota, or it went away): try localStorage so the change isn't lost
+    try{localStorage.setItem(STORE_KEY,s)}catch(x){onFull&&onFull(e)}
+  });return}
+  try{localStorage.setItem(STORE_KEY,s)}catch(e){onFull&&onFull(e)}
+}
 function loadStore(){
   let d=null;
-  try{d=JSON.parse(localStorage.getItem(STORE_KEY)||'null')}catch(e){d=null}
+  try{d=JSON.parse(STORE_BOOT||'null')}catch(e){d=null}
+  STORE_BOOT=null; // the parsed copy is in React state now; let the string go
   if(!d||typeof d!=='object')d={};
   d.settings=Object.assign({},DEFAULT_SETTINGS,d.settings||{});
   if(DEAD_MODELS.includes(d.settings.aiModel))d.settings.aiModel=DEFAULT_SETTINGS.aiModel;
@@ -8302,12 +8344,19 @@ function App(){
   const [data,setData]=useState(loadStore);
   const dataRef=useRef(data);
   const persist=useMemo(()=>{
-    const fn=debounce(d=>{
-      try{localStorage.setItem(STORE_KEY,JSON.stringify(d))}
-      catch(e){if(!fn.warned){fn.warned=true;alert('Storage is full. Delete some articles (or clear the archive in Settings) so new saves can be kept offline.')}}
-    },350);
+    let t=null,pending=null,warned=false;
+    const onFull=()=>{if(!warned){warned=true;alert(STORE_FULL_MSG)}};
+    const flush=()=>{clearTimeout(t);t=null;if(pending){const d=pending;pending=null;writeStore(d,onFull)}};
+    const fn=d=>{pending=d;clearTimeout(t);t=setTimeout(flush,350)};
+    fn.flush=flush;
     return fn;
   },[]);
+  /* save right away when the app is backgrounded or closed, so the last change isn't lost */
+  useEffect(()=>{
+    const onHide=()=>{if(document.visibilityState==='hidden')persist.flush()};
+    document.addEventListener('visibilitychange',onHide);window.addEventListener('pagehide',persist.flush);
+    return()=>{document.removeEventListener('visibilitychange',onHide);window.removeEventListener('pagehide',persist.flush)};
+  },[persist]);
   const update=useCallback(mut=>{setData(prev=>{
     const next=typeof mut==='function'?mut(prev):Object.assign({},prev,mut);
     dataRef.current=next;persist(next);return next;
@@ -8971,7 +9020,7 @@ function App(){
   const speedA=speedId?data.articles.find(a=>a.id===speedId):null;
   const allTags=useMemo(()=>{const s=new Set();libData.articles.forEach(a=>a.tags.forEach(t=>s.add(t)));return[...s].sort()},[data.articles]);
   const isArticleScope=!['notes','tags','photos','brief','headlines','blogs','threads','turn'].includes(scope.type);
-  const usageKB=useMemo(()=>{try{return(localStorage.getItem(STORE_KEY)||'').length/1024}catch(e){return 0}},[settingsOpen,data]);
+  const usageKB=useMemo(()=>{if(!settingsOpen)return STORE_BYTES/1024;try{return JSON.stringify(data).length/1024}catch(e){return STORE_BYTES/1024}},[settingsOpen,data]);
   /* is an automatic backup reminder due? (data exists, reminders on, not snoozed) */
   const backupNever=!S.lastBackupAt;
   const backupDue=useMemo(()=>{
@@ -9321,4 +9370,5 @@ function App(){
 }
 
 /* ============================== mount ============================== */
-ReactDOM.createRoot(document.getElementById('root')).render(ce(Boundary,null,ce(App)));
+/* read the library from IndexedDB first, then render (the splash covers the wait) */
+bootStore().catch(()=>null).then(()=>ReactDOM.createRoot(document.getElementById('root')).render(ce(Boundary,null,ce(App))));
