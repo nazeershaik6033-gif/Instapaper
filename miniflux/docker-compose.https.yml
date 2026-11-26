@@ -1,0 +1,17 @@
+# HTTPS in front of Miniflux, with a free automatic certificate (Caddy + Let's Encrypt).
+# DOMAIN comes from .env: your own domain, or <your-ip-with-dashes>.sslip.io, which needs no domain at all.
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
+services:
+  caddy:
+    image: caddy:2
+    restart: unless-stopped
+    ports:
+      - "80:80"
+      - "443:443"
+    command: caddy reverse-proxy --from ${DOMAIN} --to miniflux:8080
+    volumes:
+      - caddy-data:/data
+    depends_on:
+      - miniflux
+volumes:
+  caddy-data:

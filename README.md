@@ -263,7 +263,7 @@ backup**. **Settings → Social RSS feed** shows each account's source ("free vi
 from cloud servers now and then, so expect an occasional gap. Optional repository secrets make the bridges more reliable:
 `IG_SESSION_ID` + `IG_DS_USER_ID` (Instagram cookies; use a spare account) and `TWITTER_AUTH_TOKEN` (X cookie, for RSSHub).
 
-**Miniflux (optional).** `miniflux/` has a Docker setup (Miniflux + PostgreSQL + RSS-Bridge) for running your own reader.
+**Miniflux (optional).** `miniflux/` has a Docker setup (Miniflux + PostgreSQL + RSS-Bridge) for running your own reader; on a free Oracle Cloud server it installs with one command (`miniflux/install.sh`, HTTPS included).
 Connect it in **Settings → Miniflux** (its https address + an API key): the app adds every My Routine source and blog to it,
 and new ones as you add them. Or add the `MINIFLUX_URL` and `MINIFLUX_TOKEN` secrets and the GitHub job does it. See
 [miniflux/README.md](miniflux/README.md).

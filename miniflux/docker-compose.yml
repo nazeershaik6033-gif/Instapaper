@@ -1,13 +1,16 @@
 # Miniflux (feed reader) + PostgreSQL + RSS-Bridge, for when you want your own reader server.
 # The app does NOT need this: the GitHub job already makes your feeds for free. See miniflux/README.md.
+# On a free cloud server, just run install.sh (it does all of this plus HTTPS). By hand:
 #   cp .env.example .env   (then set the passwords)
 #   docker compose up -d   → Miniflux on http://<this machine>:8080, RSS-Bridge on :3000
+#   with HTTPS (needs ports 80 + 443 open and DOMAIN in .env):
+#   docker compose -f docker-compose.yml -f docker-compose.https.yml up -d
 services:
   miniflux:
     image: miniflux/miniflux:latest
     restart: unless-stopped
     ports:
-      - "8080:8080"
+      - "${BIND:-0.0.0.0}:8080:8080"   # install.sh sets BIND=127.0.0.1: then only the HTTPS proxy is public
     depends_on:
       db:
         condition: service_healthy
@@ -43,7 +46,7 @@ services:
     image: rssbridge/rss-bridge:latest
     restart: unless-stopped
     ports:
-      - "3000:80"
+      - "${BIND:-0.0.0.0}:3000:80"
     environment:
       RSSBRIDGE_system_enabled_bridges: "*"
       RSSBRIDGE_InstagramBridge_session_id: ${IG_SESSION_ID:-}

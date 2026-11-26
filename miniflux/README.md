@@ -6,27 +6,60 @@ free Instagram / X / Threads feeds with RSS-Bridge and RSSHub, and publishes the
 Run Miniflux only if you also want everything in Miniflux's own web reader, or in a Fever or Google
 Reader app such as Reeder, NetNewsWire or ReadKit.
 
-## What's in the box
+## Self-host it free (about 15 minutes, once)
+
+Miniflux needs a computer that's always on. **Oracle Cloud's "Always Free" server** costs nothing, forever.
+Oracle asks for a card to verify you're a person, but doesn't charge it for Always Free resources.
+
+### 1. Create the free server
+1. Sign up at <https://signup.cloud.oracle.com>. Choose a **Home Region** near you (e.g. India South / Mumbai).
+   You can't change it later, and free servers only run in your home region.
+2. In the Oracle console, go to **☰ → Compute → Instances → Create instance**:
+   - **Image**: *Canonical Ubuntu* (24.04)
+   - **Shape**: *Ampere A1* (1 OCPU, 6 GB, "Always Free-eligible"). If it says out of capacity, use *VM.Standard.E2.1.Micro* (AMD, also free)
+   - **Add SSH keys**: *Generate a key pair for me* → **Save private key** (keep the file)
+   - **Create**. Wait until it says *Running*, then copy its **Public IP address**.
+3. Open the web ports: on the instance page click the **Subnet** link → **Security Lists** → *Default Security List* →
+   **Add Ingress Rules**: Source CIDR `0.0.0.0/0`, IP Protocol *TCP*, Destination Port Range `80,443` → **Add**.
+
+### 2. Install Miniflux (one command)
+Connect to the server. The easiest way is **Cloud Shell** (the `>_` icon at the top of the Oracle console) or the
+instance page's **Console connection**. From a Mac terminal: `ssh -i <saved-key-file> ubuntu@<public-ip>` (run
+`chmod 600 <saved-key-file>` first). Then run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nazeershaik6033-gif/Instapaper/main/miniflux/install.sh | sudo bash
+```
+
+It installs Docker, starts Miniflux + PostgreSQL + RSS-Bridge, opens the firewall, gets a free HTTPS certificate,
+and ends by printing:
+- your address, `https://<your-ip-with-dashes>.sslip.io` ([sslip.io](https://sslip.io) maps it to your IP, so no domain is needed;
+  with your own domain run `… | sudo DOMAIN=reader.example.com bash`)
+- the **admin password** (also saved in `/opt/miniflux/.env`)
+- a link that opens the app's **Settings → Miniflux** with the address filled in
+
+Run the same command any time to update; it keeps your data and passwords.
+
+### 3. Connect the app
+1. On your phone, open the address, sign in as `admin`, then **Settings → API Keys → Create a new API key** → copy it.
+2. Open the link the script printed (or type the address into the app's **Settings → Miniflux**), paste the key,
+   tap **Connect & add my sources**. Done: every source is in Miniflux, and new ones follow by themselves.
+
+**Something not working?** If the script says HTTPS isn't answering, the ports in step 1.3 aren't open yet: add the
+rule and run the script again. Logs: `cd /opt/miniflux && sudo docker compose -f docker-compose.yml -f docker-compose.https.yml logs`.
+
+### Other machines
+The same script works on any Ubuntu/Debian server with a public IP (Google Cloud's free e2-micro, a Raspberry Pi
+with ports 80/443 forwarded on your router). On a computer at home without port forwarding, run
+`docker compose up -d` in this folder and give it an https address with Cloudflare Tunnel or Tailscale Funnel. Note
+that a Mac or PC only serves feeds while it's awake.
 
 | Service   | Port | What it does |
 |-----------|------|--------------|
+| caddy     | 80, 443 | HTTPS with a free automatic certificate (`docker-compose.https.yml`) |
 | miniflux  | 8080 | The reader (web UI + API) |
 | db        | –    | PostgreSQL, which Miniflux requires |
 | rssbridge | 3000 | Free Instagram / X / Threads feeds from *this* machine's internet connection |
-
-## Run it
-
-Use any always-on machine with Docker: a free cloud VM (Oracle Cloud "Always Free",
-Google Cloud e2-micro), a Raspberry Pi, or a home computer.
-
-```bash
-cd miniflux
-cp .env.example .env      # then edit the passwords
-docker compose up -d
-```
-
-Open `http://<machine>:8080` and sign in with `MINIFLUX_ADMIN` / `MINIFLUX_PASSWORD`. To reach it
-from your phone outside home, put it behind HTTPS (Caddy, Cloudflare Tunnel or Tailscale).
 
 ## Fill it with your Evolve sources automatically
 

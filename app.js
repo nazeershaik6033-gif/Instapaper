@@ -1050,6 +1050,7 @@ function useSourcesAutoSync(brief,token){
    straight from the phone, no GitHub needed. Instagram / X / Threads / Telegram are added as the per-account feeds
    the GitHub job publishes (free bridge first, RSS.app backup), since Miniflux can't read those apps itself. */
 const MF_KEY='insta_miniflux_v1';
+const MF_INSTALL_CMD=(()=>{const{owner,repo}=repoSlug();return'curl -fsSL https://raw.githubusercontent.com/'+owner+'/'+repo+'/main/miniflux/install.sh | sudo bash'})();
 const mfStore={
   st:(()=>{try{return JSON.parse(localStorage.getItem(MF_KEY)||'null')||{}}catch(e){return{}}})(),subs:new Set(),
   set(p){this.st=Object.assign({},this.st,p);try{localStorage.setItem(MF_KEY,JSON.stringify(this.st))}catch(e){}this.subs.forEach(f=>f())}
@@ -1124,7 +1125,7 @@ function useMinifluxAutoSync(data,S){
 /* Settings → Miniflux */
 function MinifluxBox({T,S,data,set,toastFn}){
   const st=useMiniflux();
-  const [url,setUrl]=useState(S.mfUrl||''),[tok,setTok]=useState(''),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[me,setMe]=useState(null);
+  const [url,setUrl]=useState(S.mfUrl||st.prefill||''),[tok,setTok]=useState(''),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[me,setMe]=useState(null);
   const cfg={url:S.mfUrl,token:S.mfToken};const on=!!(S.mfUrl&&S.mfToken);
   const small={fontSize:12.5,color:T.sub,lineHeight:1.55};
   const inp={width:'100%',boxSizing:'border-box',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16,marginBottom:8};
@@ -1172,11 +1173,12 @@ function MinifluxBox({T,S,data,set,toastFn}){
       err?h('div',{style:{...small,color:'#c2410c',marginTop:8}},err):null,
       h('div',{style:{fontSize:14,fontWeight:650,margin:'20px 0 6px'}},'Don’t have Miniflux yet?'),
       h('div',{style:{...small,lineHeight:1.7}},
-        '1. Run it on any always-on machine with Docker (a free Oracle Cloud or Google Cloud VM, a Raspberry Pi, a home computer): the ready-made setup is in your repo’s ',h('b',null,'miniflux'),' folder, one command: ',h('span',{style:{fontFamily:'ui-monospace,monospace',fontSize:12}},'docker compose up -d'),'.',h('br'),
-        '2. Give it an https:// address (Cloudflare Tunnel, Tailscale Funnel or Caddy) so your phone can reach it.',h('br'),
-        '3. In Miniflux: Settings → API Keys → Create a new API key, and paste it above.'),
+        '1. Create a free Oracle Cloud “Always Free” server (Ubuntu) and open ports 80 and 443.',h('br'),
+        '2. Run one command on it. It installs Miniflux with a free https address and prints a link that fills this page in:',h('br'),
+        h('span',{onClick:()=>{copyText(MF_INSTALL_CMD);toastFn('Install command copied')},style:{display:'block',margin:'4px 0',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_CMD+'  ⧉'),
+        '3. Open your Miniflux, sign in, Settings → API Keys → Create a new API key, and paste it above.'),
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
-        h('button',{onClick:()=>openExternalUrl(guide),className:'act95',style:btn(false)},'Setup guide ↗'),
+        h('button',{onClick:()=>openExternalUrl(guide),className:'act95',style:btn(false)},'Step-by-step guide ↗'),
         h('button',{onClick:()=>openExternalUrl('https://miniflux.app/docs/'),className:'act95',style:btn(false)},'Miniflux docs ↗')),
       h('div',{style:{...small,marginTop:10}},'Or use Miniflux’s hosted service at miniflux.app (paid yearly, no server to run).')));
 }
@@ -9409,7 +9411,10 @@ function App(){
     try{
       const p=new URLSearchParams(location.search);
       const u=p.get('url')||extractFirstUrl(p.get('text')||'')||extractFirstUrl(p.get('title')||'');
-      if(u)setAddS({prefill:u});
+      const mf=p.get('miniflux');
+      /* the Miniflux install script prints a link with ?miniflux=<address>: open Settings → Miniflux with it filled in */
+      if(mf&&/^https?:\/\//i.test(mf)){mfStore.set({prefill:mf});setSettingsPage0('miniflux');setSettingsOpen(true)}
+      else if(u)setAddS({prefill:u});
       else if(p.get('action')==='add')setAddS({prefill:''});
       if([...p.keys()].length)history.replaceState(null,'',location.pathname);
     }catch(e){}
