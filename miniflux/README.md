@@ -32,6 +32,10 @@ On your phone:
 - Miniflux only runs while the Mac is on and awake; it catches up when the Mac wakes.
 - The GitHub job's Miniflux sync (`MINIFLUX_URL` secret) can't reach a private Miniflux; use the app's
   **Settings → Miniflux** sync instead, which runs from your phone.
+- **Instagram reels in the app:** the same command installs a small reels helper (`reels-server.py`, with yt-dlp). While
+  the Mac is on, it downloads the reels in your social feed (and any reel the moment you open it) and the app plays them
+  from `https://<your-mac>.ts.net/reels/…`, privately over Tailscale. When the Mac is off, reels show their cover with a
+  *Watch in Instagram* button. Settings → Miniflux shows whether the helper is answering. Log: `~/.miniflux/reels.log`.
 - Run the same command again to update (keeps your data and password in `~/.miniflux/secrets`). Turn on two-factor
   sign-in for the account you use with Tailscale.
 - To remove it: `launchctl bootout gui/$(id -u)/app.miniflux; tailscale serve reset; brew uninstall miniflux`

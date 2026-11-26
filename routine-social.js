@@ -139,22 +139,21 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
       posts.map((p,i)=>{const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,done=isDone(p),emb=embedOf(p),pl=PLAT[platformOf(it)]||{label:''},cap=captionOf(e);
         /* the video's own address plays right here; an Instagram reel without one would only open the Instagram app,
            so say that instead; other embeds are sandboxed so they can't jump out of the app either */
-        const vs=e.videoSrc&&!vidFail[e.url]?e.videoSrc:'';const igOnly=!vs&&platformOf(it)==='instagram';
+        const macVs=platformOf(it)==='instagram'&&window.macReelSrc?window.macReelSrc(e.url):''; // reels from your Mac (install-mac.sh)
+        const vs=vidFail[e.url]?'':(e.videoSrc||macVs);const igOnly=!vs&&platformOf(it)==='instagram';
         const startPlay=()=>{if(vs||(emb&&!igOnly))setPlaying(i);else if(igOnly)setOnlyApp(i);else onAction('open',p)};
         return h('div',{key:e.url+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000'}},
           near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',filter:'blur(28px) brightness(.45)',transform:'scale(1.2)'}}):null,
           playing===i&&vs?h('video',{src:vs,autoPlay:true,controls:true,playsInline:true,onError:()=>{setVidFail(f=>Object.assign({},f,{[e.url]:1}));setPlaying(null);setOnlyApp(i)},
             style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',objectFit:'contain',background:'#000'}}):
           playing===i&&emb?h('iframe',{src:emb,sandbox:'allow-scripts allow-same-origin allow-presentation',allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',bottom:'calc(150px + env(safe-area-inset-bottom))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',border:0,background:'#000'}}):
-          onlyApp===i?h('div',{style:{position:'absolute',inset:0,zIndex:3,background:'rgba(0,0,0,.8)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 28px',textAlign:'center'}},
-            h('div',{style:{fontSize:17,fontWeight:700}},'This reel plays only in Instagram'),
-            h('div',{style:{fontSize:13.5,opacity:.7,lineHeight:1.5,margin:'8px 0 18px'}},'Instagram didn’t share this video with other apps. Watch it there, or keep swiping here.'),
-            h('div',{style:{display:'flex',gap:10}},
-              h('button',{onClick:()=>{setOnlyApp(-1);onAction('open',p)},className:'act95',style:{padding:'11px 18px',borderRadius:22,background:'#fff',color:'#000',fontWeight:700,fontSize:14.5}},'Watch in Instagram'),
-              h('button',{onClick:()=>setOnlyApp(-1),className:'act95',style:{padding:'11px 18px',borderRadius:22,background:'rgba(255,255,255,.16)',color:'#fff',fontWeight:700,fontSize:14.5}},'Not now'))):
+          h(Fragment,null,onlyApp===i?h('div',{style:{position:'absolute',left:12,right:12,bottom:'calc(160px + env(safe-area-inset-bottom))',zIndex:3,display:'flex',alignItems:'center',gap:10,padding:'9px 10px 9px 14px',borderRadius:16,background:'rgba(0,0,0,.72)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)'}},
+            h('div',{style:{flex:1,minWidth:0,fontSize:13,lineHeight:1.35}},h('b',null,'Plays only in Instagram'),h('br'),h('span',{style:{opacity:.7}},vidFail[e.url]&&macVs?'Your Mac couldn’t get this one.':'Turn on your Mac to watch reels here.')),
+            h('button',{onClick:()=>{setOnlyApp(-1);onAction('open',p)},className:'act95',style:{padding:'9px 14px',borderRadius:20,background:'#fff',color:'#000',fontWeight:700,fontSize:13.5}},'▶ Watch'),
+            h('button',{onClick:()=>setOnlyApp(-1),'aria-label':'Close',style:{color:'#fff',opacity:.7,display:'flex',padding:4}},Icons.x(16))):null,
           h('button',{onClick:startPlay,'aria-label':'Play',style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
             near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}):null,
-            h('span',{style:{position:'relative',width:72,height:72,borderRadius:36,background:'rgba(0,0,0,.45)',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},Icons.play(30,true))),
+            h('span',{style:{position:'relative',width:72,height:72,borderRadius:36,background:'rgba(0,0,0,.45)',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},Icons.play(30,true)))),
           /* right rail */
           h('div',{style:{position:'absolute',right:10,bottom:'calc(118px + env(safe-area-inset-bottom))',display:'flex',flexDirection:'column',alignItems:'center',gap:20,zIndex:2}},
             rail(SI.comment(28),'Caption',()=>onAction('caption',p)),

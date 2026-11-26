@@ -1166,7 +1166,8 @@ function MinifluxBox({T,S,data,set,toastFn}){
         h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:err||st.state==='error'?'#c2410c':'#2f9e44'}}),
         h('div',{style:{flex:1,minWidth:0}},
           h('div',{style:{fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.mfUrl.replace(/^https?:\/\//,'')),
-          h('div',{style:{fontSize:12.5,color:err?'#c2410c':T.sub}},err?err:me?'Connected as '+(me.name||'you')+' · '+me.feeds+(me.feeds===1?' feed':' feeds')+' in Miniflux':'Checking…'))),
+          h('div',{style:{fontSize:12.5,color:err?'#c2410c':T.sub}},err?err:me?'Connected as '+(me.name||'you')+' · '+me.feeds+(me.feeds===1?' feed':' feeds')+' in Miniflux':'Checking…'),
+          /\.ts\.net/i.test(S.mfUrl)?h('div',{style:{fontSize:12.5,color:T.sub,marginTop:2}},'🎬 Reels from your Mac: '+((window.EVOLVE_REELS||{}).ok?'on (Instagram reels play in the app)':'not answering (Mac off, or run the install command again to add it)')):null)),
       status?h('div',{style:{display:'flex',gap:8,alignItems:'flex-start',...small,color:st.state==='error'?'#c2410c':T.sub,marginBottom:10}},st.state==='sending'?h(Spinner,{T,size:14}):null,h('span',null,status)):null,
       st.state==='done'&&st.failedList&&st.failedList.length?h('div',{style:{...small,marginBottom:10}},'Miniflux couldn’t read: ',st.failedList.map(f=>domainOf(f.url)||f.url).join(', ')):null,
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}},
@@ -5179,6 +5180,12 @@ const SVG_PAPER=s=>Svg({size:s},P('M4.5 5.5h12v13a1.5 1.5 0 0 0 1.5 1.5H6A1.5 1.
 /* a social post that plays inside the app through the platform's own embed player (Instagram post / reel,
    X post, Telegram post). Instagram's image links (…/media?size=l) are often refused outside Instagram, so its
    own embed is the reliable way to show the picture or play the reel here. */
+/* Reels from your Mac: install-mac.sh runs a small helper (miniflux/reels-server.py) that downloads Instagram reels
+   with yt-dlp and serves them privately at https://<mac>.ts.net/reels/<code>.mp4. The app finds it through your
+   Miniflux address and checks every few minutes whether it answers (Mac on, Tailscale on). */
+window.EVOLVE_REELS=window.EVOLVE_REELS||{base:'',ok:false,at:0};
+function macReelSrc(u){const r=window.EVOLVE_REELS;if(!r||!r.ok||!r.base)return'';const m=/instagram\.com\/(?:[\w.]+\/)?(?:p|reel|reels|tv)\/([\w-]+)/i.exec(String(u||''));return m?r.base+m[1]+'.mp4':''}
+window.macReelSrc=macReelSrc;
 function socialEmbedUrl(u){
   u=String(u||'');let m;
   if((m=/instagram\.com\/(?:[\w.]+\/)?(p|reel|reels|tv)\/([\w-]+)/i.exec(u)))return'https://www.instagram.com/'+(m[1]==='p'?'p':'reel')+'/'+m[2]+'/embed/';
@@ -5238,7 +5245,8 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
     const ttl=cleanEntryTitle(e.title,it.name)||'';const isVid=!!e.video||!!e.videoSrc||/^\s*▶/.test(e.title||'');
     const ig=/instagram\.com/.test(emb);const nm=String(it.name||'').replace(/\s*·\s*\w+$/,'');
     const plat=ig?'Instagram':/twitter\.com/.test(emb)?'X':'Telegram';
-    const vs=e.videoSrc&&!vidFail[e.url]?e.videoSrc:'';
+    const macVs=ig&&isVid?macReelSrc(e.url):'';
+    const vs=vidFail[e.url]?'':(e.videoSrc||macVs);
     const top=padTop?padTop:(header===false?0:46),bottom='calc('+(small?150:112)+'px + '+padB+')';
     /* tap: a video with its own address plays right here; a reel without one only plays in Instagram, so say so
        (and let you choose) instead of the embed silently opening the Instagram app; a photo goes to the embed */
@@ -5254,10 +5262,13 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
             style:ig?{position:'absolute',left:0,top:-IG_HEAD,width:'100%',height:'calc(100% + '+(IG_HEAD+420)+'px)',border:0,display:'block'}:{width:'100%',height:'100%',border:0,display:'block'}}):null,
           near&&!active?h('button',{onClick:tap,'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
             isVid?h('span',{style:{width:68,height:68,borderRadius:34,background:'rgba(0,0,0,.5)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null,
-          onlyApp===e.url?h('div',{style:{position:'absolute',inset:0,background:'rgba(0,0,0,.78)',backdropFilter:'blur(10px)',WebkitBackdropFilter:'blur(10px)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 28px',textAlign:'center',color:'#fff'}},
-            h('div',{style:{fontSize:17,fontWeight:700}},'This reel plays only in '+plat),
-            h('div',{style:{fontSize:13.5,opacity:.7,lineHeight:1.5,margin:'8px 0 18px'}},plat+' didn’t share this video with other apps. You can watch it there, or keep swiping here.'),
-            h('div',{style:{display:'flex',gap:10}},btn('Watch in '+plat,()=>{setOnlyApp('');onOpen&&onOpen(p)},true),btn('Not now',()=>setOnlyApp('')))):null)),
+          /* the cover stays visible; a slim bar offers the app (Mac off, or Instagram refused this one) */
+          onlyApp===e.url?h('div',{style:{position:'absolute',left:10,right:10,bottom:10,display:'flex',alignItems:'center',gap:10,padding:'9px 10px 9px 14px',borderRadius:16,
+              background:'rgba(0,0,0,.72)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)',color:'#fff'}},
+            h('div',{style:{flex:1,minWidth:0,fontSize:13,lineHeight:1.35}},h('b',null,'Plays only in '+plat),h('br'),
+              h('span',{style:{opacity:.7}},vidFail[e.url]&&macVs?'Your Mac couldn’t get this one.':ig?'Turn on your Mac to watch reels here.':'')),
+            btn('▶ Watch',()=>{setOnlyApp('');onOpen&&onOpen(p)},true),
+            h('button',{onClick:()=>setOnlyApp(''),'aria-label':'Close',style:{color:'#fff',opacity:.7,display:'flex',padding:4}},Icons.x(16))):null)),
       h('div',{style:{position:'absolute',left:0,right:0,bottom:0,display:'flex',alignItems:'flex-end',gap:10,padding:'14px 12px calc('+(small?'70px':'16px')+' + '+padB+') 16px',color:'#fff'}},
         h('div',{style:{flex:1,minWidth:0}},
           h('div',{style:{display:'flex',alignItems:'center',gap:8,minWidth:0}},
@@ -9892,6 +9903,16 @@ function App(){
     };
     const t0=setTimeout(pass,4000),t=setInterval(pass,10*60000);return()=>{alive=false;clearTimeout(t0);clearInterval(t)};
   },[]);
+  /* reels from your Mac: does its helper answer? (on start, every 5 minutes, and when you come back to the app) */
+  useEffect(()=>{
+    let alive=true,base='';try{const x=new URL(S.mfUrl||'');if(/\.ts\.net$/i.test(x.hostname))base=x.origin+'/reels/'}catch(e){}
+    window.EVOLVE_REELS={base,ok:false,at:0};if(!base)return;
+    const check=()=>fetchWithTimeout(base+'health',{cache:'no-store'},4000).then(r=>r.ok?r.json():null)
+      .then(j=>{if(alive)window.EVOLVE_REELS={base,ok:!!(j&&j.ok),at:Date.now()}},()=>{if(alive)window.EVOLVE_REELS={base,ok:false,at:Date.now()}});
+    check();const t=setInterval(check,5*60000);const onVis=()=>{if(document.visibilityState==='visible')check()};
+    document.addEventListener('visibilitychange',onVis);
+    return()=>{alive=false;clearInterval(t);document.removeEventListener('visibilitychange',onVis)};
+  },[S.mfUrl]);
   const paperToday=allPapers.find(p=>p.kind==='day'&&p.label==='Today’s paper'&&!isPaperRead(p))||null;
   const txOfEntry=e=>{const vid=ytIdOf(e&&e.url);if(!vid)return false;const a=data.articles.find(x=>!x.isEdition&&x.videoId===vid);return!!(a&&a.transcript&&String(a.transcript).trim())};
   const onVideoTool=(e,sourceName,kind)=>{

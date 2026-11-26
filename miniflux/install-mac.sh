@@ -13,6 +13,7 @@ set -euo pipefail
 # everything runs inside main() so `curl … | bash` reads the whole script before running any of it
 main() {
 APP_URL="${APP_URL:-https://nazeershaik6033-gif.github.io/Instapaper/}"
+REPO_RAW="${REPO_RAW:-https://raw.githubusercontent.com/nazeershaik6033-gif/Instapaper/main}"
 DIR="$HOME/.miniflux"
 CONF="$DIR/miniflux.conf"
 PLIST="$HOME/Library/LaunchAgents/app.miniflux.plist"
@@ -25,7 +26,7 @@ die() { printf '\n\033[31m%s\033[0m\n' "$*"; exit 1; }
 [ "$(uname -s)" = Darwin ] || die "This script is for macOS. On a Linux server use install.sh."
 [ "$(id -u)" != 0 ] || die "Run it without sudo (Homebrew refuses to run as root)."
 
-say "1/6 Homebrew"
+say "1/7 Homebrew"
 if ! command -v brew >/dev/null 2>&1; then
   for b in /opt/homebrew/bin/brew /usr/local/bin/brew; do [ -x "$b" ] && eval "$("$b" shellenv)"; done
 fi
@@ -37,7 +38,7 @@ fi
 command -v brew >/dev/null 2>&1 || die "Homebrew didn't install. Install it from https://brew.sh and run this again."
 BREW="$(brew --prefix)"
 
-say "2/6 PostgreSQL and Miniflux"
+say "2/7 PostgreSQL and Miniflux"
 brew install -q "$PG" miniflux
 brew services start "$PG" >/dev/null 2>&1 || brew services restart "$PG" >/dev/null
 PGBIN="$BREW/opt/$PG/bin"
@@ -59,7 +60,7 @@ if [ "$("${PSQL[@]}" -c "SELECT 1 FROM pg_database WHERE datname='miniflux'")" !
   "${PSQL[@]}" -c "CREATE DATABASE miniflux OWNER miniflux"
 fi
 
-say "3/6 Tailscale (free https address)"
+say "3/7 Tailscale (free https address)"
 TS=""
 for t in tailscale /Applications/Tailscale.app/Contents/MacOS/Tailscale; do command -v "$t" >/dev/null 2>&1 && { TS="$t"; break; }; [ -x "$t" ] && { TS="$t"; break; }; done
 if [ -z "$TS" ]; then
@@ -77,7 +78,7 @@ HOST="$("$TS" status --json | sed -n 's/.*"DNSName": *"\([^"]*\)\.".*/\1/p' | he
 [ -n "$HOST" ] || die "Couldn't read this Mac's Tailscale name. Check that Tailscale is signed in, then run again."
 echo "address: https://$HOST"
 
-say "4/6 Miniflux settings"
+say "4/7 Miniflux settings"
 cat > "$CONF" <<EOF
 LISTEN_ADDR=127.0.0.1:8080
 DATABASE_URL=postgres://miniflux:$DB_PASSWORD@localhost/miniflux?sslmode=disable
@@ -103,7 +104,7 @@ if [ -n "$HS_OWNER" ] && [ "$HS_OWNER" != miniflux ]; then
   [ "$mig" = 0 ] || die "Miniflux's database setup failed. The last lines of $DIR/miniflux.log say why."
 fi
 
-say "5/6 Start Miniflux whenever you log in"
+say "5/7 Start Miniflux whenever you log in"
 mkdir -p "$(dirname "$PLIST")"
 cat > "$PLIST" <<EOF
 <?xml version="1.0" encoding="UTF-8"?>
@@ -122,7 +123,7 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/healthcheck 2>/dev/null && break; sleep 1; done
 curl -fsS -o /dev/null http://127.0.0.1:8080/healthcheck || die "Miniflux didn't start. Its log: $DIR/miniflux.log"
 
-say "6/6 Private https address (Tailscale Serve: your devices only)"
+say "6/7 Private https address (Tailscale Serve: your devices only)"
 # An earlier version of this script used Funnel (public): clear any old serve/funnel setup. (`serve reset` never
 # prompts; `funnel … off` waits silently for Funnel to be enabled on the account, which hung the script.)
 "$TS" serve reset </dev/null >/dev/null 2>&1 || true
@@ -130,6 +131,38 @@ echo "If Tailscale asks you to turn on HTTPS certificates for your account, open
 "$TS" serve --bg 8080 <"$IN" || die "Tailscale Serve didn't turn on. Open https://login.tailscale.com/admin/dns, enable HTTPS Certificates, then run this again."
 ok=""
 for _ in $(seq 1 30); do curl -fsS --max-time 5 -o /dev/null "https://$HOST/healthcheck" 2>/dev/null && { ok=1; break; }; sleep 3; done
+
+say "7/7 Instagram reels helper (plays reels inside the app while this Mac is on)"
+# Instagram never gives other apps a reel's video; yt-dlp can download public reels from a home connection.
+# reels-server.py downloads them (ahead of time from your social feed, or the moment the app asks) and serves
+# them on 127.0.0.1:8081, which Tailscale makes private https at https://$HOST/reels/
+brew install -q yt-dlp ffmpeg python@3.12
+PY="$BREW/opt/python@3.12/bin/python3.12"
+curl -fsSL "$REPO_RAW/miniflux/reels-server.py" -o "$DIR/reels-server.py"
+RPLIST="$HOME/Library/LaunchAgents/app.evolve.reels.plist"
+cat > "$RPLIST" <<PLIST
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0"><dict>
+  <key>Label</key><string>app.evolve.reels</string>
+  <key>ProgramArguments</key><array><string>$PY</string><string>$DIR/reels-server.py</string></array>
+  <key>EnvironmentVariables</key><dict>
+    <key>YTDLP</key><string>$BREW/bin/yt-dlp</string>
+    <key>PATH</key><string>$BREW/bin:/usr/bin:/bin</string>
+    <key>REELS_DIR</key><string>$DIR/reels</string>
+    <key>REELS_FEED</key><string>${REPO_RAW%/main}/social-feed/instagram.xml</string>
+  </dict>
+  <key>RunAtLoad</key><true/>
+  <key>KeepAlive</key><true/>
+  <key>StandardOutPath</key><string>$DIR/reels.log</string>
+  <key>StandardErrorPath</key><string>$DIR/reels.log</string>
+</dict></plist>
+PLIST
+launchctl bootout "gui/$(id -u)/app.evolve.reels" >/dev/null 2>&1 || true
+launchctl bootstrap "gui/$(id -u)" "$RPLIST"
+for _ in $(seq 1 15); do curl -fsS -o /dev/null http://127.0.0.1:8081/health 2>/dev/null && break; sleep 1; done
+"$TS" serve --bg --set-path /reels http://127.0.0.1:8081 <"$IN" >/dev/null 2>&1 || echo "⚠️  Couldn't add /reels to Tailscale Serve; reels will open in Instagram instead."
+reels_ok=""; curl -fsS --max-time 8 -o /dev/null "https://$HOST/reels/health" 2>/dev/null && reels_ok=1
 
 LINK="${APP_URL}?miniflux=https://$HOST"
 echo
@@ -145,7 +178,8 @@ echo "  3. Open this link. It fills in Settings → Miniflux in the app; paste t
 echo "     $LINK"
 echo
 echo "Keep Tailscale on on the phone whenever you use Miniflux (the app's own feeds don't need it)."
-echo "Miniflux starts by itself when you log in to this Mac and catches up on feeds after sleep."
-echo "To remove it:  launchctl bootout gui/\$(id -u)/app.miniflux; $TS serve reset; brew uninstall miniflux"
+[ -n "$reels_ok" ] && echo "🎬 Reels helper is on: Instagram reels play inside the app while this Mac is on (log: $DIR/reels.log)." || echo "🎬 Reels helper installed; it may take a minute to answer at https://$HOST/reels/health"
+echo "Miniflux and the reels helper start by themselves when you log in to this Mac and catch up after sleep."
+echo "To remove it:  launchctl bootout gui/\$(id -u)/app.miniflux; launchctl bootout gui/\$(id -u)/app.evolve.reels; $TS serve reset; brew uninstall miniflux"
 }
 main "$@"
