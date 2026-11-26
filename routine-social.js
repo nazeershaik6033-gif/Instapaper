@@ -137,10 +137,10 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
     h('div',{ref,onScroll,style:{position:'absolute',inset:0,overflowY:'auto',scrollSnapType:'y mandatory',WebkitOverflowScrolling:'touch'}},
       posts.map((p,i)=>{const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,done=isDone(p),emb=embedOf(p),pl=PLAT[platformOf(it)]||{label:''},cap=captionOf(e);
         return h('div',{key:e.url+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000'}},
-          near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',filter:'blur(28px) brightness(.45)',transform:'scale(1.2)'}}):null,
+          near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',filter:'blur(28px) brightness(.45)',transform:'scale(1.2)'}}):null,
           playing===i&&emb?h('iframe',{src:emb,allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',bottom:'calc(150px + env(safe-area-inset-bottom))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',border:0,background:'#000'}}):
           h('button',{onClick:()=>{if(emb)setPlaying(i);else onAction('open',p)},'aria-label':'Play',style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
-            near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}):null,
+            near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}):null,
             h('span',{style:{position:'relative',width:72,height:72,borderRadius:36,background:'rgba(0,0,0,.45)',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},Icons.play(30,true))),
           /* right rail */
           h('div',{style:{position:'absolute',right:10,bottom:'calc(118px + env(safe-area-inset-bottom))',display:'flex',flexDirection:'column',alignItems:'center',gap:20,zIndex:2}},

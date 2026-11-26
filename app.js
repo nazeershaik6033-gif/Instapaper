@@ -5162,6 +5162,16 @@ function YtPlayer({vid,onEnded,autoplay,style}){
 }
 const SVG_TX=s=>Svg({size:s},P('M5 5.5h14M5 10h14M5 14.5h9M5 19h6'),P('M16.5 15.5 19 18l3-4.5'));
 const SVG_PAPER=s=>Svg({size:s},P('M4.5 5.5h12v13a1.5 1.5 0 0 0 1.5 1.5H6A1.5 1.5 0 0 1 4.5 18.5v-13Z'),P('M16.5 9h3v9.5a1.5 1.5 0 0 1-3 0M7.5 9h6M7.5 12h6M7.5 15h4'));
+/* a social post that plays inside the app through the platform's own embed player (Instagram post / reel,
+   X post, Telegram post). Instagram's image links (…/media?size=l) are often refused outside Instagram, so its
+   own embed is the reliable way to show the picture or play the reel here. */
+function socialEmbedUrl(u){
+  u=String(u||'');let m;
+  if((m=/instagram\.com\/(?:[\w.]+\/)?(p|reel|reels|tv)\/([\w-]+)/i.exec(u)))return'https://www.instagram.com/'+(m[1]==='p'?'p':'reel')+'/'+m[2]+'/embed/';
+  if((m=/(?:\/\/|\.)(?:x|twitter)\.com\/\w+\/status\/(\d+)/i.exec(u)))return'https://platform.twitter.com/embed/Tweet.html?id='+m[1]+'&theme=dark&dnt=true';
+  if((m=/\/\/(?:t|telegram)\.me\/(\w+)\/(\d+)/i.exec(u)))return'https://t.me/'+m[1]+'/'+m[2]+'?embed=1&mode=tme&dark=1';
+  return'';
+}
 function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDone,isSaved,onSave,onOpen,onTool,txOf,toastFn,height,hidden,embedded,header,padTop,padBottom,onSwipeBack}){
   const swp=useRef({x:0,y:0,on:false,edge:false});
   const swipeH=max&&onSwipeBack?{
@@ -5198,10 +5208,35 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
         h('button',{onClick:()=>openExternalUrl(it.url),className:'act95',style:{flex:1,padding:'11px',borderRadius:12,background:P.c==='#111111'||P.c==='#101010'?'#fff':P.c,color:P.c==='#111111'||P.c==='#101010'?'#000':'#fff',fontWeight:700,fontSize:14}},'Open in '+P.label),
         h('button',{onClick:()=>shareText(it.name,'',it.url),className:'act95',style:{padding:'11px 16px',borderRadius:12,background:'rgba(255,255,255,.14)',color:'#fff',fontWeight:600,fontSize:14}},'Share')));
   };
+  /* Instagram / X / Telegram post: the platform's embed player. Until you tap it, a clear layer sits on top so
+     swiping up and down still moves between posts; the first tap hands the post to the player (tap ▶ there). */
+  const embedSlide=(p,i,emb)=>{
+    const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,active=playing===e.url&&i===idx,done=isDone(p);
+    const ttl=cleanEntryTitle(e.title,it.name)||'Post';const isVid=!!e.video||/^\s*▶/.test(e.title||'');
+    return h('div',{key:(e.url||'')+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000',display:'flex',flexDirection:'column'}},
+      h('div',{style:{flexShrink:0,height:padTop?padTop:(header===false?10:50)}}),
+      h('div',{style:{flex:1,minHeight:0,margin:'0 10px',borderRadius:14,overflow:'hidden',background:'#fff',position:'relative'}},
+        near?h('iframe',{src:emb,title:ttl,allow:'autoplay; encrypted-media; picture-in-picture; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
+          style:{width:'100%',height:'100%',border:0,display:'block'}}):null,
+        !near?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#777',fontSize:14}},'Loading…'):null,
+        near&&!active?h('button',{onClick:()=>setPlaying(e.url),'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
+          isVid?h('span',{style:{width:64,height:64,borderRadius:32,background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null),
+      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'10px 12px calc('+(small?'70px':'14px')+' + '+padB+')',color:'#fff'}},
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{display:'flex',alignItems:'baseline',minWidth:0,whiteSpace:'nowrap',overflow:'hidden'}},
+            h('span',{style:{fontSize:14.5,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',flexShrink:1,minWidth:0}},it.name),
+            h('span',{style:{fontSize:12,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':''].join('')),
+            done?h('span',{style:{fontSize:12,color:'#7ee29a',fontWeight:600,flexShrink:0}},'\u00a0· Done'):null),
+          h('div',{style:{fontSize:13,opacity:.85,lineHeight:1.35,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
+            active?(isVid?'Tap ▶ in the post to play · swipe here for the next one':'Swipe here for the next post'):ttl)),
+        railBtn(Icons.dots(19),'More',()=>setMore(p))));
+  };
   const slide=(p,i)=>{
     if(p.card)return cardSlide(p,i);
     const e=p.e,it=p.it;
     const vidId=ytIdOf(e.url)||'';
+    const emb=!vidId?socialEmbedUrl(e.url):'';
+    if(emb)return embedSlide(p,i,emb);
     const vid=it.kind==='youtube'||!!vidId;
     const isShort=isShortEntry(e);
     const thumb=entryThumb(e)||(vidId?'https://i.ytimg.com/vi/'+vidId+'/hqdefault.jpg':'');
@@ -5212,7 +5247,7 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
     let media;
     if(play)media=h('div',{style:{width:'100%',aspectRatio:isShort?'9 / 16':'16 / 9',maxHeight:'100%',background:'#000'}},h(YtPlayer,{vid:vidId,onEnded:()=>next(i)}));
     else if(thumb&&near)media=h('button',{onClick:()=>vidId?setPlaying(e.url):onOpen(p),'aria-label':vidId?'Play':'Open',style:{position:'relative',width:'100%',display:'block'}},
-      h('img',{src:thumb,alt:'',style:{width:'100%',aspectRatio:isShort?'9 / 16':(vid?'16 / 9':'4 / 3'),maxHeight:'70%',objectFit:'cover',display:'block',borderRadius:vid&&!isShort?0:14}}),
+      h('img',{src:thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.visibility='hidden'},style:{width:'100%',aspectRatio:isShort?'9 / 16':(vid?'16 / 9':'4 / 3'),maxHeight:'70%',objectFit:'cover',display:'block',borderRadius:vid&&!isShort?0:14}}),
       vidId?h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
         h('span',{style:{width:64,height:64,borderRadius:32,background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true))):null);
     else media=!thumb?h('div',{style:{padding:'0 28px',fontSize:25,fontWeight:750,lineHeight:1.25,letterSpacing:'-.02em',color:'#fff',textAlign:'left'}},ttl):null;
