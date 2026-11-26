@@ -1044,6 +1044,142 @@ function useSourcesAutoSync(brief,token){
     return()=>clearTimeout(t);
   },[sig,token]);
 }
+/* ---------- Miniflux: your own reader server (https://miniflux.app) ----------
+   Settings → Miniflux: paste its address and an API key, and the app adds every My Routine source and blog to it
+   (only what's missing; it never removes anything). Miniflux's API allows calls from any website, so this goes
+   straight from the phone, no GitHub needed. Instagram / X / Threads / Telegram are added as the per-account feeds
+   the GitHub job publishes (free bridge first, RSS.app backup), since Miniflux can't read those apps itself. */
+const MF_KEY='insta_miniflux_v1';
+const mfStore={
+  st:(()=>{try{return JSON.parse(localStorage.getItem(MF_KEY)||'null')||{}}catch(e){return{}}})(),subs:new Set(),
+  set(p){this.st=Object.assign({},this.st,p);try{localStorage.setItem(MF_KEY,JSON.stringify(this.st))}catch(e){}this.subs.forEach(f=>f())}
+};
+function useMiniflux(){const [,f]=useState(0);useEffect(()=>{const g=()=>f(x=>x+1);mfStore.subs.add(g);return()=>mfStore.subs.delete(g)},[]);return mfStore.st}
+const mfBase=u=>{let v=String(u||'').trim().replace(/\/+$/,'').replace(/\/v1$/,'');if(v&&!/^https?:\/\//i.test(v))v='https://'+v;return v};
+async function mfApi(cfg,path,opts){
+  const base=mfBase(cfg.url);if(!base||!cfg.token)throw new Error('Add your Miniflux address and API key first.');
+  if(/^http:\/\//i.test(base)&&location.protocol==='https:'&&!/^http:\/\/(localhost|127\.)/i.test(base))
+    throw new Error('Use an https:// address for Miniflux. This app runs on https, and browsers block plain http from it.');
+  let r;
+  try{r=await fetchWithTimeout(base+'/v1'+path,Object.assign({},opts||{},{headers:{'X-Auth-Token':cfg.token,'Content-Type':'application/json'}}),20000)}
+  catch(e){throw new Error('Can’t reach '+base.replace(/^https?:\/\//,'')+'. Is Miniflux running, and is the address right?')}
+  const t=await r.text();
+  if(r.status===401||r.status===403)throw new Error('Miniflux refused the API key. Make a new one in Miniflux → Settings → API Keys.');
+  if(!r.ok){let m='';try{m=JSON.parse(t).error_message||''}catch(e){}throw Object.assign(new Error(m||('Miniflux answered '+r.status)),{status:r.status})}
+  return t?JSON.parse(t):null;
+}
+/* every feed that belongs in Miniflux, with its category */
+async function minifluxWanted(data){
+  const want=new Map(),add=(u,c)=>{if(u&&/^https?:\/\//i.test(u)&&!want.has(u))want.set(u,c)};
+  let ix=null;try{const r=await fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000);if(r.ok)ix=await r.json()}catch(e){}
+  let waiting=0;
+  ((data.brief&&data.brief.items)||[]).forEach(it=>{
+    const p=srcOf(it);
+    if(p==='youtube'){if(it.channelId)add(ytFeedUrl(it.channelId),'YouTube');return}
+    if(p==='telegram'||BRIDGED_PLATS[p]){
+      const hd=p==='telegram'?(it.handle||tgHandle(it.url)):bridgedHandle(it);if(!hd)return;
+      const st=ix&&(ix.accounts||[]).find(a=>a.platform===p&&String(a.handle||'').toLowerCase()===hd.toLowerCase());
+      if(st&&st.status==='ok'&&st.accountFeed)add(st.accountFeed,PLAT_NAME[p]);else waiting++; // its feed isn't published yet
+      return;
+    }
+    if(it.kind==='rss'&&it.feedUrl)add(it.feedUrl,PLAT_NAME[p]||'Web');
+  });
+  (data.feeds||[]).forEach(f=>{if(f.feedUrl)add(f.feedUrl,/substack/i.test(f.feedUrl)?'Substack':'Blogs')});
+  return{want,waiting};
+}
+const minifluxSig=data=>{const t=sourcesCompact(data.brief||{})+'|'+(data.feeds||[]).map(f=>f.feedUrl||'').join(',');let n=0;for(let i=0;i<t.length;i++)n=(n*31+t.charCodeAt(i))|0;return String(n)};
+let mfRunning=false;
+async function minifluxSyncNow(data,cfg){
+  if(mfRunning)return null;mfRunning=true;
+  const sig=minifluxSig(data);
+  mfStore.set({state:'sending',err:'',progress:''});
+  try{
+    const{want,waiting}=await minifluxWanted(data);
+    const have=new Set((await mfApi(cfg,'/feeds')||[]).map(f=>f.feed_url));
+    const cats=new Map((await mfApi(cfg,'/categories')||[]).map(c=>[String(c.title).toLowerCase(),c.id]));
+    const catId=async t=>{const k=t.toLowerCase();if(!cats.has(k))cats.set(k,(await mfApi(cfg,'/categories',{method:'POST',body:JSON.stringify({title:t})})).id);return cats.get(k)};
+    const todo=[...want].filter(([u])=>!have.has(u));let added=0;const failed=[];
+    for(const[u,c]of todo){
+      try{await mfApi(cfg,'/feeds',{method:'POST',body:JSON.stringify({feed_url:u,category_id:await catId(c)})});added++}
+      catch(e){if(!(e.status===400&&/already|exist/i.test(e.message)))failed.push({url:u,why:e.message})}
+      mfStore.set({progress:(added+failed.length)+' of '+todo.length});
+    }
+    const res={state:'done',at:Date.now(),added,failed:failed.length,failedList:failed.slice(0,8),total:want.size+0,inMiniflux:have.size+added,waiting,sig,progress:''};
+    mfStore.set(res);return res;
+  }catch(e){mfStore.set({state:'error',err:String(e&&e.message||e),errSig:sig,progress:''});throw e}
+  finally{mfRunning=false}
+}
+/* App: once connected, add new sources a few seconds after they change (and retry accounts still waiting for their feed) */
+function useMinifluxAutoSync(data,S){
+  const sig=minifluxSig(data);
+  useEffect(()=>{
+    if(!S.mfUrl||!S.mfToken||S.mfAuto===false)return;
+    const st=mfStore.st;
+    if(st.state==='sending'||(st.state==='error'&&st.errSig===sig))return;
+    if(st.sig===sig&&!(st.waiting&&Date.now()-(st.at||0)>30*60000))return;
+    const t=setTimeout(()=>{minifluxSyncNow(data,{url:S.mfUrl,token:S.mfToken}).catch(()=>{})},8000);
+    return()=>clearTimeout(t);
+  },[sig,S.mfUrl,S.mfToken,S.mfAuto]);
+}
+/* Settings → Miniflux */
+function MinifluxBox({T,S,data,set,toastFn}){
+  const st=useMiniflux();
+  const [url,setUrl]=useState(S.mfUrl||''),[tok,setTok]=useState(''),[busy,setBusy]=useState(false),[err,setErr]=useState(''),[me,setMe]=useState(null);
+  const cfg={url:S.mfUrl,token:S.mfToken};const on=!!(S.mfUrl&&S.mfToken);
+  const small={fontSize:12.5,color:T.sub,lineHeight:1.55};
+  const inp={width:'100%',boxSizing:'border-box',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16,marginBottom:8};
+  const btn=(primary)=>({padding:'11px 16px',borderRadius:10,background:primary?T.accent:T.card,color:primary?'#fff':T.fg,fontSize:14.5,fontWeight:650,border:primary?'none':'1px solid '+T.hair});
+  useEffect(()=>{if(!on)return;let alive=true;
+    Promise.all([mfApi(cfg,'/me'),mfApi(cfg,'/feeds')]).then(([u,fs])=>{if(alive)setMe({name:u&&u.username,feeds:(fs||[]).length})},e=>{if(alive)setErr(e.message)});
+    return()=>{alive=false}},[S.mfUrl,S.mfToken,st.at]);
+  const connect=async()=>{
+    const c={url:mfBase(url),token:tok.trim()};setBusy(true);setErr('');
+    try{const u=await mfApi(c,'/me');set({mfUrl:c.url,mfToken:c.token,mfAuto:true});setTok('');setUrl(c.url);
+      toastFn('Connected to Miniflux as '+(u&&u.username||'you')+'. Adding your sources…');
+      setTimeout(()=>minifluxSyncNow(data,c).catch(()=>{}),300);
+    }catch(e){setErr(e.message)}
+    setBusy(false);
+  };
+  const syncNow=()=>minifluxSyncNow(data,cfg).then(r=>r&&toastFn('Miniflux: '+r.added+' added'+(r.failed?', '+r.failed+' failed':'')),e=>toastFn(String(e&&e.message||e)));
+  const status=st.state==='sending'?'Adding your sources…'+(st.progress?' '+st.progress:'')
+    :st.state==='error'?st.err
+    :st.state==='done'?'Last sync '+fmtAgo(st.at)+': '+(st.added?st.added+' added':'nothing new to add')+(st.failed?', '+st.failed+' failed':'')+(st.waiting?'. '+(st.waiting===1?'1 social account is waiting for its free feed; it goes in once that’s published.':st.waiting+' social accounts are waiting for their free feeds; they go in once those are published.'):'.'):'';
+  const{owner,repo}=repoSlug();
+  const guide='https://github.com/'+owner+'/'+repo+'/blob/main/miniflux/README.md';
+  return h('div',{style:{padding:'0 20px 16px'}},
+    h('div',{style:{...small,marginBottom:12}},'Miniflux is a free, open-source feed reader you run yourself. Connect it here and the app adds every My Routine source and blog to it: YouTube, Substack, Telegram, Instagram, X and websites, sorted into categories. It only ever adds, never deletes. Read them in Miniflux’s web app, or in Reeder, NetNewsWire or ReadKit through Miniflux’s Fever / Google Reader API.'),
+    on?h(Fragment,null,
+      h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'12px',borderRadius:12,background:T.card,border:'1px solid '+T.hair,marginBottom:10}},
+        h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:err||st.state==='error'?'#c2410c':'#2f9e44'}}),
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},S.mfUrl.replace(/^https?:\/\//,'')),
+          h('div',{style:{fontSize:12.5,color:err?'#c2410c':T.sub}},err?err:me?'Connected as '+(me.name||'you')+' · '+me.feeds+(me.feeds===1?' feed':' feeds')+' in Miniflux':'Checking…'))),
+      status?h('div',{style:{display:'flex',gap:8,alignItems:'flex-start',...small,color:st.state==='error'?'#c2410c':T.sub,marginBottom:10}},st.state==='sending'?h(Spinner,{T,size:14}):null,h('span',null,status)):null,
+      st.state==='done'&&st.failedList&&st.failedList.length?h('div',{style:{...small,marginBottom:10}},'Miniflux couldn’t read: ',st.failedList.map(f=>domainOf(f.url)||f.url).join(', ')):null,
+      h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginBottom:12}},
+        h('button',{onClick:syncNow,disabled:st.state==='sending',className:'act95',style:{...btn(true),opacity:st.state==='sending'?.5:1}},'Add my sources now'),
+        h('button',{onClick:()=>openExternalUrl(S.mfUrl),className:'act95',style:btn(false)},'Open Miniflux ↗')),
+      h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'10px 0',borderTop:'1px solid '+T.hair}},
+        h('div',{style:{flex:1}},h('div',{style:{fontSize:14.5}},'Keep Miniflux in sync'),h('div',{style:small},'New sources go in by themselves a few seconds after you add them.')),
+        h('div',{style:{display:'flex',gap:4,padding:3,borderRadius:10,background:T.search}},[[true,'On'],[false,'Off']].map(([v,l])=>h('button',{key:l,onClick:()=>set({mfAuto:v}),className:'act95',
+          style:{padding:'6px 12px',borderRadius:8,fontSize:13,fontWeight:650,background:(S.mfAuto!==false)===v?T.bg:'transparent',color:T.fg}},l)))),
+      h('button',{onClick:()=>{set({mfUrl:'',mfToken:''});mfStore.set({state:'',err:'',sig:'',at:0});setMe(null);setErr('')},style:{fontSize:14,color:'#c2410c',padding:'10px 0'}},'Disconnect Miniflux'))
+    :h(Fragment,null,
+      h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Connect your Miniflux'),
+      h('input',{value:url,onChange:e=>{setUrl(e.target.value);setErr('')},placeholder:'https://reader.example.com',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:inp}),
+      h('input',{type:'password',value:tok,onChange:e=>{setTok(e.target.value);setErr('')},placeholder:'API key (Miniflux → Settings → API Keys)',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,style:{...inp,fontFamily:'ui-monospace,monospace',fontSize:14}}),
+      h('button',{onClick:connect,disabled:busy||!url.trim()||!tok.trim(),className:'act95',style:{...btn(true),width:'100%',opacity:busy||!url.trim()||!tok.trim()?.5:1}},busy?'Connecting…':'Connect & add my sources'),
+      err?h('div',{style:{...small,color:'#c2410c',marginTop:8}},err):null,
+      h('div',{style:{fontSize:14,fontWeight:650,margin:'20px 0 6px'}},'Don’t have Miniflux yet?'),
+      h('div',{style:{...small,lineHeight:1.7}},
+        '1. Run it on any always-on machine with Docker (a free Oracle Cloud or Google Cloud VM, a Raspberry Pi, a home computer): the ready-made setup is in your repo’s ',h('b',null,'miniflux'),' folder, one command: ',h('span',{style:{fontFamily:'ui-monospace,monospace',fontSize:12}},'docker compose up -d'),'.',h('br'),
+        '2. Give it an https:// address (Cloudflare Tunnel, Tailscale Funnel or Caddy) so your phone can reach it.',h('br'),
+        '3. In Miniflux: Settings → API Keys → Create a new API key, and paste it above.'),
+      h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
+        h('button',{onClick:()=>openExternalUrl(guide),className:'act95',style:btn(false)},'Setup guide ↗'),
+        h('button',{onClick:()=>openExternalUrl('https://miniflux.app/docs/'),className:'act95',style:btn(false)},'Miniflux docs ↗')),
+      h('div',{style:{...small,marginTop:10}},'Or use Miniflux’s hosted service at miniflux.app (paid yearly, no server to run).')));
+}
 const syncLabel=st=>st.state==='sending'?'Sending to GitHub…':st.state==='building'?'Sent ✓ Building your feed (about 1–2 minutes)…'
   :st.state==='live'?'Live ✓ Feed rebuilt '+fmtAgo(st.liveAt)+(st.allN?' · '+st.okN+' of '+st.allN+' accounts working':'')
   :st.state==='sent'?'Sent ✓ '+fmtAgo(st.sentAt)+'. The feed updates on its next pass.'
@@ -8384,7 +8520,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
     h('span',{style:{display:'flex',color:T.meta}},icon),
     h('span',{style:{flex:1,fontSize:16}},label),
     h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
-  const PAGE_TITLES={homepage:'Home page',display:'Display & Motion',appearance:'Appearance',behavior:'Behavior',socialrss:'Social RSS feed',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
+  const PAGE_TITLES={homepage:'Home page',display:'Display & Motion',appearance:'Appearance',behavior:'Behavior',socialrss:'Social RSS feed',miniflux:'Miniflux',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
@@ -8403,6 +8539,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
         navRow('Appearance','appearance',Icons.contrast(20)),
         navRow('Behavior','behavior',Icons.bolt(20)),
         navRow('Social RSS feed','socialrss',Icons.rss(20)),
+        navRow('Miniflux','miniflux',Icons.news(20)),
         navRow('Voices','voices',Icons.headphones(20)),
         navRow('AI Assistant','ai',Icons.ai(20)),
         navRow('Browser & Sites','sites',Icons.globe(20)),
@@ -8628,8 +8765,16 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
       h('div',{style:{padding:'4px 20px 8px'}},h('button',{onClick:()=>{onClose();window.dispatchEvent(new Event('insta-social-open'))},className:'act95',
         style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650}},'Read my social feed in the app')),
       h(SocialFeedBox,{T,brief:data.brief,blogs:data.feeds||[],update}),
+      h('div',{style:{padding:'14px 20px 0'}},h('button',{onClick:()=>setPage('miniflux'),className:'act95',
+        style:{display:'flex',alignItems:'center',gap:10,width:'100%',textAlign:'left',padding:'12px 14px',borderRadius:12,background:T.card,border:'1px solid '+T.hair,color:T.fg}},
+        h('span',{style:{display:'flex',color:T.accent}},Icons.news(20)),
+        h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:14.5,fontWeight:650}},'Miniflux'),
+          h('span',{style:{display:'block',fontSize:12.5,color:T.sub}},S.mfUrl?'Connected · '+S.mfUrl.replace(/^https?:\/\//,''):'Send all these sources to your own Miniflux reader')),
+        h('span',{style:{fontSize:20,color:T.sub}},'›'))),
       head('Send to the server'),
       h(SourcesSyncBox,{T,S,brief:data.brief,set,toastFn:toastFn||(()=>{})}));
+  }else if(page==='miniflux'){
+    content=h(MinifluxBox,{T,S,data,set,toastFn:toastFn||(()=>{})});
   }else if(page==='sites'){
     const curEng=window.InstaSearch?window.InstaSearch.engineOf(S):'google';
     const pickEng=e=>{set({agent:Object.assign({},S.agent||{},{engine:e})});setEngSaved(e)};
@@ -9146,6 +9291,7 @@ function App(){
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
   /* sources reach the server by themselves when a GitHub token is set */
   useSourcesAutoSync(data.brief||{},S.ghToken||'');
+  useMinifluxAutoSync(data,S);
 
   /* Force reload to the latest deployed version: drop the service worker + all
      PWA caches, then reload with a cache-buster. Saved data in localStorage /

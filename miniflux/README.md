@@ -30,6 +30,12 @@ from your phone outside home, put it behind HTTPS (Caddy, Cloudflare Tunnel or T
 
 ## Fill it with your Evolve sources automatically
 
+**From the app (easiest):** go to **Settings → Miniflux**, paste your Miniflux address (it must be `https://`) and an
+API key (in Miniflux: **Settings → API Keys → Create a new API key**), then tap **Connect & add my sources**. The app adds
+every My Routine source and blog straight away, and new ones a few seconds after you add them (*Keep Miniflux in sync*).
+
+**From GitHub (also works when your phone is off):**
+
 1. In Miniflux, go to **Settings → API Keys → Create a new API key** and copy the key.
 2. On GitHub, go to **Settings → Secrets and variables → Actions → New repository secret** and add:
    - `MINIFLUX_URL`: the address of your Miniflux, e.g. `https://reader.example.com`

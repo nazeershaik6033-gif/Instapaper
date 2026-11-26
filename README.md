@@ -264,7 +264,8 @@ from cloud servers now and then, so expect an occasional gap. Optional repositor
 `IG_SESSION_ID` + `IG_DS_USER_ID` (Instagram cookies; use a spare account) and `TWITTER_AUTH_TOKEN` (X cookie, for RSSHub).
 
 **Miniflux (optional).** `miniflux/` has a Docker setup (Miniflux + PostgreSQL + RSS-Bridge) for running your own reader.
-Add the `MINIFLUX_URL` and `MINIFLUX_TOKEN` secrets and the job adds every My Routine source to it by itself. See
+Connect it in **Settings → Miniflux** (its https address + an API key): the app adds every My Routine source and blog to it,
+and new ones as you add them. Or add the `MINIFLUX_URL` and `MINIFLUX_TOKEN` secrets and the GitHub job does it. See
 [miniflux/README.md](miniflux/README.md).
 Read the combined feed inside the app from the sidebar (**Follow → Social feed**) or the button at the top of **Settings → Social RSS feed**: newest first, filter by platform, tap a post to open it.
 
