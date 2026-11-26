@@ -115,6 +115,15 @@ html.vgap .appframe{height:calc(var(--app-h,100dvh) + var(--vgap,0px))}
 .spin{animation:spk 800ms linear infinite}
 @keyframes ppk{from{transform:scale(.7);opacity:0}to{transform:scale(1);opacity:1}}
 .ppin{transform-origin:bottom right;animation:ppk 190ms cubic-bezier(.2,.9,.2,1) both}
+.fc-pop{animation:fcpop 460ms cubic-bezier(.2,1.4,.4,1) both}
+@keyframes fcpop{from{transform:scale(.5);opacity:0}to{transform:none;opacity:1}}
+.fc-in{animation:pgk 260ms cubic-bezier(.2,.8,.2,1) both}
+.fc-pulse{animation:fcp 1.5s ease-in-out infinite}
+@keyframes fcp{0%,100%{box-shadow:0 0 0 0 rgba(0,122,255,.5)}50%{box-shadow:0 0 0 9px rgba(0,122,255,0)}}
+.img-fade{opacity:0;transition:opacity 260ms ease-out}.img-fade.on{opacity:1}
+.soc-in{animation:pgk 240ms cubic-bezier(.2,.8,.2,1) both}
+html.motion-off .fc-pop,html.motion-off .fc-in,html.motion-off .fc-pulse,html.motion-off .soc-in{animation:none}
+@media (prefers-reduced-motion:reduce){html:not(.motion-forced) .fc-pop,html:not(.motion-forced) .fc-in,html:not(.motion-forced) .fc-pulse,html:not(.motion-forced) .soc-in{animation:none}}
 .addtile{animation:addk 360ms cubic-bezier(.2,1.3,.4,1) backwards}
 @keyframes addk{from{transform:translateY(10px) scale(.86);opacity:0}to{transform:none;opacity:1}}
 :root{--uif:-apple-system,BlinkMacSystemFont,'SF Pro Text',system-ui,sans-serif}

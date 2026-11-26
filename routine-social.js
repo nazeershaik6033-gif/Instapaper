@@ -166,29 +166,26 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
 const FREE_FEED={telegram:1,reddit:1,bluesky:1,mastodon:1};
 function FeedSetup({T,platform,accounts,onAutoFeed,onSetFeed,onProfile,onClose,toastFn}){
   const pl=PLAT[platform]||{label:'this app'};const free=!!FREE_FEED[platform];
-  const [manual,setManual]=useState(null);const [busy,setBusy]=useState(null);
-  const paste=async a=>{let t=null;try{t=await navigator.clipboard.readText()}catch(e){}
-    if(t==null){setManual(a.it.id);return}t=String(t).trim();
-    if(!/^https?:\/\/\S+$/i.test(t)){toastFn&&toastFn('The clipboard doesn’t hold a link — copy the feed URL from RSS.app first');return}
-    setBusy(a.it.id);await onSetFeed(a.it,t);setBusy(null)};
+  const [busy,setBusy]=useState(null);
   const auto=async a=>{setBusy(a.it.id);await onAutoFeed(a.it);setBusy(null)};
+  const waiting=accounts.filter(a=>!a.feed);
+  const connect=a=>{if(!window.openFeedConnect)return;const ids=(a?(a.feed?[a]:waiting):waiting).map(x=>x.it.id);window.openFeedConnect(ids,a&&a.it.id);onClose&&onClose()};
   const pill=(label,fn,primary,key)=>h('button',{key,onClick:fn,className:'act95',style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:650,background:primary?T.fg:T.card,color:primary?T.bg:T.fg}},label);
   return h(Sheet,{T,onClose,title:'New posts from '+pl.label,z:74,maxH:'88%'},
     h('div',{style:{padding:'0 18px 18px'}},
       h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},free?pl.label+' has free public feeds — turn one on per account to get New counts and posts here.':
-        pl.label+' has no free public feed. For each account: tap “Copy link & open RSS.app”, create a feed there (paste the link), copy the feed URL it gives you, come back and tap “Paste feed link”. Without one, the account still opens as a live profile.'),
+        pl.label+' has no free public feed, so each account gets one from RSS.app (free). The app walks you through it, about 30 seconds per account. Without one, the account still opens as a live profile.'),
+      !free&&waiting.length>1?h('button',{onClick:()=>connect(null),className:'act95',style:{width:'100%',padding:'12px',borderRadius:12,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:650,marginBottom:6}},'Connect all '+waiting.length+' accounts'):null,
       accounts.map(a=>h('div',{key:a.it.id,style:{padding:'12px 0',borderTop:'1px solid '+T.hair}},
         h('div',{style:{display:'flex',alignItems:'center',gap:10}},h(Avatar,{it:a.it,size:30}),
           h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},displayName(a.it)),
             h('div',{style:{fontSize:12,color:a.feed&&!a.entries?T.danger:T.sub}},a.feed?(a.entries?a.entries+' posts in its feed':'Feed linked but not returning posts'):'No feed yet')),
           busy===a.it.id?h(Spinner,{T,size:16}):null),
         h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
-          free?pill(a.feed?'Reconnect feed':'Turn on feed',()=>auto(a),true,'f'):h(Fragment,null,
-            pill('Copy link & open RSS.app',()=>{try{copyText(a.it.url||'')}catch(e){}openExternalUrl('https://rss.app/new-rss-feed');toastFn&&toastFn('Profile link copied — paste it in RSS.app')},false,'o'),
-            pill('Paste feed link',()=>paste(a),true,'p')),
-          pill('Live profile',()=>onProfile(a.it),false,'v')),
-        manual===a.it.id?h('input',{autoFocus:true,placeholder:'Paste the feed URL here',onKeyDown:e=>{if(e.key==='Enter'){const v=e.target.value.trim();if(v){setManual(null);setBusy(a.it.id);Promise.resolve(onSetFeed(a.it,v)).then(()=>setBusy(null))}}},
-          style:{width:'100%',boxSizing:'border-box',marginTop:8,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.card,color:T.fg,fontSize:16}}):null)),
+          free?pill(a.feed?'Reconnect feed':'Turn on feed',()=>auto(a),true,'f')
+            /* the same guided RSS.app flow as Settings → Social RSS feed */
+            :pill(a.feed?'Change feed link':'Connect with RSS.app',()=>connect(a),!a.feed,'c'),
+          pill('Live profile',()=>onProfile(a.it),false,'v')))),
       !accounts.length?h('div',{style:{fontSize:13,color:T.sub}},'All accounts here are connected.'):null));
 }
 
@@ -260,5 +257,6 @@ function SocialFeed({T,S,posts:allPosts,accounts,platform,isDone,onDone,isSaved,
     sheet&&sheet.k==='about'?toBody(h(AboutSheet,{T,S,p:sheet.p,done:isDone(sheet.p),saved:isSaved(sheet.p.e),onDone,onSave,onOpen,onClose:()=>setSheet(null),toastFn})):null);
 }
 
-window.InstaSocial={SocialFeed,isSocial,platformOf,isVideoPost};
+/* its own name: window.InstaSocial belongs to social.js (the browser's YouTube / Instagram / X viewer) */
+window.InstaRoutine={SocialFeed,isSocial,platformOf,isVideoPost};
 })();

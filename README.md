@@ -223,7 +223,15 @@ premium personalized newspaper (separate from the in-app Daily Brief checklist).
 ## Server-side refresh (reliable My Routine updates)
 
 My Routine reads YouTube / Telegram / RSS in the browser through free public proxies, which are often blocked.
-A GitHub Action fetches the same sources from a server instead and the app reads the result first:
+A GitHub Action fetches the same sources from a server instead and the app reads the result first.
+
+**Automatic (recommended).** Paste a fine-grained GitHub token (only this repo, *Actions: Read and write*, the same token
+video transcripts use) in **Settings → Social RSS feed → Send to the server**. From then on the app sends your sources by
+itself a few seconds after you add, remove or connect anything: it starts **Refresh feeds (every 15 min)** with your list as
+its `sources` input, which validates it (`scripts/apply-sources.mjs`), commits `routine-sources.json` to `main` and rebuilds
+the feeds straight away. The status line there shows *Sending → Building → Live*. No GitHub page to open.
+
+**Without a token** (the GitHub-page way; you must be signed in to GitHub in Safari):
 
 1. In the app tap **Fix this for good: set up server refresh** (shown in Catch-up when feeds fail), or **Settings → Behavior → Server-side refresh → Save sources to GitHub**.
 2. GitHub opens a ready-made issue called “sources: update” holding your sources — press **Submit new issue**. The refresh job applies it to `routine-sources.json` (only for issues opened by the repo owner, and only if the list is well-formed), commits it to `main` and closes the issue, within 15 minutes.
@@ -243,9 +251,12 @@ To stop it, cancel the running job or disable the workflow. Free because the rep
 (`scripts/build-social-feed.mjs`) on the `social-feed` branch: `all.xml` (every account, newest first) plus one file per
 platform (`telegram.xml`, `instagram.xml`, `x.xml`). Open them in Feedly, Reeder, Inoreader or any RSS app; the links (with
 Copy buttons) are in **Settings → Social RSS feed**. Telegram channels are read from their public `t.me/s/`
-page for free. Instagram and X have no public feed, so each account needs a feed link from RSS.app pasted into the account
-in My Routine (Manage → Edit → *Bridge feed link*); the same Settings section lists the accounts still missing one. After
-adding or removing accounts, tap **Update sources on GitHub** and press **Submit new issue** so the server knows about them.
+page for free. Instagram and X have no public feed, so each account needs a feed link from RSS.app (free). **Settings →
+Social RSS feed → Connect** walks you through it one account at a time: it copies the profile link and opens RSS.app, you
+tap Generate and Copy there, come back and tap **Paste the feed link**; it checks the link and moves on to the next account.
+The same flow opens from My Routine (an Instagram / X account → *Connect with RSS.app*), and it picks up where you were if
+the phone closes the app while you're in Safari. With a GitHub token the server learns about the change by itself; without
+one, tap **Send via GitHub page** afterwards.
 Read the combined feed inside the app from the sidebar (**Follow → Social feed**) or the button at the top of **Settings → Social RSS feed**: newest first, filter by platform, tap a post to open it.
 
 **On-time server refresh (optional, Cloudflare).** GitHub's scheduler is best-effort: on a quiet repo it skips most runs and fires a few times a

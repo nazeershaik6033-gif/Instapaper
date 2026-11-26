@@ -8,8 +8,17 @@ name: Refresh feeds (every 15 min)
 # refreshes, and builds your social RSS feed (scripts/build-social-feed.mjs) on the `social-feed` branch.
 #   Start it:  Actions -> "Refresh feeds (every 15 min)" -> Run workflow (it also starts when this file changes on main)
 #   Stop it:   cancel the running job, or Actions -> this workflow -> ... -> Disable workflow
+# The app's sources sync (Settings -> Social RSS feed, with a GitHub token) starts a run with the
+# `sources` input: that run takes over, writes routine-sources.json to main and rebuilds the feeds
+# straight away, so new accounts show up in a minute or two instead of waiting for the next pass.
 on:
   workflow_dispatch:
+    inputs:
+      sources:
+        description: 'Sources JSON from the app: {"urls":[...],"accounts":[...]} (leave empty to just run)'
+        required: false
+        default: ''
+        type: string
   push:
     branches: [main]
     paths: [.github/workflows/refresh-feeds-loop.yml]
@@ -42,6 +51,30 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Apply sources sent by the app
+        if: ${{ inputs.sources != '' }}
+        env:
+          # passed through the environment (never pasted into the script), then validated by apply-sources.mjs
+          SOURCES: ${{ inputs.sources }}
+        run: |
+          printf '%s' "$SOURCES" > "$RUNNER_TEMP/sources.txt"
+          if why=$(node scripts/apply-sources.mjs "$RUNNER_TEMP/sources.txt" routine-sources.json 2>&1); then
+            echo "$why"
+            git config user.name "feed-refresh[bot]"; git config user.email "feed-refresh@users.noreply.github.com"
+            git add routine-sources.json
+            if git diff --cached --quiet; then echo "routine-sources.json already up to date"
+            else
+              git commit -q -m "Update routine sources from the app"
+              for i in 1 2 3; do
+                git push -q origin HEAD:main && break
+                git fetch -q origin main && git rebase -q FETCH_HEAD || { git rebase --abort || true; git reset -q --hard FETCH_HEAD; node scripts/apply-sources.mjs "$RUNNER_TEMP/sources.txt" routine-sources.json && git add routine-sources.json && git commit -q -m "Update routine sources from the app"; }
+                sleep $((i * 3))
+              done
+            fi
+          else
+            echo "::error::Sources from the app were not applied: $why"
+            exit 1
+          fi
       - name: Refresh every ${{ env.EVERY_MIN }} minutes
         timeout-minutes: 340
         env:
