@@ -34,5 +34,10 @@ for (const x of (Array.isArray(data.accounts) ? data.accounts : [])) {
 }
 if (accounts.length > 200) fail('too many accounts');
 
-fs.writeFileSync(outPath, JSON.stringify(accounts.length ? { urls, accounts } : { urls }, null, 1) + '\n');
-console.log(`applied: ${urls.length} urls, ${accounts.length} accounts`);
+// "auto": YouTube channel ids whose new long videos the feed job transcribes by itself (auto-paper)
+const auto = [...new Set((Array.isArray(data.auto) ? data.auto : []).filter(x => typeof x === 'string' && /^UC[\w-]{20,24}$/.test(x)))].slice(0, 100);
+const out = { urls };
+if (accounts.length) out.accounts = accounts;
+if (auto.length) out.auto = auto;
+fs.writeFileSync(outPath, JSON.stringify(out, null, 1) + '\n');
+console.log(`applied: ${urls.length} urls, ${accounts.length} accounts, ${auto.length} auto-paper channels`);

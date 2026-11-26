@@ -947,7 +947,12 @@ function socialAccountsOf(brief){
   });
   return out;
 }
-const sourcesJson=brief=>{const accounts=socialAccountsOf(brief).map(({id,...a})=>a);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)},null,1)};
+/* auto-paper: the YouTube channels in the groups you picked (My Routine → ⋯ → Auto-paper); the feed job sends their new
+   long videos to Whisper on your Mac (scripts/auto-transcribe.mjs) */
+const autoChannelsOf=brief=>{const gs=new Set((brief&&brief.autoGroups)||[]);if(!gs.size)return[];
+  return[...new Set(((brief&&brief.items)||[]).filter(it=>it.kind==='youtube'&&it.channelId&&gs.has(it.groupId)).map(it=>it.channelId))]};
+const sourcesPayload=brief=>{const accounts=socialAccountsOf(brief).map(({id,...a})=>a);const auto=autoChannelsOf(brief);const o={urls:sourceUrlsOf(brief)};if(accounts.length)o.accounts=accounts;if(auto.length)o.auto=auto;return o};
+const sourcesJson=brief=>JSON.stringify(sourcesPayload(brief),null,1);
 /* the custom feed's links + each account's status, published by the server job */
 function socialFeedIndexUrl(){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/index.json?t='+Math.floor(Date.now()/60000)}
 function sourcesGithubUrl(brief,exists,inline){
@@ -961,7 +966,7 @@ function sourcesGithubUrl(brief,exists,inline){
 const GH_URL_MAX=3500;
 /* One tap: GitHub opens a ready-made issue holding your sources; press "Submit new issue" and the
    server job applies it (and closes the issue) within 15 minutes. No file to edit, no token. */
-const sourcesCompact=brief=>{const accounts=socialAccountsOf(brief).map(({id,...a})=>a);return JSON.stringify(accounts.length?{urls:sourceUrlsOf(brief),accounts}:{urls:sourceUrlsOf(brief)})};
+const sourcesCompact=brief=>JSON.stringify(sourcesPayload(brief));
 function sourcesIssueUrl(brief,withBody){
   const{owner,repo}=repoSlug(),u='https://github.com/'+owner+'/'+repo+'/issues/new?title='+encodeURIComponent('sources: update');
   return withBody?u+'&body='+encodeURIComponent('```json\n'+sourcesCompact(brief)+'\n```'):u;
@@ -5433,7 +5438,28 @@ function platGroupFix(b,it){
   const ex=gs.find(x=>x.platform===p&&x.name===g.name);if(ex)return{b,it:{...it,groupId:ex.id}};
   const ng={id:uid(),name:g.name,platform:p};return{b:{...b,groups:gs.concat([ng])},it:{...it,groupId:ng.id}};
 }
-function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry,onVideoTool,txOf,overlayOpen,onMakePaper,onView}){
+/* My Routine → ⋯ → Auto-paper: pick the YouTube groups whose new long videos get transcribed by themselves.
+   The list goes to GitHub with your sources; the feed job then sends each new video to Whisper on your Mac,
+   and the app gathers the transcripts into that day's paper (Home → Editions). */
+function AutoPaperSheet({T,brief,onBrief,toastFn,onClose}){
+  const groups=(brief.groups||[]).filter(g=>!g.platform);const on=new Set(brief.autoGroups||[]);
+  const nIn=g=>(brief.items||[]).filter(it=>it.kind==='youtube'&&it.groupId===g.id).length;
+  const flip=id=>onBrief(b=>{const s=new Set(b.autoGroups||[]);s.has(id)?s.delete(id):s.add(id);return{...b,autoGroups:[...s]}});
+  const st=useSourcesSync();const pending=st.sentSig!==sourcesSig(brief);
+  return h(Sheet,{T,onClose,title:'Auto-paper',z:90,maxH:'88%'},
+    h('div',{style:{padding:'0 20px 18px'}},
+      h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.55,marginBottom:12}},'New long videos (not Shorts) from these groups are transcribed by Whisper on your Mac as they come in. Once two or more are in, today’s paper appears on Home → Editions, and here in My Routine. While your Mac is off, they wait and run when it’s back.'),
+      !groups.length?h('div',{style:{fontSize:14,color:T.sub,padding:'10px 0'}},'Make a group first (Manage → +), then pick it here.'):
+      h('div',{style:{borderRadius:14,overflow:'hidden',background:T.card}},groups.map((g,i)=>{const sel=on.has(g.id);
+        return h('button',{key:g.id,onClick:()=>flip(g.id),className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'13px 14px',color:T.fg,borderBottom:i<groups.length-1?'1px solid '+T.hair:'none'}},
+          h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(sel?T.accent:T.hair),background:sel?T.accent:'transparent',color:'#fff'}},sel?Icons.check(13):null),
+          h('span',{style:{flex:1,fontSize:15.5,fontWeight:sel?650:500}},g.name),
+          h('span',{style:{fontSize:13,color:T.sub}},nIn(g)+' channel'+(nIn(g)===1?'':'s')))})),
+      h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,margin:'12px 2px'}},GH_TOKEN_NOW?'Your choice goes to GitHub by itself in a few seconds.':'Send your choice to GitHub once (same page as your sources): '),
+      !GH_TOKEN_NOW?h('button',{onClick:()=>setupServerRefresh(brief,toastFn),className:'act95',style:{width:'100%',padding:12,borderRadius:12,background:pending?T.accent:T.card,color:pending?'#fff':T.fg,fontSize:15,fontWeight:650}},pending?'Send to GitHub':'Send again'):null,
+      h('div',{style:{fontSize:12,color:T.sub,lineHeight:1.5,marginTop:12}},'Needs Whisper on your Mac set up once (Settings → AI → Whisper on my Mac). Each transcript also stays on the video, so Read in the ⌄ list opens it straight away.')));
+}
+function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSaveEntry,onVideoTool,txOf,overlayOpen,onMakePaper,onView,paperToday,onOpenPaper}){
   const groups=brief.groups||[],items=brief.items||[],feeds=brief.feeds||{};
   useEffect(()=>{if(!brief.platGroupsV1)onBrief(b=>b.platGroupsV1?b:migratePlatGroups(b))},[brief.platGroupsV1]);
   const groupsFor=p=>groups.filter(g=>(g.platform||null)===(p||null));
@@ -5690,6 +5716,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const SOC=window.InstaRoutine;
   const [todayMax,setTodayMax]=useState(false);
   const [todayMenu,setTodayMenu]=useState(false);
+  const [autoSheet,setAutoSheet]=useState(false);
   const [playlist,setPlaylist]=useState(null); // posts snapshot
   /* "today" starts at this morning's first routine window (or 24h back before it begins) */
   const todayStart=(()=>{const d=new Date();const f=(slots[0]&&slots[0].time)||'06:00';const [hh,mm]=f.split(':').map(Number);
@@ -6163,7 +6190,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       :activeTab==='_other'?[{g:null,list:ungrouped}]:[{g:mGroups.find(x=>x.id===activeTab)||null,list:tabList}];
     const shown=sections.map(({g,list})=>({g,list:list.filter(matchQ)})).filter(x=>x.list.length||!q);
     if(!shown.length)return h('div',{style:{textAlign:'center',color:T.sub,fontSize:14,padding:'34px 20px'}},q?'Nothing matches “'+query.trim()+'”.':'No accounts here yet.');
-    return h('div',null,shown.map(({g,list})=>{const key=g?g.id:'_other';
+    /* today's paper is ready (from your auto-paper groups or videos you transcribed): one tap to read it */
+    const paperBanner=paperToday&&onOpenPaper?h('button',{onClick:()=>onOpenPaper(paperToday.id),className:'act98',
+      style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',margin:'6px 0 8px',padding:'12px 14px',borderRadius:16,color:'#fff',
+        background:'linear-gradient(135deg,#124a43,#06201f)',boxShadow:'0 6px 18px rgba(4,20,23,.25)'}},
+      h('span',{style:{width:40,height:40,borderRadius:11,background:'rgba(255,255,255,.12)',display:'flex',alignItems:'center',justifyContent:'center',flexShrink:0}},Icons.newspaper(21)),
+      h('span',{style:{flex:1,minWidth:0}},
+        h('span',{style:{display:'block',fontSize:15.5,fontWeight:750}},'Today’s paper is ready'),
+        h('span',{style:{display:'block',fontSize:12.5,opacity:.75,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},paperToday.stories.length+' stories · '+paperToday.stories.map(x=>x.headline).slice(0,2).join(' · '))),
+      h('span',{style:{fontSize:13,fontWeight:750,padding:'7px 12px',borderRadius:14,background:'linear-gradient(90deg,#7ee06a,#e2ff7e)',color:'#0b2a1c',flexShrink:0}},'Read')):null;
+    return h('div',null,paperBanner,shown.map(({g,list})=>{const key=g?g.id:'_other';
       return h('div',{key,style:{marginBottom:6}},secHead(g,list),shorts&&!shorts.max?shortsEl(key):null,
         list.length?list.map(subRow):h('div',{style:{fontSize:13.5,color:T.sub,padding:'14px 4px'}},'No accounts in this group yet — tap + to add one.'))}));
   };
@@ -6383,12 +6419,16 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       srcK==='youtube'&&onMakePaper&&paperPosts().length?h(ARow,{T,icon:Icons.newspaper(21),label:'Make today’s paper',sub:'A newspaper from today’s videos',onClick:()=>{setTodayMenu(false);onMakePaper(paperPosts())}}):null,
       isSocSrc?h(ARow,{T,icon:LAYOUT_ICON[socLayout==='shorts'?'feed':'shorts'](21),label:socLayout==='shorts'?'Switch to feed layout':'Switch to Shorts layout',
         sub:socLayout==='shorts'?'Scroll posts like Instagram':'Full screen, swipe up like YouTube Shorts',onClick:()=>{setTodayMenu(false);setSocLayout(socLayout==='shorts'?'feed':'shorts')}}):null,
+      srcK==='youtube'?h(ARow,{T,icon:Icons.newspaper(21),label:'Auto-paper'+((brief.autoGroups||[]).length?' · '+(brief.autoGroups||[]).length+' group'+((brief.autoGroups||[]).length>1?'s':''):''),
+        sub:'Transcribe new videos from chosen groups by themselves',onClick:()=>{setTodayMenu(false);setAutoSheet(true)}}):null,
       h(ARow,{T,icon:Icons.refresh(21),label:refreshing?'Refreshing…':'Refresh now',sub:'Fetch the latest from every source',onClick:()=>{setTodayMenu(false);refreshFeeds(true)}}),
       h(ARow,{T,icon:Icons.calendar(21),label:'Routine window · '+curSlot.name,sub:'Morning, afternoon, night',onClick:()=>{setTodayMenu(false);setSlotSheet(true)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Manage sources & groups',sub:'Add, edit, group and reorder',onClick:()=>{setTodayMenu(false);setView('manage')}}),
       (failN||proxyDown)&&!snapAt?h(ARow,{T,icon:Icons.bolt(21),label:'Fix updates for good',sub:'Set up server refresh (2 taps)',onClick:()=>{setTodayMenu(false);setupServerRefresh(brief,toastFn)}}):null):null;
     /* sheets from this screen render on <body> so they open above the full-screen video layer */
+    const autoEl=autoSheet?h(AutoPaperSheet,{T,brief,onBrief,toastFn,onClose:()=>setAutoSheet(false)}):null;
     return h(Fragment,null,
+      autoEl?ReactDOM.createPortal(autoEl,document.body):null,
       playlistEl,
       ReactDOM.createPortal(layer,document.body),
       slotSheet?ReactDOM.createPortal(slotSheetEl(),document.body):null,
@@ -9803,6 +9843,31 @@ function App(){
     update(d=>({...d,articles:[article,...d.articles]}));
     return article.id;
   };
+  /* auto-paper: pick up the transcripts the feed job had Whisper make (t/auto-<videoId>.json on transcripts-data) for
+     new videos in your auto-paper groups and attach them to the videos, so today's paper fills itself */
+  const autoMiss=useRef({});
+  useEffect(()=>{
+    let alive=true;
+    const pass=async()=>{
+      const b=dataRef.current.brief||{};const gs=new Set(b.autoGroups||[]);if(!gs.size)return;
+      const{owner,repo}=repoSlug();const cands=[];
+      (b.items||[]).filter(it=>it.kind==='youtube'&&gs.has(it.groupId)).forEach(it=>((((b.feeds||{})[it.id])||{}).entries||[]).forEach(e=>{
+        if(Date.now()-(e.publishedMs||0)<4*86400e3&&!isShortEntry(e))cands.push({e,it})}));
+      for(const {e,it} of cands.slice(0,30)){
+        if(!alive)return;const vid=ytIdOf(e.url);if(!vid)continue;
+        const a=findVideo(vid);if(a&&a.transcript&&String(a.transcript).trim())continue;
+        if(autoMiss.current[vid]&&Date.now()-autoMiss.current[vid]<10*60000)continue;
+        try{
+          const r=await fetchWithTimeout('https://raw.githubusercontent.com/'+owner+'/'+repo+'/transcripts-data/t/auto-'+vid+'.json?t='+Math.floor(Date.now()/60000),{cache:'no-store'},12000);
+          const j=r.ok?await r.json():null;
+          if(j&&j.status==='done'&&String(j.text||'').trim().length>80){const id=ensureVideoArticle(e,it.name);if(id)patchArticle(id,{transcript:String(j.text),transcriptSrc:'Whisper (auto-paper)',transcriptAt:Date.now(),transcriptTr:{}})}
+          else autoMiss.current[vid]=Date.now();
+        }catch(err){autoMiss.current[vid]=Date.now()}
+      }
+    };
+    const t0=setTimeout(pass,4000),t=setInterval(pass,10*60000);return()=>{alive=false;clearTimeout(t0);clearInterval(t)};
+  },[]);
+  const paperToday=allPapers.find(p=>p.kind==='day'&&p.label==='Today’s paper')||null;
   const txOfEntry=e=>{const vid=ytIdOf(e&&e.url);if(!vid)return false;const a=data.articles.find(x=>!x.isEdition&&x.videoId===vid);return!!(a&&a.transcript&&String(a.transcript).trim())};
   const onVideoTool=(e,sourceName,kind)=>{
     const id=ensureVideoArticle(e,sourceName);if(!id){if(e&&e.url)openExternalUrl(e.url);return}
@@ -10160,7 +10225,7 @@ function App(){
     onSetting:patch=>update(d=>({...d,settings:{...d.settings,...patch}})),
     onAskClaude:()=>setAiOpen({routine:true}),
     isSaved:isEntrySaved,onSaveEntry:saveRoutineEntry,
-    onVideoTool,txOf:txOfEntry,overlayOpen:!!(edition||vidTool||aiOpen||readingId||paperBuild||paperOpen),onMakePaper:posts=>setPaperBuild(posts)});
+    onVideoTool,txOf:txOfEntry,paperToday,onOpenPaper:id=>setPaperOpen(id),overlayOpen:!!(edition||vidTool||aiOpen||readingId||paperBuild||paperOpen),onMakePaper:posts=>setPaperBuild(posts)});
   else if(scope.type==='headlines')body=h(DailyBrief,{T,regionId:'IN',showRegion:false,
     headlinesCategories:S.headlinesCategories||null,headlinesSources:S.headlinesSources||null,
     starred:S.briefStarred||[],muted:S.briefMuted||[],

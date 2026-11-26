@@ -300,7 +300,18 @@ iPhone. Home internet isn't blocked, and there's no length limit.
    collaborators** and pick **Require approval for all outside collaborators**. Then nobody else's pull request can run code on your Mac.
    The transcription job itself can only be started by someone with write access (you, through the app).
 
-**On the iPhone**
+**Auto-paper (no token needed).** In My Routine (YouTube) → ⋯ → **Auto-paper**, tick the groups whose new long videos you
+want transcribed by themselves and send the choice to GitHub (same as your sources). Every 15 minutes the feed job
+(`scripts/auto-transcribe.mjs`) sends up to 4 new long videos (not Shorts) from those channels to Whisper on your Mac as
+`auto-<videoId>`; while the Mac is off they wait in GitHub's queue. The app picks the transcripts up by itself, and once two
+are in, **Today's paper** appears on Home → Editions and as a banner in My Routine. This needs the runner above, not a token.
+
+**Papers.** Home → Editions also makes *Yesterday's / <weekday>'s paper* and *This / Last week's digest* from your transcribed
+videos, and **Combine** joins any you pick. In a paper, **Share** → *Post to my Blogs* (Blogs → Saved posts · My papers) or
+*Publish as a public web page*: a ready-made `publish: …` issue that the feed job turns into a page at
+`https://<you>.github.io/<repo>/post.html?p=…` (all published papers: `post.html`; RSS: `feed.xml` on the `blog-posts` branch).
+
+**On the iPhone (to start Whisper from a video yourself)**
 
 1. Create a [fine-grained GitHub token](https://github.com/settings/personal-access-tokens/new): repository access *only this repo*,
    permission **Actions: Read and write**.

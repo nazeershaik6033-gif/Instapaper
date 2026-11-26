@@ -12,12 +12,12 @@ const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
 const urls = [...new Set((src.urls || []).filter(u => /^https?:\/\//i.test(u)))];
 
 // previous snapshot (so one failed fetch does not blank a source)
-let old = {}, oldBridges = {}, oldMiss = {};
+let old = {}, oldBridges = {}, oldMiss = {}, oldAuto = {};
 const repo = process.env.GITHUB_REPOSITORY;
 if (repo && !process.env.NO_OLD) {
   try {
     const r = await fetch(`https://raw.githubusercontent.com/${repo}/feeds-data/feeds.json`, { signal: AbortSignal.timeout(10000) });
-    if (r.ok) { const j = await r.json(); old = j.feeds || {}; oldBridges = j.bridges || {}; oldMiss = j.videoMiss || {}; }
+    if (r.ok) { const j = await r.json(); old = j.feeds || {}; oldBridges = j.bridges || {}; oldMiss = j.videoMiss || {}; oldAuto = j.autoTx || {}; }
   } catch { /* first run */ }
 }
 
@@ -54,5 +54,5 @@ await Promise.all(Array.from({ length: 6 }, worker));
 for (const [k, v] of Object.entries(old)) if (k.startsWith('social:') && v && Date.now() - (v.at || 0) < KEEP_OLD_MS) feeds[k] = v;
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, JSON.stringify({ fetchedAt: Date.now(), feeds, bridges: oldBridges, videoMiss: oldMiss }));
+fs.writeFileSync(outPath, JSON.stringify({ fetchedAt: Date.now(), feeds, bridges: oldBridges, videoMiss: oldMiss, autoTx: oldAuto }));
 console.log(`feeds: ${ok} fetched, ${kept} kept from last run, ${failed} failed, of ${urls.length}`);

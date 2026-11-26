@@ -179,6 +179,8 @@ jobs:
             if [ -f routine-sources.json ] && node scripts/refresh-feeds.mjs routine-sources.json "$pub/feeds/feeds.json"; then
               # Instagram / X / Threads from free bridges (RSS.app link last), into the same feeds.json
               node scripts/bridge-social.mjs routine-sources.json "$pub/feeds/feeds.json" || echo "bridging failed $(date -u +%T)"
+              # auto-paper: new long videos from the channels you picked go to Whisper on your Mac
+              node scripts/auto-transcribe.mjs routine-sources.json "$pub/feeds/feeds.json" || echo "auto-paper failed $(date -u +%T)"
               publish "$pub/feeds" feeds-data && echo "feeds published $(date -u +%T)" || echo "feeds publish failed $(date -u +%T)"
               if node scripts/build-social-feed.mjs routine-sources.json "$pub/feeds/feeds.json" "$pub/social"; then
                 publish "$pub/social" social-feed && echo "social feed published" || echo "social feed publish failed"
