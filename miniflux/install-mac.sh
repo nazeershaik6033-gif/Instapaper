@@ -1,7 +1,9 @@
 #!/bin/bash
-# Miniflux on your Mac, free, no card anywhere:
+# Miniflux on your Mac, free, no card anywhere, PRIVATE:
 #   Homebrew → PostgreSQL + Miniflux (no Docker), started by itself whenever you log in to the Mac,
-#   and a free https address from Tailscale Funnel so the app on your phone can reach it from anywhere.
+#   and a free https address from Tailscale Serve that only YOUR devices (signed in to your Tailscale) can open.
+#   Nothing is published on the internet: strangers can't even see the login page.
+#   On your phone: install the free Tailscale app, sign in with the same account, keep it on when using Miniflux.
 # Run in Terminal (not with sudo; it asks for your Mac password when it needs it):
 #   curl -fsSL https://raw.githubusercontent.com/nazeershaik6033-gif/Instapaper/main/miniflux/install-mac.sh | bash
 # Safe to run again: it updates and keeps your data and password.
@@ -109,9 +111,12 @@ launchctl bootstrap "gui/$(id -u)" "$PLIST"
 for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/healthcheck 2>/dev/null && break; sleep 1; done
 curl -fsS -o /dev/null http://127.0.0.1:8080/healthcheck || die "Miniflux didn't start. Its log: $DIR/miniflux.log"
 
-say "6/6 Publish it on https (Tailscale Funnel)"
-echo "If Tailscale asks you to turn on Funnel / HTTPS for your account, open the link it shows, allow it, and wait here."
-"$TS" funnel --bg 8080 <"$IN" || die "Funnel didn't turn on. Open https://login.tailscale.com/admin/settings/features, enable HTTPS, then run this again."
+say "6/6 Private https address (Tailscale Serve: your devices only)"
+# an earlier version of this script used Funnel (public); make sure that's off
+"$TS" funnel --https=443 off >/dev/null 2>&1 || true
+"$TS" funnel reset >/dev/null 2>&1 || true
+echo "If Tailscale asks you to turn on HTTPS certificates for your account, open the link it shows, allow it, and wait here."
+"$TS" serve --bg 8080 <"$IN" || die "Tailscale Serve didn't turn on. Open https://login.tailscale.com/admin/dns, enable HTTPS Certificates, then run this again."
 ok=""
 for _ in $(seq 1 30); do curl -fsS --max-time 5 -o /dev/null "https://$HOST/healthcheck" 2>/dev/null && { ok=1; break; }; sleep 3; done
 
@@ -120,12 +125,16 @@ echo
 [ -n "$ok" ] && echo "✅ Miniflux is running at  https://$HOST" || echo "⚠️  Miniflux runs on this Mac; https://$HOST can take a minute or two to start answering the first time."
 echo "   Sign in:  user admin   password $ADMIN_PASSWORD   (saved in $DIR/secrets)"
 echo
+echo "🔒 Private: only devices signed in to your Tailscale account can open it. Nothing is public."
+echo
 echo "Next, on your phone:"
-echo "  1. Open https://$HOST, sign in, go to Settings → API Keys → Create a new API key, and copy it."
-echo "  2. Open this link. It fills in Settings → Miniflux in the app; paste the key and tap Connect:"
+echo "  1. Install the free Tailscale app (App Store / Play Store), sign in with the SAME account, and switch it on."
+echo "  2. Open https://$HOST, sign in, go to Settings → API Keys → Create a new API key, and copy it."
+echo "  3. Open this link. It fills in Settings → Miniflux in the app; paste the key and tap Connect:"
 echo "     $LINK"
 echo
+echo "Keep Tailscale on on the phone whenever you use Miniflux (the app's own feeds don't need it)."
 echo "Miniflux starts by itself when you log in to this Mac and catches up on feeds after sleep."
-echo "To remove it:  launchctl bootout gui/\$(id -u)/app.miniflux; $TS funnel --https=443 off; brew uninstall miniflux"
+echo "To remove it:  launchctl bootout gui/\$(id -u)/app.miniflux; $TS serve reset; brew uninstall miniflux"
 }
 main "$@"

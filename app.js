@@ -1064,7 +1064,9 @@ async function mfApi(cfg,path,opts){
     throw new Error('Use an https:// address for Miniflux. This app runs on https, and browsers block plain http from it.');
   let r;
   try{r=await fetchWithTimeout(base+'/v1'+path,Object.assign({},opts||{},{headers:{'X-Auth-Token':cfg.token,'Content-Type':'application/json'}}),20000)}
-  catch(e){throw new Error('Can’t reach '+base.replace(/^https?:\/\//,'')+'. Is Miniflux running, and is the address right?')}
+  catch(e){throw new Error(/\.ts\.net$/i.test(base.replace(/^https?:\/\//,''))
+    ?'Can’t reach your Miniflux. Switch Tailscale on on this phone (signed in to the same account as your Mac), and check the Mac is on and awake.'
+    :'Can’t reach '+base.replace(/^https?:\/\//,'')+'. Is Miniflux running, and is the address right?')}
   const t=await r.text();
   if(r.status===401||r.status===403)throw new Error('Miniflux refused the API key. Make a new one in Miniflux → Settings → API Keys.');
   if(!r.ok){let m='';try{m=JSON.parse(t).error_message||''}catch(e){}throw Object.assign(new Error(m||('Miniflux answered '+r.status)),{status:r.status})}
@@ -1174,7 +1176,7 @@ function MinifluxBox({T,S,data,set,toastFn}){
       err?h('div',{style:{...small,color:'#c2410c',marginTop:8}},err):null,
       h('div',{style:{fontSize:14,fontWeight:650,margin:'20px 0 6px'}},'Don’t have Miniflux yet?'),
       h('div',{style:{...small,lineHeight:1.7}},
-        h('b',{style:{color:T.fg}},'On your Mac (free, no card):'),' open Terminal and run this. It installs Miniflux, starts it whenever you log in, gives it a free https address with Tailscale, and prints a link that fills this page in. Miniflux runs while the Mac is on; your feeds in this app don’t need it.',
+        h('b',{style:{color:T.fg}},'On your Mac (free, no card):'),' open Terminal and run this. It installs Miniflux, starts it whenever you log in, and gives it a private https address with Tailscale: only your own devices can open it, nothing is public. It prints a link that fills this page in. On this phone, install the free Tailscale app and sign in with the same account. Miniflux runs while the Mac is on; your feeds in this app don’t need it.',
         h('span',{onClick:()=>{copyText(MF_INSTALL_MAC);toastFn('Mac command copied')},style:{display:'block',margin:'4px 0 8px',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_MAC+'  ⧉'),
         h('b',{style:{color:T.fg}},'Or on an always-on cloud server:'),' run this on a fresh Ubuntu server (e.g. Oracle Cloud Always Free, which verifies a card).',
         h('span',{onClick:()=>{copyText(MF_INSTALL_CMD);toastFn('Server command copied')},style:{display:'block',margin:'4px 0 8px',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_CMD+'  ⧉'),

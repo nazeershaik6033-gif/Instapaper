@@ -6,7 +6,7 @@ free Instagram / X / Threads feeds with RSS-Bridge and RSSHub, and publishes the
 Run Miniflux only if you also want everything in Miniflux's own web reader, or in a Fever or Google
 Reader app such as Reeder, NetNewsWire or ReadKit.
 
-## On your Mac: free, no card (about 10 minutes, once)
+## On your Mac: free, no card, private (about 10 minutes, once)
 
 Open **Terminal** on the Mac and run:
 
@@ -15,18 +15,26 @@ curl -fsSL https://raw.githubusercontent.com/nazeershaik6033-gif/Instapaper/main
 ```
 
 It installs Homebrew if needed, then PostgreSQL and Miniflux (no Docker). It sets Miniflux to start by itself whenever
-you log in, and gives it a free https address with [Tailscale Funnel](https://tailscale.com/kb/1223/funnel)
-(`https://<your-mac>.<tailnet>.ts.net`), so your phone reaches it from anywhere. Along the way it asks for your Mac
-password, and for a free Tailscale sign-in (Google / Apple / GitHub / Microsoft, no card). If Tailscale asks you to
-turn on Funnel or HTTPS, open the link it shows and allow it. At the end it prints the admin password and a link that
-opens the app's **Settings → Miniflux** with the address filled in. Then create an API key in Miniflux
-(**Settings → API Keys**) and paste it into the app.
+you log in, and gives it a **private** https address with [Tailscale Serve](https://tailscale.com/kb/1312/serve)
+(`https://<your-mac>.<tailnet>.ts.net`). Only devices signed in to your Tailscale account can open it. Nothing is
+published on the internet: strangers can't even see the login page, and Miniflux and its database only listen on the
+Mac itself. Along the way it asks for your Mac password and a free Tailscale sign-in (Google / Apple / GitHub /
+Microsoft, no card). If Tailscale asks you to turn on HTTPS certificates, open the link it shows and allow it. At the
+end it prints the admin password and a link that opens the app's **Settings → Miniflux** with the address filled in.
 
-- Miniflux only runs while the Mac is on and awake. When it's off, the Miniflux website and the Miniflux sync pause;
-  everything in the app (My Routine, Blogs, the social feed) keeps working, because it comes from GitHub. Miniflux
-  catches up when the Mac wakes.
-- Run the same command again to update; it keeps your data and password (`~/.miniflux/secrets`).
-- To remove it: `launchctl bootout gui/$(id -u)/app.miniflux; tailscale funnel --https=443 off; brew uninstall miniflux`
+On your phone:
+1. Install the free **Tailscale** app, sign in with the **same** account, and switch it on.
+2. Open the Miniflux address, sign in, and create an API key (**Settings → API Keys**).
+3. Open the printed link and paste the key into the app.
+
+- Keep Tailscale switched on on the phone whenever you use Miniflux. Everything else in the app (My Routine, Blogs,
+  the social feed) comes from GitHub and works without it.
+- Miniflux only runs while the Mac is on and awake; it catches up when the Mac wakes.
+- The GitHub job's Miniflux sync (`MINIFLUX_URL` secret) can't reach a private Miniflux; use the app's
+  **Settings → Miniflux** sync instead, which runs from your phone.
+- Run the same command again to update (keeps your data and password in `~/.miniflux/secrets`). Turn on two-factor
+  sign-in for the account you use with Tailscale.
+- To remove it: `launchctl bootout gui/$(id -u)/app.miniflux; tailscale serve reset; brew uninstall miniflux`
 
 ## On a cloud server: always on (about 15 minutes, once)
 
