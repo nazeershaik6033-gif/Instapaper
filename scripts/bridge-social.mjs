@@ -23,12 +23,12 @@ const snap = fs.existsSync(feedsPath) ? JSON.parse(fs.readFileSync(feedsPath, 'u
 snap.feeds = snap.feeds || {};
 
 // last run's copy (keeps an account's posts through a bad hour) and which source worked for it
-let old = {}, oldBridges = {};
+let old = {}, oldBridges = {}, oldMiss = {};
 const repo = process.env.GITHUB_REPOSITORY;
 if (repo && !process.env.NO_OLD) {
   try {
     const r = await fetch(`https://raw.githubusercontent.com/${repo}/feeds-data/feeds.json`, { signal: AbortSignal.timeout(15000) });
-    if (r.ok) { const j = await r.json(); old = j.feeds || {}; oldBridges = j.bridges || {}; }
+    if (r.ok) { const j = await r.json(); old = j.feeds || {}; oldBridges = j.bridges || {}; oldMiss = j.videoMiss || {}; }
   } catch { /* first run */ }
 }
 
@@ -79,7 +79,11 @@ async function embedVideoUrl(code) {
   }
   return '';
 }
-const videoStats = { needed: 0, found: 0, sample: '' };
+const videoStats = { needed: 0, found: 0, tried: 0, sample: '' };
+/* reels whose embed page had no video: not asked again for a day, and at most a few new ones per pass, so these
+   lookups can't get the GitHub runner blocked by Instagram (which would also stop the photo feeds) */
+const videoMiss = Object.fromEntries(Object.entries(oldMiss).filter(([, t]) => Date.now() - t < 24 * 3600e3));
+const LOOKUPS_PER_PASS = 4;
 /* video addresses found on an earlier run, reused while they're valid (Instagram's links carry their expiry as
    oe=<hex unix time>), so each reel's embed page is read about once instead of every 15 minutes */
 const knownVideos = new Map();
@@ -101,7 +105,8 @@ async function fillVideos(body) {
     const code = (/instagram\.com\/(?:p|reel)\/([\w-]+)/.exec(parts[i]) || [])[1];
     if (!code) continue;
     videoStats.needed++;
-    const v = knownVideos.get(code) || await embedVideoUrl(code);
+    let v = knownVideos.get(code) || '';
+    if (!v && !videoMiss[code] && videoStats.tried < LOOKUPS_PER_PASS) { videoStats.tried++; v = await embedVideoUrl(code); if (!v) videoMiss[code] = Date.now(); }
     if (!v) continue;
     videoStats.found++; if (!videoStats.sample) videoStats.sample = v;
     const safe = v.replace(/&/g, '&amp;').replace(/"/g, '%22');
@@ -146,6 +151,7 @@ if (videoStats.sample) {
   delete videoStats.sample;
 }
 snap.videoStats = videoStats;
+snap.videoMiss = videoMiss;
 console.log('instagram videos:', JSON.stringify(videoStats));
 fs.writeFileSync(feedsPath, JSON.stringify(snap));
 console.log(`bridged accounts: ${ok} live, ${kept} kept from an earlier run, ${failed} not reachable, of ${accounts.length}` +
