@@ -66,6 +66,50 @@ function candidatesFor(a) {
   return list;
 }
 
+/* Instagram reels: RSS-Bridge's anonymous read leaves the video address empty (<source src="">). Each post's public
+   embed page usually still carries it ("video_url"), so fill it in: then the app can play the reel itself instead
+   of sending you to the Instagram app. */
+const unesc = s => s.replace(/\\u0026/g, '&').replace(/\\u003[dD]/g, '=').replace(/\\\//g, '/').replace(/\\/g, '');
+async function embedVideoUrl(code) {
+  for (const path of ['embed/captioned/', 'embed/']) {
+    const r = await get('https://www.instagram.com/p/' + code + '/' + path, 15000);
+    if (!r.ok || !r.body) continue;
+    const m = /video_url\\*"\s*:\s*\\*"(https?:[^"]+?)\\*"/.exec(r.body) || /<video[^>]+src="(https?:[^"]+)"/.exec(r.body);
+    if (m) return unesc(m[1]).replace(/&amp;/g, '&');
+  }
+  return '';
+}
+const videoStats = { needed: 0, found: 0, sample: '' };
+/* video addresses found on an earlier run, reused while they're valid (Instagram's links carry their expiry as
+   oe=<hex unix time>), so each reel's embed page is read about once instead of every 15 minutes */
+const knownVideos = new Map();
+for (const v of Object.values(old)) {
+  for (const part of String((v && v.body) || '').split(/(?=<entry[\s>])/)) {
+    const code = (/instagram\.com\/(?:p|reel)\/([\w-]+)/.exec(part) || [])[1];
+    const src = ((/source src=(?:"|&quot;)(https?:.*?)(?:"|&quot;)/.exec(part) || [])[1] || '').replace(/&amp;(amp;)?/g, '&');
+    if (!code || !src) continue;
+    const oe = parseInt((/[?&;]oe=([0-9A-Fa-f]+)/.exec(src) || [])[1] || '0', 16) * 1000;
+    if (!oe || oe - Date.now() > 3 * 3600e3) knownVideos.set(code, src);
+  }
+}
+async function fillVideos(body) {
+  const parts = body.split(/(?=<entry[\s>])/);
+  for (let i = 0; i < parts.length; i++) {
+    // an empty video address, as plain HTML (<source src="">) or escaped inside Atom (&lt;source src=&quot;&quot;)
+    const empty = /(<|&lt;)source src=(""|&quot;&quot;)/.exec(parts[i]);
+    if (!empty) continue;
+    const code = (/instagram\.com\/(?:p|reel)\/([\w-]+)/.exec(parts[i]) || [])[1];
+    if (!code) continue;
+    videoStats.needed++;
+    const v = knownVideos.get(code) || await embedVideoUrl(code);
+    if (!v) continue;
+    videoStats.found++; if (!videoStats.sample) videoStats.sample = v;
+    const safe = v.replace(/&/g, '&amp;').replace(/"/g, '%22');
+    parts[i] = parts[i].replace(empty[0], empty[1] === '<' ? '<source src="' + safe + '"' : '&lt;source src=&quot;' + safe + '&quot;');
+  }
+  return parts.join('');
+}
+
 const bridges = {};
 let ok = 0, kept = 0, failed = 0;
 async function one(a) {
@@ -75,7 +119,8 @@ async function one(a) {
     const r = await get(c.url, c.url.startsWith('http://localhost') ? 45000 : 20000);
     const posts = r.ok ? realPosts(r.body) : [];
     if (posts.length) {
-      snap.feeds[key] = { at: Date.now(), body: r.body, via: c.via };
+      const body = a.platform === 'instagram' ? await fillVideos(r.body) : r.body;
+      snap.feeds[key] = { at: Date.now(), body, via: c.via };
       bridges[key] = { via: c.via, backup: !!c.backup, ok: true, at: Date.now(), posts: posts.length, tried };
       ok++; return;
     }
@@ -91,6 +136,17 @@ async function one(a) {
 let next = 0;
 await Promise.all(Array.from({ length: 4 }, async () => { while (next < accounts.length) await one(accounts[next++]); }));
 snap.bridges = bridges;
+/* can a phone play those videos from another site? (Instagram's CDN may send Cross-Origin-Resource-Policy:
+   same-origin, which browsers obey for <video> too.) Recorded so the app and the status page can tell. */
+if (videoStats.sample) {
+  try {
+    const r = await fetch(videoStats.sample, { headers: { 'User-Agent': UA, Range: 'bytes=0-1' }, signal: AbortSignal.timeout(15000) });
+    videoStats.probe = { status: r.status, type: r.headers.get('content-type') || '', corp: r.headers.get('cross-origin-resource-policy') || '', acao: r.headers.get('access-control-allow-origin') || '' };
+  } catch (e) { videoStats.probe = { error: String(e && e.message || e).slice(0, 80) }; }
+  delete videoStats.sample;
+}
+snap.videoStats = videoStats;
+console.log('instagram videos:', JSON.stringify(videoStats));
 fs.writeFileSync(feedsPath, JSON.stringify(snap));
 console.log(`bridged accounts: ${ok} live, ${kept} kept from an earlier run, ${failed} not reachable, of ${accounts.length}` +
   ` (bridges up: ${Object.keys(bases).join(', ') || 'none'})`);

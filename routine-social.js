@@ -129,17 +129,30 @@ function AboutSheet({T,S,p,done,saved,onDone,onSave,onOpen,onClose,toastFn}){
 /* ---------- Reels viewer (video posts) ---------- */
 function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
   const ref=useRef(null);const [idx,setIdx]=useState(start||0);const [playing,setPlaying]=useState(null);const [more,setMore]=useState(false);
+  const [vidFail,setVidFail]=useState({});const [onlyApp,setOnlyApp]=useState(-1);
   useEffect(()=>{const el=ref.current;if(el)el.scrollTop=(start||0)*el.clientHeight},[]);
-  const onScroll=()=>{const el=ref.current;if(!el)return;const i=Math.round(el.scrollTop/Math.max(1,el.clientHeight));if(i!==idx){setIdx(i);setPlaying(null);setMore(false)}};
+  const onScroll=()=>{const el=ref.current;if(!el)return;const i=Math.round(el.scrollTop/Math.max(1,el.clientHeight));if(i!==idx){setIdx(i);setPlaying(null);setMore(false);setOnlyApp(-1)}};
   const rail=(icon,label,fn,on)=>h('button',{onClick:fn,'aria-label':label,className:'act90',style:{display:'flex',flexDirection:'column',alignItems:'center',gap:4,color:on?'#34c759':'#fff',filter:'drop-shadow(0 1px 3px rgba(0,0,0,.5))'}},
     icon,h('span',{style:{fontSize:11,fontWeight:600,color:'#fff'}},label));
   return h('div',{className:'fdin',style:{position:'fixed',inset:0,zIndex:60,background:'#000',color:'#fff',fontFamily:UIF}},
     h('div',{ref,onScroll,style:{position:'absolute',inset:0,overflowY:'auto',scrollSnapType:'y mandatory',WebkitOverflowScrolling:'touch'}},
       posts.map((p,i)=>{const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,done=isDone(p),emb=embedOf(p),pl=PLAT[platformOf(it)]||{label:''},cap=captionOf(e);
+        /* the video's own address plays right here; an Instagram reel without one would only open the Instagram app,
+           so say that instead; other embeds are sandboxed so they can't jump out of the app either */
+        const vs=e.videoSrc&&!vidFail[e.url]?e.videoSrc:'';const igOnly=!vs&&platformOf(it)==='instagram';
+        const startPlay=()=>{if(vs||(emb&&!igOnly))setPlaying(i);else if(igOnly)setOnlyApp(i);else onAction('open',p)};
         return h('div',{key:e.url+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000'}},
           near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'cover',filter:'blur(28px) brightness(.45)',transform:'scale(1.2)'}}):null,
-          playing===i&&emb?h('iframe',{src:emb,allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',bottom:'calc(150px + env(safe-area-inset-bottom))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',border:0,background:'#000'}}):
-          h('button',{onClick:()=>{if(emb)setPlaying(i);else onAction('open',p)},'aria-label':'Play',style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
+          playing===i&&vs?h('video',{src:vs,autoPlay:true,controls:true,playsInline:true,onError:()=>{setVidFail(f=>Object.assign({},f,{[e.url]:1}));setPlaying(null);setOnlyApp(i)},
+            style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',objectFit:'contain',background:'#000'}}):
+          playing===i&&emb?h('iframe',{src:emb,sandbox:'allow-scripts allow-same-origin allow-presentation',allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,style:{position:'absolute',left:0,right:0,top:'calc(52px + env(safe-area-inset-top))',bottom:'calc(150px + env(safe-area-inset-bottom))',width:'100%',height:'calc(100% - 202px - env(safe-area-inset-top) - env(safe-area-inset-bottom))',border:0,background:'#000'}}):
+          onlyApp===i?h('div',{style:{position:'absolute',inset:0,zIndex:3,background:'rgba(0,0,0,.8)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 28px',textAlign:'center'}},
+            h('div',{style:{fontSize:17,fontWeight:700}},'This reel plays only in Instagram'),
+            h('div',{style:{fontSize:13.5,opacity:.7,lineHeight:1.5,margin:'8px 0 18px'}},'Instagram didn’t share this video with other apps. Watch it there, or keep swiping here.'),
+            h('div',{style:{display:'flex',gap:10}},
+              h('button',{onClick:()=>{setOnlyApp(-1);onAction('open',p)},className:'act95',style:{padding:'11px 18px',borderRadius:22,background:'#fff',color:'#000',fontWeight:700,fontSize:14.5}},'Watch in Instagram'),
+              h('button',{onClick:()=>setOnlyApp(-1),className:'act95',style:{padding:'11px 18px',borderRadius:22,background:'rgba(255,255,255,.16)',color:'#fff',fontWeight:700,fontSize:14.5}},'Not now'))):
+          h('button',{onClick:startPlay,'aria-label':'Play',style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
             near&&e.thumb?h('img',{src:e.thumb,alt:'',referrerPolicy:'no-referrer',onError:x=>{x.target.style.display='none'},style:{position:'absolute',inset:0,width:'100%',height:'100%',objectFit:'contain'}}):null,
             h('span',{style:{position:'relative',width:72,height:72,borderRadius:36,background:'rgba(0,0,0,.45)',display:'flex',alignItems:'center',justifyContent:'center',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},Icons.play(30,true))),
           /* right rail */

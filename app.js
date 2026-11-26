@@ -807,7 +807,8 @@ function parseRssText(raw){ // RSS <item> or Atom <entry> — news, blogs, Reddi
     const ttl0=tx('title');
     return{id:link||ttl0,title:(ttl0||(feedExcerpt(body)||'').slice(0,160)||'Post').slice(0,220),url:link,publishedMs:Date.parse(tx('pubDate')||tx('published')||tx('updated')||tx('dc:date'))||0,
       thumb:feedImage(n,body,link),excerpt:feedExcerpt(body),author:(tx('dc:creator')||tx('name')||'').slice(0,60),
-      caption:feedCaption(body),video:/<video[\s>]|\.mp4\b|v\.redd\.it/i.test(body)||[].slice.call(n.getElementsByTagName('enclosure')).concat([].slice.call(n.getElementsByTagName('media:content'))).some(x=>/video/i.test((x.getAttribute('type')||'')+(x.getAttribute('medium')||'')))||undefined};
+      caption:feedCaption(body),videoSrc:((/<(?:source|video)[^>]+src=["'](https?:[^"']+)["']/i.exec(body)||[])[1]||'').replace(/&amp;/g,'&').slice(0,2000)||undefined,
+      video:/<video[\s>]|\.mp4\b|v\.redd\.it/i.test(body)||[].slice.call(n.getElementsByTagName('enclosure')).concat([].slice.call(n.getElementsByTagName('media:content'))).some(x=>/video/i.test((x.getAttribute('type')||'')+(x.getAttribute('medium')||'')))||undefined};
   }).filter(e=>e.url).sort((a,b)=>b.publishedMs-a.publishedMs);
 }
 async function fetchRss(url){
@@ -5184,6 +5185,9 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const [playing,setPlaying]=useState('');
   const [more,setMore]=useState(null); // post whose ⋯ menu is open
   const [defMax,setDefMax]=useState(shortsMaxDefault);
+  const [vidFail,setVidFail]=useState({}); // posts whose direct video the platform refused to play here
+  const [onlyApp,setOnlyApp]=useState(''); // post showing "plays only in Instagram"
+  useEffect(()=>setOnlyApp(''),[idx]);
   useEffect(()=>{const p=posts[idx];if(playing&&(!p||p.e.url!==playing))setPlaying('')},[idx]);
   useEffect(()=>{setIdx(0);if(ref.current)ref.current.scrollTop=0},[title,posts.length===0]);
   const onScroll=()=>{const el=ref.current;if(!el)return;const i=Math.round(el.scrollTop/Math.max(1,el.clientHeight));if(i!==idx)setIdx(i)};
@@ -5218,16 +5222,29 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const IG_HEAD=56; // px of Instagram's embed header that is cropped off the top
   const embedSlide=(p,i,emb)=>{
     const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,active=playing===e.url&&i===idx,done=isDone(p);
-    const ttl=cleanEntryTitle(e.title,it.name)||'';const isVid=!!e.video||/^\s*▶/.test(e.title||'');
+    const ttl=cleanEntryTitle(e.title,it.name)||'';const isVid=!!e.video||!!e.videoSrc||/^\s*▶/.test(e.title||'');
     const ig=/instagram\.com/.test(emb);const nm=String(it.name||'').replace(/\s*·\s*\w+$/,'');
+    const plat=ig?'Instagram':/twitter\.com/.test(emb)?'X':'Telegram';
+    const vs=e.videoSrc&&!vidFail[e.url]?e.videoSrc:'';
     const top=padTop?padTop:(header===false?0:46),bottom='calc('+(small?150:112)+'px + '+padB+')';
+    /* tap: a video with its own address plays right here; a reel without one only plays in Instagram, so say so
+       (and let you choose) instead of the embed silently opening the Instagram app; a photo goes to the embed */
+    const tap=()=>{if(isVid&&!vs&&ig){setOnlyApp(e.url);return}setPlaying(e.url)};
+    const btn=(label,fn,primary)=>h('button',{onClick:fn,className:'act95',style:{padding:'11px 18px',borderRadius:22,fontSize:14.5,fontWeight:700,background:primary?'#fff':'rgba(255,255,255,.16)',color:primary?'#000':'#fff'}},label);
     return h('div',{key:(e.url||'')+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000'}},
       h('div',{style:{position:'absolute',left:0,right:0,top,bottom,display:'flex',alignItems:'center',justifyContent:'center'}},
-        h('div',{style:{position:'relative',width:'100%',height:ig?'min(100%, 125vw)':'100%',overflow:'hidden',background:ig?'#fff':'#000'}},
-          near?h('iframe',{src:emb,title:ttl||nm,allow:'autoplay; encrypted-media; picture-in-picture; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',scrolling:'no',
+        active&&vs?h('video',{src:vs,autoPlay:true,controls:true,playsInline:true,preload:'auto',onEnded:()=>next(i),
+            onError:()=>{setVidFail(f=>Object.assign({},f,{[e.url]:1}));setPlaying('');setOnlyApp(e.url)},
+            style:{width:'100%',height:'100%',objectFit:'contain',background:'#000',display:'block'}})
+        :h('div',{style:{position:'relative',width:'100%',height:ig?'min(100%, 125vw)':'100%',overflow:'hidden',background:ig?'#fff':'#000'}},
+          near?h('iframe',{src:emb,title:ttl||nm,sandbox:'allow-scripts allow-same-origin allow-presentation',allow:'autoplay; encrypted-media; picture-in-picture',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',scrolling:'no',
             style:ig?{position:'absolute',left:0,top:-IG_HEAD,width:'100%',height:'calc(100% + '+(IG_HEAD+420)+'px)',border:0,display:'block'}:{width:'100%',height:'100%',border:0,display:'block'}}):null,
-          near&&!active?h('button',{onClick:()=>setPlaying(e.url),'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
-            isVid?h('span',{style:{width:68,height:68,borderRadius:34,background:'rgba(0,0,0,.5)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null)),
+          near&&!active?h('button',{onClick:tap,'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
+            isVid?h('span',{style:{width:68,height:68,borderRadius:34,background:'rgba(0,0,0,.5)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null,
+          onlyApp===e.url?h('div',{style:{position:'absolute',inset:0,background:'rgba(0,0,0,.78)',backdropFilter:'blur(10px)',WebkitBackdropFilter:'blur(10px)',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 28px',textAlign:'center',color:'#fff'}},
+            h('div',{style:{fontSize:17,fontWeight:700}},'This reel plays only in '+plat),
+            h('div',{style:{fontSize:13.5,opacity:.7,lineHeight:1.5,margin:'8px 0 18px'}},plat+' didn’t share this video with other apps. You can watch it there, or keep swiping here.'),
+            h('div',{style:{display:'flex',gap:10}},btn('Watch in '+plat,()=>{setOnlyApp('');onOpen&&onOpen(p)},true),btn('Not now',()=>setOnlyApp('')))):null)),
       h('div',{style:{position:'absolute',left:0,right:0,bottom:0,display:'flex',alignItems:'flex-end',gap:10,padding:'14px 12px calc('+(small?'70px':'16px')+' + '+padB+') 16px',color:'#fff'}},
         h('div',{style:{flex:1,minWidth:0}},
           h('div',{style:{display:'flex',alignItems:'center',gap:8,minWidth:0}},

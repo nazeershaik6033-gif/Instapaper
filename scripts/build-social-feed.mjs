@@ -19,8 +19,8 @@ const PER_ACCOUNT = 30, ALL_MAX = 300, PLATFORM_MAX = 150;
 
 const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
 const accounts = (Array.isArray(src.accounts) ? src.accounts : []).filter(a => a && a.platform && (a.handle || a.feed));
-let feeds = {}, bridges = {};
-try { const j = JSON.parse(fs.readFileSync(feedsPath, 'utf8')); feeds = j.feeds || {}; bridges = j.bridges || {}; } catch { /* nothing fetched */ }
+let feeds = {}, bridges = {}, videoStats = null;
+try { const j = JSON.parse(fs.readFileSync(feedsPath, 'utf8')); feeds = j.feeds || {}; bridges = j.bridges || {}; videoStats = j.videoStats || null; } catch { /* nothing fetched */ }
 
 const repo = process.env.GITHUB_REPOSITORY || 'nazeershaik6033-gif/Instapaper';
 const base = `https://raw.githubusercontent.com/${repo}/social-feed/`;
@@ -93,7 +93,7 @@ for (const p of Object.keys(LABEL)) {
   links[p] = base + p + '.xml';
 }
 for (const a of byAccount) rss(a.file, a.title, a.items, PER_ACCOUNT, false); // one account: no name in every title
-fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify({ builtAt: Date.now(), links, accounts: status }, null, 1));
+fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify({ builtAt: Date.now(), links, accounts: status, videoStats }, null, 1));
 const okN = status.filter(s => s.status === 'ok').length;
 const freeN = status.filter(s => s.status === 'ok' && BRIDGED.has(s.platform) && !s.backup).length;
 const backupN = status.filter(s => s.status === 'ok' && s.backup).length;
