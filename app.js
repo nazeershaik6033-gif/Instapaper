@@ -2392,8 +2392,8 @@ function FloatingNav({T,active,onTab,overVideo,plusOpen}){
           return h('button',{key:k,onClick:()=>{vibrate(plus?10:6);onTab(k)},'aria-label':plus&&plusOpen?'Close':l,'aria-current':on?'page':undefined,'aria-expanded':plus?!!plusOpen:undefined,
             className:plus?'navplusb':'act90',
             style:{position:'relative',width:NAV_BTN,flexShrink:0,height:46,display:'flex',alignItems:'center',justifyContent:'center',color:on?fg:(overVideo?'rgba(255,255,255,.62)':T.sub),transition:'color 260ms'}},
-            plus?h('span',{className:'navplus',style:{width:48,height:48,margin:'-1px 0',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:fg,color:onFg,
-                boxShadow:'0 4px 16px '+hexA(fg,dark?.34:.3)+', 0 0 0 3px '+hexA(fg,plusOpen?.14:0)}},
+            plus?h('span',{className:'navplus',style:{width:48,height:48,margin:'-1px 0',borderRadius:'50%',display:'flex',alignItems:'center',justifyContent:'center',background:hexA(fg,dark?.16:.09),color:overVideo?'rgba(255,255,255,.8)':T.sub,
+                boxShadow:'inset 0 0 0 1px '+hexA(fg,dark?.18:.12)+(plusOpen?', 0 0 0 3px '+hexA(fg,.08):'')}},
                 h('span',{style:{display:'flex',transform:plusOpen?'rotate(135deg)':'none',transition:'transform 520ms cubic-bezier(.3,1.5,.5,1)'}},ic(22)))
               :h('span',{key:on?'on':'off',className:on?'tabpop':undefined,style:{display:'flex'}},ic(k==='brief'?19:22)));
         }))));
