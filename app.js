@@ -8594,44 +8594,74 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
     loadOr();
   },[page,orActive]);
 
-  const head=t=>h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'22px 20px 8px'}},t);
+  const head=t=>h('div',{style:{fontSize:12,fontWeight:650,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,padding:'24px 28px 8px'}},t);
   const archivedCount=data.articles.filter(a=>a.archived).length;
   const onSites=fn=>update(d=>({...d,sites:fn(d.sites||[])}));
-  const navRow=(label,p2,icon,last)=>h('button',{onClick:()=>setPage(p2),className:'act98 trc',
-    style:{display:'flex',alignItems:'center',gap:14,width:'100%',padding:'15px 16px',textAlign:'left',color:T.fg,borderBottom:last?'none':'1px solid '+T.hair}},
-    h('span',{style:{display:'flex',color:T.meta}},icon),
-    h('span',{style:{flex:1,fontSize:16}},label),
-    h('span',{style:{display:'flex',color:T.sub}},Icons.chevR(16)));
+  /* premium rows, iPhone-Settings style: a colour tile, the name with a one-line summary, the current value, › ;
+     dividers start after the tile */
+  const dk=isDarkTheme(S.theme);
+  const tile=(icon,bg)=>h('span',{style:{width:32,height:32,borderRadius:9,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',
+    background:bg,boxShadow:'inset 0 1px 0 rgba(255,255,255,.22), 0 1px 2px rgba(0,0,0,'+(dk?'.4':'.12')+')'}},icon);
+  const navRow=(label,p2,icon,last,o)=>{o=o||{};return h('button',{key:p2||label,onClick:o.onClick||(()=>setPage(p2)),className:'act98 trc',
+    style:{display:'flex',alignItems:'center',gap:13,width:'100%',padding:'0 0 0 14px',textAlign:'left',color:T.fg,background:'transparent'}},
+    o.color?tile(icon,o.color):h('span',{style:{display:'flex',color:T.meta}},icon),
+    h('span',{style:{flex:1,minWidth:0,display:'flex',alignItems:'center',gap:10,padding:o.sub?'11px 14px 11px 0':'14px 14px 14px 0',borderBottom:last?'none':'0.5px solid '+T.hair}},
+      h('span',{style:{flex:1,minWidth:0}},
+        h('span',{style:{display:'block',fontSize:16,fontWeight:500,letterSpacing:'-.01em',color:o.danger?T.danger:T.fg}},label),
+        o.sub?h('span',{style:{display:'block',fontSize:12.5,color:T.sub,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.sub):null),
+      o.value?h('span',{style:{fontSize:14,color:T.sub,flexShrink:0,maxWidth:120,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},o.value):null,
+      o.noChev?null:h('span',{style:{display:'flex',color:T.sub,opacity:.7,flexShrink:0}},Icons.chevR(15))))};
+  const group=(...rows)=>h('div',{style:{margin:'0 16px',borderRadius:16,overflow:'hidden',background:T.card,boxShadow:dk?'none':'0 1px 0 rgba(0,0,0,.03)'}},...rows);
   const PAGE_TITLES={homepage:'Home page',display:'Display & Motion',appearance:'Appearance',behavior:'Behavior',socialrss:'Social RSS feed',miniflux:'Miniflux',voices:'Voices',ai:'AI Assistant',sites:'Browser & Sites',data:'Syncing & Backup'};
 
   let content;
   if(page==='root'){
+    const HOME_NAMES={brief:'My Routine',headlines:'Headlines',home:'Library',photos:'Photos',blogs:'Blogs',liked:'Liked',archive:'Archive',notes:'Notes',threads:'Threads',tags:'Tags'};
+    const nSocial=socialAccountsOf(data.brief||{}).length;
+    const aiName=S.aiProvider==='gemini'?'Gemini':S.aiProvider==='claude'?chatName():'OpenRouter';
+    const stat=(n,l)=>h('div',{style:{flex:1,textAlign:'center'}},h('div',{style:{fontSize:19,fontWeight:750,letterSpacing:'-.02em'}},n),h('div',{style:{fontSize:11,opacity:.6,marginTop:1}},l));
+    const swatch=th=>{const on=(S.theme||'light')===th.id;return h('button',{key:th.id,onClick:()=>set({theme:th.id}),'aria-label':th.label+' theme','aria-pressed':on,className:'act90',
+      style:{display:'flex',flexDirection:'column',alignItems:'center',gap:5,flex:1,color:'#fff'}},
+      h('span',{style:{width:30,height:30,borderRadius:15,background:'linear-gradient(135deg,'+th.bg+' 50%,'+th.card+' 50%)',border:'1px solid rgba(255,255,255,.28)',
+        boxShadow:on?'0 0 0 2px #0b2a27, 0 0 0 4px #b9f27c':'none',transition:'box-shadow 160ms'}}),
+      h('span',{style:{fontSize:11,fontWeight:on?700:500,opacity:on?1:.65}},th.label))};
     content=h(Fragment,null,
-      h('div',{style:{margin:'4px 20px 0',padding:'14px 16px',borderRadius:13,background:T.card,display:'flex',gap:12,alignItems:'center'}},
-        h('span',{style:{display:'flex',color:'#3f9d63'}},Icons.checkCircle(26,true)),
-        h('div',null,
-          h('div',{style:{fontSize:15.5,fontWeight:650}},'Premium unlocked'),
-          h('div',{style:{fontSize:12.5,color:T.meta,marginTop:2}},'Every feature, free forever. No subscription.'))),
+      /* hero: the brand card with library stats and a one-tap theme switch */
+      h('div',{style:{margin:'4px 16px 0',borderRadius:22,padding:'18px 18px 16px',color:'#fff',position:'relative',overflow:'hidden',
+        background:'radial-gradient(120% 90% at 85% 0%,rgba(125,255,176,.22),rgba(125,255,176,0) 60%),linear-gradient(140deg,#124a43 0%,#06201f 100%)',boxShadow:'0 10px 30px rgba(4,20,23,'+(dk?'.5':'.25')+')'}},
+        h('div',{style:{display:'flex',alignItems:'center',gap:14}},
+          h('img',{src:'icon-180.png',alt:'',style:{width:58,height:58,borderRadius:15,boxShadow:'0 4px 14px rgba(0,0,0,.35)',flexShrink:0}}),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:22,fontWeight:800,letterSpacing:'-.02em'}},'Evolve'),
+            h('span',{style:{display:'inline-flex',alignItems:'center',gap:5,marginTop:5,padding:'3px 9px',borderRadius:12,fontSize:11.5,fontWeight:800,letterSpacing:'.02em',color:'#0b2a1c',
+              background:'linear-gradient(90deg,#7ee06a,#e2ff7e)'}},'✦ PREMIUM · ALL UNLOCKED'))),
+        h('div',{style:{display:'flex',margin:'16px -4px 0',padding:'12px 0',borderTop:'1px solid rgba(255,255,255,.12)',borderBottom:'1px solid rgba(255,255,255,.12)'}},
+          stat(data.articles.length,'Saved'),stat(((data.brief&&data.brief.items)||[]).length,'Sources'),stat((data.feeds||[]).length,'Blogs')),
+        h('div',{style:{display:'flex',marginTop:14}},Object.values(THEMES).map(swatch))),
       head('Start'),
-      h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
-        navRow('Home page','homepage',Icons.phone(20),true)),
-      head('General'),
-      h('div',{style:{margin:'0 16px',border:'1px solid '+T.hair,borderRadius:14,overflow:'hidden'}},
-        navRow('Display & Motion','display',Icons.sun(20)),
-        navRow('Appearance','appearance',Icons.contrast(20)),
-        navRow('Behavior','behavior',Icons.bolt(20)),
-        navRow('Social RSS feed','socialrss',Icons.rss(20)),
-        navRow('Miniflux','miniflux',Icons.news(20)),
-        navRow('Voices','voices',Icons.headphones(20)),
-        navRow('AI Assistant','ai',Icons.ai(20)),
-        navRow('Browser & Sites','sites',Icons.globe(20)),
-        navRow('Syncing & Backup','data',Icons.download(20),true)),
-      head('App'),
-      h(ARow,{T,icon:Icons.refresh(20),label:'Force reload to latest version',
-        sub:'Clears the cached app and reloads. Your saved articles, notes, photos & settings stay.',
-        onClick:()=>onForceReload&&onForceReload()}),
-      h('div',{style:{padding:'22px 20px 8px',fontSize:12,color:T.sub,lineHeight:1.6,textAlign:'center'}},
-        'Evolve · v'+APP_VERSION,h('br'),'Your personal read-it-later app. Everything is stored privately on this device.'));
+      group(navRow('Home page','homepage',Icons.phone(18),true,{color:'#5e5ce6',sub:'The screen the app opens on',value:HOME_NAMES[S.homePage||'home']})),
+      head('Look & feel'),
+      group(
+        navRow('Display & Motion','display',Icons.sun(18),false,{color:'#0a84ff',sub:'Text size, font, motion'}),
+        navRow('Appearance','appearance',Icons.contrast(18),false,{color:'#8e5bf0',sub:'Theme, reading fonts',value:(THEMES[S.theme]||THEMES.light).label}),
+        navRow('Behavior','behavior',Icons.bolt(18),true,{color:'#ff9f0a',sub:'Swipes, archiving, server refresh'})),
+      head('Feeds'),
+      group(
+        navRow('Social RSS feed','socialrss',Icons.rss(18),false,{color:'linear-gradient(135deg,#f9a825,#e1306c 55%,#833ab4)',sub:'Instagram, X, Telegram, Substack',value:nSocial?nSocial+' accounts':''}),
+        navRow('Miniflux','miniflux',Icons.news(18),true,{color:'#30b0c7',sub:'Your own reader server',value:S.mfUrl?'Connected':'Off'})),
+      head('Assistants'),
+      group(
+        navRow('Voices','voices',Icons.headphones(18),false,{color:'#ff375f',sub:'Read aloud, speed, voices'}),
+        navRow('AI Assistant','ai',Icons.ai(18),false,{color:'linear-gradient(135deg,#7d5cff,#c86dd7)',sub:'Summaries, translation, questions',value:aiName}),
+        navRow('Browser & Sites','sites',Icons.globe(18),true,{color:'#34c759',sub:'Search engine, blockers, sites'})),
+      head('Data'),
+      group(
+        navRow('Syncing & Backup','data',Icons.download(18),false,{color:'#64748b',sub:'Export, import, reminders',value:S.lastBackupAt?timeAgo(S.lastBackupAt):'No backup'}),
+        navRow('Force reload to latest version',null,Icons.refresh(18),true,{color:'#8e8e93',sub:'Your library and settings stay',noChev:true,onClick:()=>onForceReload&&onForceReload()})),
+      h('div',{style:{padding:'26px 20px 10px',display:'flex',flexDirection:'column',alignItems:'center',gap:8}},
+        h('img',{src:'icon-180.png',alt:'',style:{width:30,height:30,borderRadius:8,opacity:.9}}),
+        h('div',{style:{fontSize:12.5,fontWeight:600,color:T.meta}},'Evolve · v'+APP_VERSION),
+        h('div',{style:{fontSize:11.5,color:T.sub,textAlign:'center',lineHeight:1.5,maxWidth:280}},'Your personal read-it-later app. Everything is stored privately on this device.')));
   }else if(page==='homepage'){
     const opts=[
       ['brief','My Routine','The channels & videos you check each day',Icons.phone(20)],
@@ -8893,7 +8923,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
   }
 
   return h(Sheet,{T,onClose,title:page==='root'?'Settings':PAGE_TITLES[page],maxH:'94%'},
-    page!=='root'?h('button',{onClick:()=>setPage('root'),className:'act95',style:{display:'flex',alignItems:'center',gap:5,color:T.accent,fontSize:14.5,fontWeight:500,padding:'0 20px 6px'}},Icons.back(16),'Settings'):null,
+    page!=='root'?h('button',{onClick:()=>setPage('root'),className:'act95',style:{display:'inline-flex',alignItems:'center',gap:4,color:T.accent,fontSize:14.5,fontWeight:600,margin:'0 0 8px 16px',padding:'6px 12px 6px 8px',borderRadius:16,background:T.card}},Icons.back(15),'Settings'):null,
     content);
 }
 
