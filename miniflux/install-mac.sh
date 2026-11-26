@@ -123,9 +123,9 @@ for _ in $(seq 1 30); do curl -fsS -o /dev/null http://127.0.0.1:8080/healthchec
 curl -fsS -o /dev/null http://127.0.0.1:8080/healthcheck || die "Miniflux didn't start. Its log: $DIR/miniflux.log"
 
 say "6/6 Private https address (Tailscale Serve: your devices only)"
-# an earlier version of this script used Funnel (public); make sure that's off
-"$TS" funnel --https=443 off >/dev/null 2>&1 || true
-"$TS" funnel reset >/dev/null 2>&1 || true
+# An earlier version of this script used Funnel (public): clear any old serve/funnel setup. (`serve reset` never
+# prompts; `funnel … off` waits silently for Funnel to be enabled on the account, which hung the script.)
+"$TS" serve reset </dev/null >/dev/null 2>&1 || true
 echo "If Tailscale asks you to turn on HTTPS certificates for your account, open the link it shows, allow it, and wait here."
 "$TS" serve --bg 8080 <"$IN" || die "Tailscale Serve didn't turn on. Open https://login.tailscale.com/admin/dns, enable HTTPS Certificates, then run this again."
 ok=""
