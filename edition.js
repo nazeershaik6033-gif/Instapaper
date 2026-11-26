@@ -769,9 +769,10 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
 }
 function PapersShelfCards({T,papers,onOpen}){
   const SERIF="'Playfair Display'"+INDIC;
-  return(papers||[]).slice(0,10).map(p=>h('button',{key:'p'+p.id,onClick:()=>onOpen(p.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.fg,color:T.bg,borderRadius:10,padding:'10px 12px 12px'}},
-    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.bg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
-    h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',opacity:.7}},new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' · '+p.stories.length+' stories'),
+  /* same card as an edition (follows the theme: light, sepia, dark, black); the accent date line marks it as a daily paper */
+  return(papers||[]).slice(0,10).map(p=>h('button',{key:'p'+p.id,onClick:()=>onOpen(p.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px 12px',border:'1px solid '+T.hair}},
+    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
+    h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent}},new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' · '+p.stories.length+' stories'),
     h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||'')));
 }
 window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml};

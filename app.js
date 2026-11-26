@@ -5194,41 +5194,48 @@ function RoutineShorts({T,title,color,posts,max,onToggleMax,onClose,isDone,onDon
   const railBtn=(icon,label,onClick,on,onColor)=>h('button',{onClick,className:'act90','aria-label':label,style:{display:'flex',flexDirection:'column',alignItems:'center',gap:3,color:'#fff'}},
     h('span',{style:{width:small?38:44,height:small?38:44,borderRadius:22,display:'flex',alignItems:'center',justifyContent:'center',background:on?(onColor||'#fff'):'rgba(255,255,255,.13)',color:on&&!onColor?'#000':'#fff',backdropFilter:'blur(8px)',WebkitBackdropFilter:'blur(8px)'}},icon),
     h('span',{style:{fontSize:11,fontWeight:500,opacity:.9,textShadow:'0 1px 3px rgba(0,0,0,.6)'}},label));
+  /* an account with no posts here yet: a clean full-screen profile card (platform profile embeds are rate-limited
+     or refused, e.g. X's "Rate limit exceeded"), with one button to open the profile */
   const cardSlide=(p,i)=>{
-    const it=p.it,P=SOCIAL[it.platform]||{label:'Profile',c:'#444'};const hh=it.socialHandle||'';const near=Math.abs(i-idx)<=1;
-    return h('div',{key:'card'+it.id,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#0b0b0d',display:'flex',flexDirection:'column'}},
-      h('div',{style:{padding:(padTop?padTop+'px':header===false?'14px':'52px')+' 16px 10px',color:'#fff',display:'flex',alignItems:'center',gap:10,flexShrink:0}},
-        h('span',{style:{width:34,height:34,borderRadius:17,background:P.c,display:'flex',alignItems:'center',justifyContent:'center',fontWeight:800,fontSize:15,border:'2px solid rgba(255,255,255,.25)'}},(hh||it.name||'?')[0].toUpperCase()),
-        h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:15,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},it.name),
-          h('div',{style:{fontSize:11.5,opacity:.65}},'Live profile · '+P.label+' · add a feed link (Manage → Edit) for New counts'))),
-      h('div',{style:{flex:1,margin:'0 12px 10px',borderRadius:14,overflow:'hidden',background:'#fff',position:'relative'}},
-        near&&P.embed&&hh?h('iframe',{src:P.embed(hh),title:it.name,referrerPolicy:'strict-origin-when-cross-origin',style:{width:'100%',height:'100%',border:0,display:'block'}}):
-          h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',padding:24,textAlign:'center',color:'#333',fontSize:14,lineHeight:1.5}},P.embed?'Loading '+P.label+'…':P.label+' doesn’t allow its profiles inside other apps — open it below.')),
-      h('div',{style:{display:'flex',gap:8,padding:'0 12px calc('+(small?'70px':'16px')+' + '+padB+')',flexShrink:0}},
-        h('button',{onClick:()=>openExternalUrl(it.url),className:'act95',style:{flex:1,padding:'11px',borderRadius:12,background:P.c==='#111111'||P.c==='#101010'?'#fff':P.c,color:P.c==='#111111'||P.c==='#101010'?'#000':'#fff',fontWeight:700,fontSize:14}},'Open in '+P.label),
-        h('button',{onClick:()=>shareText(it.name,'',it.url),className:'act95',style:{padding:'11px 16px',borderRadius:12,background:'rgba(255,255,255,.14)',color:'#fff',fontWeight:600,fontSize:14}},'Share')));
+    const it=p.it,P=SOCIAL[it.platform]||{label:'Profile',c:'#444'};const hh=String(it.socialHandle||it.handle||'').replace(/^@/,'');
+    const nm=String(it.name||(hh?'@'+hh:'Account')).replace(/\s*·\s*\w+$/,'');const dark=/^#1[01]1/.test(P.c);
+    return h('div',{key:'card'+it.id,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000',display:'flex',flexDirection:'column',alignItems:'center',justifyContent:'center',padding:'0 32px',color:'#fff',textAlign:'center'}},
+      h('div',{style:{position:'absolute',inset:0,background:'radial-gradient(120% 70% at 50% 35%,'+(dark?'#2a2a2e':P.c)+'55 0%,#000 70%)'}}),
+      h('div',{style:{position:'relative',width:104,height:104,borderRadius:52,padding:3,background:it.platform==='instagram'?'conic-gradient(from 210deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)':'rgba(255,255,255,.3)'}},
+        h('div',{style:{width:'100%',height:'100%',borderRadius:'50%',border:'3px solid #000',background:dark?'#1c1c1f':P.c,display:'flex',alignItems:'center',justifyContent:'center',fontSize:40,fontWeight:800}},(hh||nm||'?')[0].toUpperCase())),
+      h('div',{style:{position:'relative',fontSize:22,fontWeight:750,marginTop:18,maxWidth:'100%',overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},nm),
+      h('div',{style:{position:'relative',fontSize:14,opacity:.6,marginTop:4}},(hh&&!/^@/.test(nm)?'@'+hh+' · ':'')+P.label),
+      h('div',{style:{position:'relative',fontSize:13.5,opacity:.55,marginTop:14,lineHeight:1.5,maxWidth:300}},'No posts in your feed yet. They show up here once this account’s free feed comes through.'),
+      h('div',{style:{position:'relative',display:'flex',gap:10,marginTop:24}},
+        h('button',{onClick:()=>openExternalUrl(it.url),className:'act95',style:{padding:'12px 22px',borderRadius:24,background:'#fff',color:'#000',fontWeight:700,fontSize:15}},'Open in '+P.label),
+        h('button',{onClick:()=>shareText(nm,'',it.url),className:'act95',style:{padding:'12px 18px',borderRadius:24,background:'rgba(255,255,255,.14)',color:'#fff',fontWeight:600,fontSize:15}},'Share')));
   };
-  /* Instagram / X / Telegram post: the platform's embed player. Until you tap it, a clear layer sits on top so
-     swiping up and down still moves between posts; the first tap hands the post to the player (tap ▶ there). */
+  /* Instagram / X / Telegram post, full screen: the platform's own embed player on black, edge to edge. For
+     Instagram the embed's own header (avatar, "View profile") and footer (likes, "View more on Instagram",
+     comment box) are cropped away, leaving the photo / reel; our own name, caption and More sit below it.
+     Until you tap, a clear layer keeps swiping between posts working; the first tap hands the post to the
+     player (then tap ▶ in it). */
+  const IG_HEAD=56; // px of Instagram's embed header that is cropped off the top
   const embedSlide=(p,i,emb)=>{
     const e=p.e,it=p.it,near=Math.abs(i-idx)<=1,active=playing===e.url&&i===idx,done=isDone(p);
-    const ttl=cleanEntryTitle(e.title,it.name)||'Post';const isVid=!!e.video||/^\s*▶/.test(e.title||'');
-    return h('div',{key:(e.url||'')+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000',display:'flex',flexDirection:'column'}},
-      h('div',{style:{flexShrink:0,height:padTop?padTop:(header===false?10:50)}}),
-      h('div',{style:{flex:1,minHeight:0,margin:'0 10px',borderRadius:14,overflow:'hidden',background:'#fff',position:'relative'}},
-        near?h('iframe',{src:emb,title:ttl,allow:'autoplay; encrypted-media; picture-in-picture; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
-          style:{width:'100%',height:'100%',border:0,display:'block'}}):null,
-        !near?h('div',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center',color:'#777',fontSize:14}},'Loading…'):null,
-        near&&!active?h('button',{onClick:()=>setPlaying(e.url),'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
-          isVid?h('span',{style:{width:64,height:64,borderRadius:32,background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null),
-      h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:10,padding:'10px 12px calc('+(small?'70px':'14px')+' + '+padB+')',color:'#fff'}},
+    const ttl=cleanEntryTitle(e.title,it.name)||'';const isVid=!!e.video||/^\s*▶/.test(e.title||'');
+    const ig=/instagram\.com/.test(emb);const nm=String(it.name||'').replace(/\s*·\s*\w+$/,'');
+    const top=padTop?padTop:(header===false?0:46),bottom='calc('+(small?150:112)+'px + '+padB+')';
+    return h('div',{key:(e.url||'')+i,style:{position:'relative',height:'100%',scrollSnapAlign:'start',scrollSnapStop:'always',overflow:'hidden',background:'#000'}},
+      h('div',{style:{position:'absolute',left:0,right:0,top,bottom,display:'flex',alignItems:'center',justifyContent:'center'}},
+        h('div',{style:{position:'relative',width:'100%',height:ig?'min(100%, 125vw)':'100%',overflow:'hidden',background:ig?'#fff':'#000'}},
+          near?h('iframe',{src:emb,title:ttl||nm,allow:'autoplay; encrypted-media; picture-in-picture; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',scrolling:'no',
+            style:ig?{position:'absolute',left:0,top:-IG_HEAD,width:'100%',height:'calc(100% + '+(IG_HEAD+420)+'px)',border:0,display:'block'}:{width:'100%',height:'100%',border:0,display:'block'}}):null,
+          near&&!active?h('button',{onClick:()=>setPlaying(e.url),'aria-label':isVid?'Play':'Open post',style:{position:'absolute',inset:0,background:'transparent',display:'flex',alignItems:'center',justifyContent:'center'}},
+            isVid?h('span',{style:{width:68,height:68,borderRadius:34,background:'rgba(0,0,0,.5)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:4}},Icons.play(30,true)):null):null)),
+      h('div',{style:{position:'absolute',left:0,right:0,bottom:0,display:'flex',alignItems:'flex-end',gap:10,padding:'14px 12px calc('+(small?'70px':'16px')+' + '+padB+') 16px',color:'#fff'}},
         h('div',{style:{flex:1,minWidth:0}},
-          h('div',{style:{display:'flex',alignItems:'baseline',minWidth:0,whiteSpace:'nowrap',overflow:'hidden'}},
-            h('span',{style:{fontSize:14.5,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',flexShrink:1,minWidth:0}},it.name),
-            h('span',{style:{fontSize:12,color:'rgba(255,255,255,.62)',flexShrink:0}},[e.publishedMs?'\u00a0· '+fmtAgo(e.publishedMs):'',p.isNew?'\u00a0· New':''].join('')),
-            done?h('span',{style:{fontSize:12,color:'#7ee29a',fontWeight:600,flexShrink:0}},'\u00a0· Done'):null),
-          h('div',{style:{fontSize:13,opacity:.85,lineHeight:1.35,marginTop:2,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
-            active?(isVid?'Tap ▶ in the post to play · swipe here for the next one':'Swipe here for the next post'):ttl)),
+          h('div',{style:{display:'flex',alignItems:'center',gap:8,minWidth:0}},
+            h('span',{style:{width:28,height:28,borderRadius:14,flexShrink:0,padding:1.5,background:p.isNew?'conic-gradient(from 210deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)':'rgba(255,255,255,.3)'}},
+              h('span',{style:{display:'flex',width:'100%',height:'100%',borderRadius:'50%',border:'1.5px solid #000',background:'#26262b',alignItems:'center',justifyContent:'center',fontSize:12,fontWeight:800}},(nm.replace(/^@/,'')[0]||'?').toUpperCase())),
+            h('span',{style:{fontSize:14.5,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',minWidth:0}},nm),
+            h('span',{style:{fontSize:12.5,color:'rgba(255,255,255,.6)',flexShrink:0,whiteSpace:'nowrap'}},(e.publishedMs?'· '+fmtAgo(e.publishedMs):'')+(done?' · Done':''))),
+          ttl?h('div',{style:{fontSize:13.5,lineHeight:1.4,marginTop:7,opacity:.88,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},ttl.replace(/^\s*▶\s*/,'')):null),
         railBtn(Icons.dots(19),'More',()=>setMore(p))));
   };
   const slide=(p,i)=>{
