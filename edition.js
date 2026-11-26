@@ -563,38 +563,44 @@ function dl(name,text,type){const b=new Blob([text],{type});const u=URL.createOb
 const edItems=articles=>(articles||[]).filter(a=>a.isVideo&&!a.isEdition&&a.transcript&&String(a.transcript).trim())
   .map(a=>{const eds=a.editions||{};const latest=Object.keys(eds).reduce((m,k)=>Math.max(m,eds[k].at||0),0);return{a,at:latest||a.transcriptAt||0,ed:eds.orig||eds[Object.keys(eds)[0]]}})
   .sort((x,y)=>y.at-x.at);
-function ShelfCard({T,onClick,onMenu,children,dim}){
+function ShelfCard({T,onClick,onMenu,children,dim,wide}){
   const lp=useLongPress(onMenu);
   return h('button',Object.assign({},lp,{onClick:e=>{if(lp.firedRef.current.fired){lp.firedRef.current.fired=false;return}onClick(e)},className:'act98',
-    style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:12,padding:'10px 12px 12px',border:'1px solid '+T.hair,opacity:dim?.6:1,WebkitTouchCallout:'none',userSelect:'none',position:'relative'}}),children);
+    style:{flexShrink:0,width:wide?'calc(100vw - 32px)':200,maxWidth:wide?560:200,boxSizing:'border-box',textAlign:'left',background:T.card,color:T.fg,borderRadius:12,padding:wide?'12px 14px 14px':'10px 12px 12px',border:'1px solid '+T.hair,opacity:dim?.6:1,WebkitTouchCallout:'none',userSelect:'none',position:'relative'}}),children);
 }
 function EditionsShelf({T,articles,onOpen,papers,onOpenPaper,onCombine,M}){
+  /* Home: only TODAY's unread editorial — today's paper when two or more videos were transcribed today, else
+     today's single edition. Everything else (other days, weeks, months, read ones) is in Editions (All ›). */
   M=M||{};const isEdRead=M.isEdRead||(()=>false),isPaperRead=M.isPaperRead||(()=>false);
-  const all=edItems(articles);const list=all.filter(x=>!isEdRead(x.a)).slice(0,20);
-  const ps=(papers||[]).filter(p=>!isPaperRead(p));
-  const readN=all.length-all.filter(x=>!isEdRead(x.a)).length+((papers||[]).length-ps.length);
-  if(!all.length&&!(papers&&papers.length))return null;
+  const all=edItems(articles);if(!all.length&&!(papers&&papers.length))return null;
+  const tk=dayKey(Date.now());
+  const todayPaper=(papers||[]).find(p=>p.kind==='day'&&p.period===tk);
+  const todayEds=all.filter(x=>dayKey(x.at)===tk);
+  const showPaper=todayPaper&&!isPaperRead(todayPaper)?todayPaper:null;
+  const showEds=!todayPaper?todayEds.filter(x=>!isEdRead(x.a)):[];
+  const unreadAll=(papers||[]).filter(p=>!isPaperRead(p)).length+all.filter(x=>!isEdRead(x.a)).length;
   const SERIF="'Playfair Display'"+INDIC;
   const menuBtn=item=>h('span',{role:'button','aria-label':'More',onClick:e=>{e.stopPropagation();M.onMenu&&M.onMenu(item)},style:{position:'absolute',right:6,top:6,width:26,height:26,borderRadius:13,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.dots(15));
   return h('div',{style:{padding:'14px 0 4px'}},
     h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px 10px',gap:10}},
-      h('div',{style:{fontSize:19,fontWeight:700,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Editions'),
-      h('div',{style:{display:'flex',alignItems:'center',gap:8}},
-        h('div',{style:{fontSize:12,color:T.sub}},(ps.length+list.length)?(ps.length+list.length)+' unread':'All read'),
-        onCombine&&(all.length>1)?h('button',{onClick:onCombine,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'Combine'):null,
-        M.onPage?h('button',{onClick:M.onPage,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'All ›'):null)),
-    (ps.length||list.length)?h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
-      ps.slice(0,10).map(p=>h(ShelfCard,{key:'p'+p.id,T,onClick:()=>onOpenPaper(p.id),onMenu:()=>M.onMenu&&M.onMenu({type:'paper',id:p.id})},
-        menuBtn({type:'paper',id:p.id}),
-        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7,marginRight:18}},paperMast(p)),
-        h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(p.label||new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))+' · '+p.stories.length+' stories'),
-        h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||''))),
-      list.map(({a,ed})=>h(ShelfCard,{key:a.id,T,onClick:()=>onOpen(a.id),onMenu:()=>M.onMenu&&M.onMenu({type:'ed',id:a.id})},
+      h('div',null,h('div',{style:{fontSize:19,fontWeight:700,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Today’s editorial'),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:1}},new Date().toLocaleDateString([],{weekday:'long',day:'numeric',month:'long'}))),
+      M.onPage?h('button',{onClick:M.onPage,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'5px 11px',borderRadius:12,background:T.card,whiteSpace:'nowrap'}},'All editions'+(unreadAll?' · '+unreadAll:'')+' ›'):null),
+    showPaper||showEds.length?h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
+      showPaper?h(ShelfCard,{key:'p'+showPaper.id,T,wide:true,onClick:()=>onOpenPaper(showPaper.id),onMenu:()=>M.onMenu&&M.onMenu({type:'paper',id:showPaper.id})},
+        menuBtn({type:'paper',id:showPaper.id}),
+        h('div',null,
+          h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:18,borderBottom:'2px double '+T.fg,paddingBottom:5,marginBottom:8,marginRight:20}},'The Daily Transcript'),
+          h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent}},'Today · '+showPaper.stories.length+' stories'),
+          showPaper.stories.slice(0,3).map((st,i)=>h('div',{key:i,style:{fontFamily:SERIF,fontWeight:i?700:800,fontSize:i?14:16.5,lineHeight:1.25,marginTop:i?6:6,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',opacity:i?.85:1}},st.headline)))):null,
+      showEds.map(({a,ed})=>h(ShelfCard,{key:a.id,T,wide:showEds.length===1,onClick:()=>onOpen(a.id),onMenu:()=>M.onMenu&&M.onMenu({type:'ed',id:a.id})},
         menuBtn({type:'ed',id:a.id}),
-        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7,marginRight:18}},'The Daily Transcript'),
-        h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:15,lineHeight:1.2,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(ed&&ed.headline)||a.title),
-        h('div',{style:{fontSize:11,color:T.sub,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out')))))
-    :h('button',{onClick:M.onPage,className:'act98',style:{margin:'0 16px',width:'calc(100% - 32px)',textAlign:'left',padding:'14px 16px',borderRadius:12,background:T.card,color:T.sub,fontSize:14}},'You’re all caught up'+(readN?' · '+readN+' read':'')+'. ',h('span',{style:{color:T.accent,fontWeight:650}},'See all ›')));
+        h('div',null,
+          h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7,marginRight:18}},'The Daily Transcript'),
+          h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:15.5,lineHeight:1.2,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(ed&&ed.headline)||a.title),
+          h('div',{style:{fontSize:11,color:T.sub,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out'))))))
+    :h('button',{onClick:M.onPage,className:'act98',style:{margin:'0 16px',width:'calc(100% - 32px)',textAlign:'left',padding:'14px 16px',borderRadius:12,background:T.card,color:T.sub,fontSize:14,lineHeight:1.45}},
+      todayPaper||todayEds.length?'You’ve read today’s editorial. ':'No editorial for today yet. ',h('span',{style:{color:T.accent,fontWeight:650}},'All editions'+(unreadAll?' · '+unreadAll+' unread':'')+' ›')));
 }
 
 /* Long-press / ⋯ menu for one edition or paper */
@@ -612,48 +618,78 @@ function EditionMenu({T,item,title,read,canDelete,onClose,onOpen,onToggleRead,on
     h('div',{style:{height:'calc(8px + env(safe-area-inset-bottom))'}}));
 }
 
-/* All editions and papers: Unread / Read / All, Select for several at once */
+/* Editions page. Day · Week · Month on top so nothing overlaps:
+   Day   — one section per day: that day's paper (2+ videos) and its editions, plus papers you combined that day
+   Week  — one section per week: its weekly digest (or the single edition, if only one that week)
+   Month — one section per month: its monthly digest (or the single edition)
+   Unread / Read / All filter within the chosen view; Select works on whatever is shown. */
 function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
+  const [period,setPeriod]=useState(()=>{try{return localStorage.getItem('insta_ed_period')||'day'}catch(e){return'day'}});
   const [tab,setTab]=useState('unread');const [sel,setSel]=useState(null);const [q,setQ]=useState('');
-  const eds=edItems(articles),ps=papers||[];
-  const inTab=read=>tab==='all'||(tab==='read'?read:!read);
-  const match=t=>!q.trim()||String(t||'').toLowerCase().includes(q.trim().toLowerCase());
-  const rowsP=ps.filter(p=>inTab(M.isPaperRead(p))&&match((p.label||'')+' '+p.stories.map(x=>x.headline).join(' ')));
-  const rowsE=eds.filter(x=>inTab(M.isEdRead(x.a))&&match(((x.ed&&x.ed.headline)||'')+' '+x.a.title+' '+(x.a.author||'')));
-  const count=read=>ps.filter(p=>!!M.isPaperRead(p)===read).length+eds.filter(x=>!!M.isEdRead(x.a)===read).length;
-  const key=it=>it.type+':'+it.id;
-  const flip=it=>setSel(s=>{const n=new Set(s||[]);n.has(key(it))?n.delete(key(it)):n.add(key(it));return n});
+  const pickPeriod=v=>{setPeriod(v);setSel(sel?new Set():null);try{localStorage.setItem('insta_ed_period',v)}catch(e){}};
+  const eds=edItems(articles),ps=papers||[];const now=Date.now();
+  const keyFn=period==='day'?dayKey:period==='week'?weekStart:monthKey;
+  const kind=period;
+  /* every section of the chosen view, before the read filter */
+  const groups={};const add=(k,at,it)=>{const g=groups[k]=groups[k]||{k,at:0,items:[]};g.at=Math.max(g.at,at);g.items.push(it)};
+  ps.forEach(p=>{if(p.kind===kind)add(String(p.period),p.at,{type:'paper',p,at:p.at});
+    else if(period==='day'&&p.kind==='custom')add(String(dayKey(p.at)),p.at,{type:'paper',p,at:p.at})});
+  eds.forEach(x=>{const k=String(keyFn(x.at));
+    if(period!=='day'&&ps.some(p=>p.kind===kind&&String(p.period)===k))return; // shown inside its digest
+    add(k,x.at,{type:'ed',x,at:x.at})});
+  const isRead=it=>it.type==='paper'?M.isPaperRead(it.p):M.isEdRead(it.x.a);
+  const textOf=it=>it.type==='paper'?(it.p.label||'')+' '+it.p.stories.map(x=>x.headline).join(' '):((it.x.ed&&it.x.ed.headline)||'')+' '+it.x.a.title+' '+(it.x.a.author||'');
+  const allItems=Object.values(groups).flatMap(g=>g.items);
+  const count=r=>allItems.filter(it=>!!isRead(it)===r).length;
+  const match=it=>!q.trim()||textOf(it).toLowerCase().includes(q.trim().toLowerCase());
+  const pass=it=>(tab==='all'||(tab==='read'?isRead(it):!isRead(it)))&&match(it);
+  const sections=Object.values(groups).map(g=>({...g,items:g.items.filter(pass).sort((a,b)=>(a.type==='paper'?0:1)-(b.type==='paper'?0:1)||b.at-a.at)}))
+    .filter(g=>g.items.length).sort((a,b)=>b.at-a.at);
+  const secTitle=g=>{const t=g.at;
+    if(period==='day'){const k=g.k;return k===dayKey(now)?'Today':k===dayKey(now-86400000)?'Yesterday':new Date(t).toLocaleDateString([],{weekday:'long',day:'numeric',month:'short'})}
+    if(period==='week'){const w=Number(g.k),end=new Date(w+6*86400000);const r=new Date(w).toLocaleDateString([],{day:'numeric',month:'short'})+' – '+end.toLocaleDateString([],{day:'numeric',month:'short'});
+      return(w===weekStart(now)?'This week · ':w===weekStart(now)-7*86400000?'Last week · ':'')+r}
+    const m=Number(g.k);return(m===monthKey(now)?'This month · ':'')+new Date(Math.floor(m/100),m%100,1).toLocaleDateString([],{month:'long',year:'numeric'})};
+  const keyOf=it=>it.type==='paper'?'paper:'+it.p.id:'ed:'+it.x.a.id;
+  const flip=it=>setSel(s=>{const n=new Set(s||[]);n.has(keyOf(it))?n.delete(keyOf(it)):n.add(keyOf(it));return n});
   const chosen=[...(sel||[])].map(k=>{const i=k.indexOf(':');return{type:k.slice(0,i),id:k.slice(i+1)}});
   const chosenEd=chosen.filter(x=>x.type==='ed').map(x=>x.id),chosenP=chosen.filter(x=>x.type==='paper').map(x=>x.id);
   const done=()=>setSel(null);
-  const row=(it,title,meta,img,read,onTap)=>{const on=!!(sel&&sel.has(key(it)));
-    return h('div',{key:key(it),role:'button',onClick:()=>sel?flip(it):onTap(),className:'act98',style:{display:'flex',alignItems:'center',gap:12,padding:'10px 4px',borderBottom:'1px solid '+T.hair,cursor:'pointer',background:on?hexA(T.accent,.08):'transparent'}},
+  const row=it=>{const on=!!(sel&&sel.has(keyOf(it))),read=isRead(it);
+    const P=it.type==='paper'?it.p:null,a=P?null:it.x.a,ed=P?null:it.x.ed;
+    const vid=P?(P.stories.find(x=>x.videoId)||{}).videoId:a.videoId;
+    const title=P?(P.kind==='custom'?(P.label||'Your paper'):P.stories.map(x=>x.headline).slice(0,2).join(' · ')):((ed&&ed.headline)||a.title);
+    const meta=P?paperMast(P)+' · '+P.stories.length+' stories'+(P.kind==='custom'?' · combined':''):(a.author||'')+(ed?'':' · not laid out yet');
+    const tap=()=>sel?flip(it):P?onOpenPaper(P.id):onOpen(a.id);
+    return h('div',{key:keyOf(it),role:'button',onClick:tap,className:'act98',style:{display:'flex',alignItems:'center',gap:12,padding:'10px 4px',borderBottom:'1px solid '+T.hair,cursor:'pointer',background:on?hexA(T.accent,.08):'transparent'}},
       sel?h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(on?T.accent:T.hair),background:on?T.accent:'transparent',color:'#fff'}},on?Icons.check(13):null):null,
-      img?h('img',{src:img,alt:'',loading:'lazy',style:{width:84,height:48,objectFit:'cover',borderRadius:7,flexShrink:0,opacity:read?.6:1}})
-        :h('span',{style:{width:84,height:48,borderRadius:7,flexShrink:0,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',color:T.accent}},Icons.newspaper(20)),
+      h('span',{style:{position:'relative',width:84,height:48,flexShrink:0}},
+        vid?h('img',{src:ytThumb(vid),alt:'',loading:'lazy',style:{width:84,height:48,objectFit:'cover',borderRadius:7,opacity:read?.55:1}})
+          :h('span',{style:{width:84,height:48,borderRadius:7,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',color:T.accent}},Icons.newspaper(20)),
+        P?h('span',{style:{position:'absolute',left:4,bottom:4,fontSize:9.5,fontWeight:800,letterSpacing:'.05em',padding:'2px 5px',borderRadius:4,background:'rgba(0,0,0,.65)',color:'#fff'}},P.kind==='custom'?'PAPER':P.kind.toUpperCase()):null),
       h('div',{style:{flex:1,minWidth:0}},
         h('div',{style:{fontSize:14.5,fontWeight:read?500:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',color:read?T.meta:T.fg}},title),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(read?'✓ Read · ':'')+meta)),
-      sel?null:h('button',{onClick:e=>{e.stopPropagation();M.onMenu(it)},'aria-label':'More',className:'act90',style:{display:'flex',color:T.sub,padding:6,flexShrink:0}},Icons.dots(18)));
+      sel?null:h('button',{onClick:e=>{e.stopPropagation();M.onMenu(P?{type:'paper',id:P.id}:{type:'ed',id:a.id})},'aria-label':'More',className:'act90',style:{display:'flex',color:T.sub,padding:6,flexShrink:0}},Icons.dots(18)));
   };
-  const head=t=>h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'16px 4px 4px'}},t);
+  const seg=(items,cur,set,big)=>h('div',{style:{display:'flex',gap:4,margin:big?'2px 16px 8px':'0 16px 8px',padding:3,borderRadius:11,background:T.card}},items.map(([k,l])=>
+    h('button',{key:k,onClick:()=>set(k),className:'act95','aria-pressed':cur===k,style:{flex:1,padding:big?'9px 4px':'7px 4px',borderRadius:9,fontSize:big?14.5:13,fontWeight:big?700:600,background:cur===k?(big?T.fg:T.bg):'transparent',color:cur===k&&big?T.bg:T.fg,boxShadow:cur===k&&!big?'0 1px 3px rgba(0,0,0,.12)':'none'}},l)));
   const bar=(label,fn,danger,dis)=>h('button',{onClick:fn,disabled:dis,className:'act95',style:{flex:1,minWidth:0,padding:'10px 4px',borderRadius:11,fontSize:13,fontWeight:650,background:T.card,color:danger?T.danger:T.fg,opacity:dis?.4:1}},label);
+  const empty=q?'Nothing matches “'+q.trim()+'”.':tab==='unread'?'All caught up here. Read ones are under Read.':tab==='read'?'Nothing read yet in this view.':period==='day'?'No editions yet. Transcribe a video and it becomes one.':'A '+period+'ly digest appears once two or more videos are transcribed in the same '+period+'.';
   return ReactDOM.createPortal(h('div',{style:{position:'fixed',inset:0,zIndex:390,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
     h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'calc(8px + env(safe-area-inset-top)) 12px 6px'}},
       h('button',{onClick:onClose,'aria-label':'Close',className:'act90',style:{display:'flex',color:T.fg,padding:6}},Icons.x(21)),
       h('div',{style:{flex:1,fontSize:20,fontWeight:750,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Editions'),
       h('button',{onClick:()=>sel?done():setSel(new Set()),className:'act95',style:{fontSize:14.5,fontWeight:650,color:T.accent,padding:'6px 10px',borderRadius:14,background:sel?hexA(T.accent,.12):'transparent'}},sel?'Done':'Select')),
-    h('div',{style:{display:'flex',gap:4,margin:'2px 16px 8px',padding:3,borderRadius:11,background:T.card}},[['unread','Unread',count(false)],['read','Read',count(true)],['all','All',ps.length+eds.length]].map(([k,l,n])=>
-      h('button',{key:k,onClick:()=>{setTab(k);setSel(sel?new Set():null)},className:'act95',style:{flex:1,padding:'8px 4px',borderRadius:9,fontSize:13.5,fontWeight:650,background:tab===k?T.bg:'transparent',color:T.fg,boxShadow:tab===k?'0 1px 3px rgba(0,0,0,.12)':'none'}},l+' · '+n))),
+    seg([['day','Day'],['week','Week'],['month','Month']],period,pickPeriod,true),
+    seg([['unread','Unread · '+count(false)],['read','Read · '+count(true)],['all','All · '+allItems.length]],tab,k=>{setTab(k);setSel(sel?new Set():null)}),
     h('div',{style:{padding:'0 16px 4px'}},h('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Search editions',style:{width:'100%',boxSizing:'border-box',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16}})),
     h('div',{style:{flex:1,overflowY:'auto',padding:'0 12px 20px'}},
-      rowsP.length?head('Papers'):null,
-      rowsP.map(p=>row({type:'paper',id:p.id},(p.label||'Paper')+' — '+p.stories.map(x=>x.headline).slice(0,2).join(' · '),paperMast(p)+' · '+p.stories.length+' stories · '+new Date(p.at).toLocaleDateString([],{day:'numeric',month:'short'}),
-        (p.stories.find(x=>x.videoId)||{}).videoId?ytThumb(p.stories.find(x=>x.videoId).videoId):'',M.isPaperRead(p),()=>onOpenPaper(p.id))),
-      rowsE.length?head('Editions'):null,
-      rowsE.map(({a,ed,at})=>row({type:'ed',id:a.id},(ed&&ed.headline)||a.title,(a.author||'')+' · '+new Date(at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+(ed?'':' · not laid out yet'),
-        a.videoId?ytThumb(a.videoId):'',M.isEdRead(a),()=>onOpen(a.id))),
-      !rowsP.length&&!rowsE.length?h('div',{style:{padding:'50px 20px',textAlign:'center',color:T.sub,fontSize:14.5,lineHeight:1.6}},q?'Nothing matches “'+q.trim()+'”.':tab==='unread'?'All caught up. Read editions are in the Read tab.':tab==='read'?'Nothing read yet. Finish an edition (or Mark as read) and it moves here.':'No editions yet. Transcribe a video and it becomes one.'):null),
+      sections.length?sections.map(g=>h('div',{key:g.k},
+        h('div',{style:{position:'sticky',top:0,zIndex:1,background:T.bg,display:'flex',alignItems:'baseline',gap:8,fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'16px 4px 6px'}},
+          h('span',{style:{flex:1}},secTitle(g)),h('span',{style:{fontWeight:600,letterSpacing:0,textTransform:'none'}},g.items.length+(g.items.length===1?' item':' items'))),
+        g.items.map(row)))
+      :h('div',{style:{padding:'50px 20px',textAlign:'center',color:T.sub,fontSize:14.5,lineHeight:1.6}},empty)),
     sel?h('div',{style:{display:'flex',gap:6,padding:'8px 12px calc(8px + env(safe-area-inset-bottom))',borderTop:'1px solid '+T.hair,background:T.bg}},
       bar('Read',()=>{M.markEd(chosenEd,true);M.markPaper(chosenP,true);done()},false,!chosen.length),
       bar('Unread',()=>{M.markEd(chosenEd,false);M.markPaper(chosenP,false);done()},false,!chosen.length),
@@ -880,18 +916,26 @@ function storyFromArticle(a){
   return{articleId:a.id,videoId:a.videoId||vidOf(a.url),channel:a.author||a.source||'',publishedMs:a.publishedAt||0,title:a.title,plain:true,
     headline:(ed&&ed.headline)||a.title||'Untitled',standfirst:(ed&&ed.standfirst)||first,story,keyPoints:[],quote:typeof pq==='string'?pq:((pq&&pq.text)||'')};
 }
+const monthKey=t=>{const d=new Date(t);return d.getFullYear()*100+d.getMonth()};
+/* Day papers (last 60 days), weekly digests (last 12 weeks) and monthly digests (last 12 months), each made of
+   two or more transcribed videos; a period with a single video just shows that edition */
 function papersFromEditions(articles){
   const list=txArticles(articles).map(a=>({a,at:storyAt(a)})).filter(x=>x.at).sort((x,y)=>y.at-x.at);
   const now=Date.now(),today=dayKey(now),yest=dayKey(now-86400000),out=[];
-  const days={};list.forEach(x=>{(days[dayKey(x.at)]=days[dayKey(x.at)]||[]).push(x)});
-  Object.keys(days).forEach(k=>{const xs=days[k];if(xs.length<2||now-xs[0].at>14*86400000)return;
-    const at=xs[0].at;const name=k===today?'Today’s paper':k===yest?'Yesterday’s paper':new Date(at).toLocaleDateString([],{weekday:'long'})+'’s paper';
-    out.push({id:'day:'+k,kind:'day',virtual:true,at,label:name,stories:xs.map(x=>storyFromArticle(x.a))})});
-  const weeks={};list.forEach(x=>{const w=weekStart(x.at);(weeks[w]=weeks[w]||[]).push(x)});
-  const thisW=weekStart(now);
-  Object.keys(weeks).map(Number).sort((a,b)=>b-a).slice(0,2).forEach(w=>{const xs=weeks[w];if(xs.length<2)return;
-    out.push({id:'week:'+w,kind:'week',virtual:true,at:xs[0].at,label:w===thisW?'This week’s digest':'Last week’s digest',stories:xs.map(x=>storyFromArticle(x.a))})});
-  return out.sort((x,y)=>(x.kind==='week')-(y.kind==='week')||y.at-x.at);
+  const by=(f)=>{const m={};list.forEach(x=>{const k=f(x.at);(m[k]=m[k]||[]).push(x)});return m};
+  const days=by(dayKey);
+  Object.keys(days).forEach(k=>{const xs=days[k];if(xs.length<2||now-xs[0].at>60*86400000)return;
+    const at=xs[0].at;const name=k===today?'Today’s paper':k===yest?'Yesterday’s paper':now-at<6*86400000?new Date(at).toLocaleDateString([],{weekday:'long'})+'’s paper':new Date(at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' paper';
+    out.push({id:'day:'+k,kind:'day',virtual:true,at,period:k,label:name,stories:xs.map(x=>storyFromArticle(x.a))})});
+  const weeks=by(weekStart),thisW=weekStart(now);
+  Object.keys(weeks).map(Number).sort((a,b)=>b-a).slice(0,12).forEach(w=>{const xs=weeks[w];if(xs.length<2)return;
+    const label=w===thisW?'This week’s digest':w===thisW-7*86400000?'Last week’s digest':'Week of '+new Date(w).toLocaleDateString([],{day:'numeric',month:'short'});
+    out.push({id:'week:'+w,kind:'week',virtual:true,at:xs[0].at,period:w,label,stories:xs.map(x=>storyFromArticle(x.a))})});
+  const months=by(monthKey),thisM=monthKey(now);
+  Object.keys(months).map(Number).sort((a,b)=>b-a).slice(0,12).forEach(m=>{const xs=months[m];if(xs.length<2)return;
+    const label=m===thisM?'This month’s digest':new Date(Math.floor(m/100),m%100,1).toLocaleDateString([],{month:'long',year:'numeric'})+' digest';
+    out.push({id:'month:'+m,kind:'month',virtual:true,at:xs[0].at,period:m,label,stories:xs.map(x=>storyFromArticle(x.a))})});
+  return out.sort((x,y)=>y.at-x.at);
 }
 /* Combine: tick any transcribed videos and make one paper of them (kept in your papers) */
 function CombinePicker({T,articles,onMake,onClose,preselect}){
@@ -920,7 +964,7 @@ function CombinePicker({T,articles,onMake,onClose,preselect}){
       h('button',{disabled:chosen.length<1,onClick:()=>onMake({id:uid(),kind:'custom',at:Date.now(),label:title.trim()||('Your paper · '+chosen.length+' stories'),stories:chosen.map(x=>storyFromArticle(x.a))}),className:'act95',
         style:{width:'100%',padding:14,borderRadius:13,background:T.accent,color:'#fff',fontSize:15.5,fontWeight:700,opacity:chosen.length?1:.45}},chosen.length?'Make the paper · '+chosen.length+(chosen.length===1?' story':' stories'):'Tick the videos to combine'))),document.body);
 }
-const paperMast=p=>p&&p.kind==='week'?'The Weekly Transcript':'The Daily Transcript';
+const paperMast=p=>p&&p.kind==='week'?'The Weekly Transcript':p&&p.kind==='month'?'The Monthly Transcript':'The Daily Transcript';
 function PapersShelfCards({T,papers,onOpen}){
   const SERIF="'Playfair Display'"+INDIC;
   /* same card as an edition (follows the theme: light, sepia, dark, black); the accent date line marks it as a daily paper */

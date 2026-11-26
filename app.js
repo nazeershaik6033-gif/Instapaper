@@ -9892,7 +9892,7 @@ function App(){
     };
     const t0=setTimeout(pass,4000),t=setInterval(pass,10*60000);return()=>{alive=false;clearTimeout(t0);clearInterval(t)};
   },[]);
-  const paperToday=allPapers.find(p=>p.kind==='day'&&p.label==='Today’s paper')||null;
+  const paperToday=allPapers.find(p=>p.kind==='day'&&p.label==='Today’s paper'&&!isPaperRead(p))||null;
   const txOfEntry=e=>{const vid=ytIdOf(e&&e.url);if(!vid)return false;const a=data.articles.find(x=>!x.isEdition&&x.videoId===vid);return!!(a&&a.transcript&&String(a.transcript).trim())};
   const onVideoTool=(e,sourceName,kind)=>{
     const id=ensureVideoArticle(e,sourceName);if(!id){if(e&&e.url)openExternalUrl(e.url);return}
