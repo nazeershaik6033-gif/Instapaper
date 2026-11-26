@@ -5374,6 +5374,12 @@ const SRC_ICON={
   substack:s=>Svg({size:s},P('M5.5 4.8h13M5.5 8.6h13'),P('M5.5 12.4h13v7.3l-6.5-3.7-6.5 3.7v-7.3Z')),
   web:s=>Icons.globe(s)
 };
+/* social apps in Today: Instagram-style feed (cards you scroll) or YouTube-Shorts style (full screen, swipe up).
+   Chosen per app with the button next to 🕘 (or ⋯ → Layout) and kept in settings.socialLayout. */
+const LAYOUT_ICON={
+  feed:s=>Svg({size:s},h('rect',{x:4.5,y:3.5,width:15,height:9,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M4.5 16.2h15M4.5 20h10')),
+  shorts:s=>Svg({size:s},h('rect',{x:6.5,y:2.8,width:11,height:18.4,rx:2.8,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.6 9.4v5.2l4.2-2.6-4.2-2.6Z',fill:'currentColor'}))
+};
 function srcOf(it){
   if(!it)return'web';
   if(it.kind==='youtube'||/(^|\/\/|\.)(youtube\.com|youtu\.be)/i.test(String(it.url||'')))return'youtube';
@@ -6216,6 +6222,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       const P=SOCIAL[p];const f=P&&P.feed&&hh?P.feed(hh):'';if(!f){toastFn('This account needs a feed link');return}
       return linkFeed(it,{kind:'rss',feedUrl:f,platform:p,socialHandle:hh})};
     const padTop=circlesRow?176:92;
+    const socLayout=((S&&S.socialLayout)||{})[srcK]==='shorts'?'shorts':'feed';
+    const setSocLayout=v=>{onSetting&&onSetting({socialLayout:Object.assign({},(S&&S.socialLayout)||{},{[srcK]:v})});vibrate(6);
+      toastFn((SRC_DEF.find(x=>x[0]===srcK)||[0,''])[1]+': '+(v==='shorts'?'Shorts layout (full screen, swipe up)':'Feed layout (scroll like Instagram)'))};
     /* swipe left anywhere — or right from the left edge, like iPhone back — returns to the My Routine list */
     const swipeBack={
       onTouchStart:e=>{if(e.touches.length!==1){todaySwipe.current.on=false;return}const t=e.touches[0];const inRow=!!(e.target&&e.target.closest&&e.target.closest('.sx,input,textarea'));
@@ -6224,12 +6233,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         const dx=t.clientX-s.x,dy=t.clientY-s.y;if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*1.6)return;
         if(dx<0||s.edge){vibrate(6);setView('manage')}}};
     const layer=h('div',Object.assign({'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},swipeBack),
-      isSocSrc&&SOC?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc(12px + env(safe-area-inset-bottom))',
+      isSocSrc&&SOC&&socLayout==='feed'?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc(12px + env(safe-area-inset-bottom))',
         platform:srcK,isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),
         onProfile:it=>openExternalUrl(it.url),onSetFeed:(it,url)=>linkFeed(it,{kind:'rss',feedUrl:url}),onAutoFeed:autoFeed,
         notesOf:url=>(brief.notes||{})[url]||'',onNote:(url,t)=>onBrief(b=>{const n=Object.assign({},b.notes||{});if(t)n[url]=t;else delete n[url];return{...b,notes:n}}),
         emptyHint:dayObj?'Nothing from these accounts that day.':'No new posts today.'}):
-      h(RoutineShorts,{key:'today-'+srcK+(acct||'')+(dayObj?dayObj.key:''),T,title:dayObj?dayObj.label:'Today',color:T.accent,
+      h(RoutineShorts,{key:'today-'+srcK+(acct||'')+(dayObj?dayObj.key:'')+(isSocSrc?'-shorts':''),T,title:dayObj?dayObj.label:'Today',color:T.accent,
         posts,max:false,embedded:true,header:false,height:'100%',padTop:padTop,padBottom:'calc(12px + env(safe-area-inset-bottom))',toastFn,hidden:!!overlayOpen,
         isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),
         isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),onTool:vtool,txOf}),
@@ -6246,6 +6255,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'0 12px',pointerEvents:'auto'}},
           h('div',{className:'sx',style:{flex:1,minWidth:0,display:'flex',gap:7,overflowX:'auto'}},
             presentSrcs.length?presentSrcs.map(srcChip):h('span',{style:{color:'#fff',fontSize:14,fontWeight:600,padding:'8px 4px'}},'My Routine')),
+          isSocSrc?h('button',{onClick:()=>setSocLayout(socLayout==='shorts'?'feed':'shorts'),'aria-label':socLayout==='shorts'?'Layout: Shorts. Switch to feed':'Layout: feed. Switch to Shorts',title:'Feed or Shorts layout',className:'act95',
+            style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',width:34,height:34,borderRadius:17})},LAYOUT_ICON[socLayout==='shorts'?'feed':'shorts'](17)):null,
           h('button',{onClick:()=>setFilterOpen(true),'aria-label':dayObj?'Day: '+dayObj.label:'Past days',className:'act95',style:Object.assign({},glass,{position:'relative',flexShrink:0,display:'flex',alignItems:'center',gap:6,height:34,padding:dayObj?'0 12px 0 10px':'0 9px',borderRadius:17,fontSize:13,fontWeight:650},
             dayObj?{background:'#fff',color:'#000',border:'1px solid #fff'}:{})},Icons.clock(16),dayObj?dayObj.label:null,
             !dayObj&&missedTotal?h('span',{style:{position:'absolute',top:-5,right:-5,minWidth:18,height:18,padding:'0 5px',borderRadius:9,background:'#d62976',color:'#fff',fontSize:10.5,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center'}},missedTotal>99?'99+':missedTotal):null)),
@@ -6302,6 +6313,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       srcK==='youtube'&&plN?h(ARow,{T,icon:Icons.play(21,true),label:'Play today’s videos',sub:plN+' unwatched, back to back',onClick:()=>{setTodayMenu(false);setPlaylist(playlistPosts())}}):null,
       srcK==='youtube'&&ytCands.length?h(ARow,{T,icon:Icons.playlist(21),label:'Make a YouTube playlist',sub:'Tick videos, get one link that plays them all',onClick:()=>{setTodayMenu(false);setYtPl({sel:ytCands.filter(p=>!seenMap[p.e.url]).slice(0,YT_PL_MAX).map(p=>p.e.url),link:''})}}):null,
       srcK==='youtube'&&onMakePaper&&paperPosts().length?h(ARow,{T,icon:Icons.newspaper(21),label:'Make today’s paper',sub:'A newspaper from today’s videos',onClick:()=>{setTodayMenu(false);onMakePaper(paperPosts())}}):null,
+      isSocSrc?h(ARow,{T,icon:LAYOUT_ICON[socLayout==='shorts'?'feed':'shorts'](21),label:socLayout==='shorts'?'Switch to feed layout':'Switch to Shorts layout',
+        sub:socLayout==='shorts'?'Scroll posts like Instagram':'Full screen, swipe up like YouTube Shorts',onClick:()=>{setTodayMenu(false);setSocLayout(socLayout==='shorts'?'feed':'shorts')}}):null,
       h(ARow,{T,icon:Icons.refresh(21),label:refreshing?'Refreshing…':'Refresh now',sub:'Fetch the latest from every source',onClick:()=>{setTodayMenu(false);refreshFeeds(true)}}),
       h(ARow,{T,icon:Icons.calendar(21),label:'Routine window · '+curSlot.name,sub:'Morning, afternoon, night',onClick:()=>{setTodayMenu(false);setSlotSheet(true)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Manage sources & groups',sub:'Add, edit, group and reorder',onClick:()=>{setTodayMenu(false);setView('manage')}}),
