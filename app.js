@@ -9793,7 +9793,32 @@ function App(){
   const [paperOpen,setPaperOpen]=useState(null); // paper id
   const [combineO,setCombineO]=useState(false);
   /* your papers: day papers and weekly digests made on the fly from your editions, plus the ones you made */
-  const allPapers=useMemo(()=>{const E=window.InstaEdition;const auto=E&&E.papersFromEditions?E.papersFromEditions(data.articles):[];return auto.concat(data.papers||[])},[data.articles,data.papers]);
+  /* automatic papers you removed stay hidden until a new story joins them (key: id + story count) */
+  const hideKey=p=>p.id+':'+p.stories.length;
+  const allPapers=useMemo(()=>{const E=window.InstaEdition;const hid=data.paperHidden||{};
+    const auto=E&&E.papersFromEditions?E.papersFromEditions(data.articles).filter(p=>!hid[hideKey(p)]):[];return auto.concat(data.papers||[])},[data.articles,data.papers,data.paperHidden]);
+  /* ---------- managing editions: read state, delete, share ----------
+     An edition is read once you reach its end (or Mark as read): edRead on the video. A paper is read when you
+     finish it, or when every story in it is read; reading a paper marks its stories read too. */
+  const [edMenu,setEdMenu]=useState(null);const [edPage,setEdPage]=useState(false);
+  const isEdRead=a=>!!(a&&a.edRead);
+  const isPaperRead=p=>!!((data.paperRead||{})[p.id])||(p.stories.length>0&&p.stories.every(st=>{const a=data.articles.find(x=>x.id===st.articleId);return a?!!a.edRead:true}));
+  const markEd=(ids,on)=>{if(!ids||!ids.length)return;const set=new Set(ids);update(d=>({...d,articles:d.articles.map(a=>set.has(a.id)?{...a,edRead:on?Date.now():0}:a)}))};
+  const markPaper=(ids,on)=>{if(!ids||!ids.length)return;
+    const stories=new Set();ids.forEach(id=>{const p=allPapers.find(x=>x.id===id);if(p)p.stories.forEach(st=>stories.add(st.articleId))});
+    update(d=>{const pr=Object.assign({},d.paperRead||{});ids.forEach(id=>{if(on)pr[id]=Date.now();else delete pr[id]});
+      return{...d,paperRead:pr,articles:d.articles.map(a=>stories.has(a.id)?{...a,edRead:on?Date.now():0}:a)}})};
+  /* delete: the edition, its transcript, translations and the highlights made in it; the video stays */
+  const delEd=ids=>{if(!ids||!ids.length)return;const set=new Set(ids);
+    update(d=>({...d,articles:d.articles.map(a=>set.has(a.id)?{...a,transcript:'',transcriptSrc:'',transcriptAt:0,transcriptTr:{},editions:{},edRead:0,
+      highlights:(a.highlights||[]).filter(x=>x&&x.src!=='edition')}:a)}));toastFn(ids.length===1?'Edition deleted':ids.length+' editions deleted')};
+  const delPaper=ids=>{if(!ids||!ids.length)return;
+    update(d=>{const hid=Object.assign({},d.paperHidden||{});ids.forEach(id=>{const p=allPapers.find(x=>x.id===id);if(p&&p.virtual)hid[hideKey(p)]=Date.now()});
+      return{...d,papers:(d.papers||[]).filter(p=>!ids.includes(p.id)),paperHidden:hid}});toastFn(ids.length===1?'Paper removed':ids.length+' papers removed')};
+  const papersOf=ids=>{const E=window.InstaEdition;const arts=ids.map(id=>data.articles.find(a=>a.id===id)).filter(Boolean);
+    const stories=arts.map(a=>E.storyFromArticle(a));return{id:uid(),kind:'custom',at:Date.now(),label:arts.length===1?stories[0].headline:'Your paper · '+arts.length+' stories',stories}};
+  const EM={isEdRead,isPaperRead,markEd,markPaper,delEd,delPaper,onMenu:it=>setEdMenu(it),onPage:()=>setEdPage(true),
+    combine:ids=>setCombineO(ids&&ids.length?ids:true),postEdsToBlogs:ids=>{if(ids.length)postPaperToBlogs(papersOf(ids))}};
   const paperTitle=p=>(p.kind==='week'?'The Weekly Transcript':'The Daily Transcript')+' — '+(p.label||new Date(p.at).toLocaleDateString([],{weekday:'long',day:'numeric',month:'short'}));
   /* Post to Blogs: the paper becomes one library article, listed in Blogs → Saved posts under "My papers" */
   const postPaperToBlogs=paper=>{
@@ -10284,7 +10309,7 @@ function App(){
   }
   /* premium Home: insights above the library (week / month comparisons) */
   if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data:libData,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
-    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:libData.articles,onOpen:id=>setEdition({id}),papers:allPapers,onOpenPaper:id=>setPaperOpen(id),onCombine:()=>setCombineO(true)}):null,body);
+    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:data.articles,onOpen:id=>setEdition({id}),papers:allPapers,onOpenPaper:id=>setPaperOpen(id),onCombine:()=>setCombineO(true),M:EM}):null,body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
@@ -10450,14 +10475,24 @@ function App(){
       onMaximize:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})},onNewspaper:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})}}):null,
     paperBuild&&window.InstaEdition?h(window.InstaEdition.PaperBuilder,{T,S,posts:paperBuild,articles:data.articles,ensure:ensureVideoArticle,patchArticle,toastFn,
       onClose:()=>setPaperBuild(null),onBuilt:p=>{update(d=>({...d,papers:[p,...(d.papers||[])].slice(0,30)}));setPaperBuild(null);setPaperOpen(p.id);toastFn('Today’s paper is ready')}}):null,
-    combineO&&window.InstaEdition?h(window.InstaEdition.CombinePicker,{T,articles:data.articles,onClose:()=>setCombineO(false),
+    edPage&&window.InstaEdition?h(window.InstaEdition.EditionsPage,{T,articles:data.articles,papers:allPapers,M:EM,onClose:()=>setEdPage(false),
+      onOpen:id=>setEdition({id}),onOpenPaper:id=>setPaperOpen(id)}):null,
+    edMenu&&window.InstaEdition?(()=>{const it=edMenu;const p=it.type==='paper'?allPapers.find(x=>x.id===it.id):null;const a=it.type==='ed'?data.articles.find(x=>x.id===it.id):null;
+      if(!p&&!a)return null;const read=p?isPaperRead(p):isEdRead(a);const ed=a&&(a.editions||{}).orig;
+      return h(window.InstaEdition.EditionMenu,{T,item:it,title:p?(p.label||'Paper')+' · '+p.stories.length+' stories':((ed&&ed.headline)||a.title),read,canDelete:true,onClose:()=>setEdMenu(null),
+        onOpen:()=>p?setPaperOpen(p.id):setEdition({id:a.id}),
+        onToggleRead:()=>{if(p)markPaper([p.id],!read);else markEd([a.id],!read);toastFn(read?'Back on the Home shelf':'Moved to Editions → Read')},
+        onCombine:a?()=>setCombineO([a.id]):null,
+        onPostToBlogs:()=>postPaperToBlogs(p||papersOf([a.id])),onPublish:()=>publishPaper(p||papersOf([a.id])),
+        onDelete:()=>{if(!window.confirm(p?'Remove this paper? Its stories stay as editions.':'Delete this edition and its transcript? The video stays.'))return;if(p)delPaper([p.id]);else delEd([a.id])}})})():null,
+    combineO&&window.InstaEdition?h(window.InstaEdition.CombinePicker,{T,articles:data.articles,preselect:Array.isArray(combineO)?combineO:null,onClose:()=>setCombineO(false),
       onMake:p=>{update(d=>({...d,papers:[p,...(d.papers||[])].slice(0,40)}));setCombineO(false);setPaperOpen(p.id);toastFn('Your paper is ready')}}):null,
     paperOpen&&window.InstaEdition&&allPapers.some(p=>p.id===paperOpen)?h(window.InstaEdition.PaperReader,{key:paperOpen,T,S,paper:allPapers.find(p=>p.id===paperOpen),articles:data.articles,toastFn,
-      onPostToBlogs:postPaperToBlogs,onPublish:publishPaper,
+      onPostToBlogs:postPaperToBlogs,onPublish:publishPaper,onFinished:()=>{markPaper([paperOpen],true);toastFn('Read ✓ · moved to Editions → Read')},
       onClose:()=>setPaperOpen(null),onDelete:allPapers.find(p=>p.id===paperOpen).virtual?null:()=>{const id=paperOpen;setPaperOpen(null);update(d=>({...d,papers:(d.papers||[]).filter(p=>p.id!==id)}));toastFn('Paper deleted')},
       onOpenEdition:id=>setEdition({id}),onSaveToLibrary:c=>saveEditionCopy(null,Object.assign({},c,{url:'paper:'+paperOpen}))}):null,
     edition&&byId(edition.id)&&window.InstaEdition?h(window.InstaEdition.EditionReader,{key:edition.id,T,S,a:byId(edition.id),patch:p=>patchArticle(edition.id,p),toastFn,initialPanel:edition.panel,
-      onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
+      onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onFinished:()=>{markEd([edition.id],true);toastFn('Read ✓ · moved to Editions → Read')},onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
     aiOpen?h(AISheet,{T,S,article:aiOpen.articleId?byId(aiOpen.articleId):null,
       articles:sortArticles(data.articles.filter(a=>!a.archived&&!a.routineOnly),'newest'),brief:data.brief,
       initialView:aiOpen.routine?'claudeRoutine':null,

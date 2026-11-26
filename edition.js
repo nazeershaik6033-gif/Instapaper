@@ -243,7 +243,7 @@ const EdIcons={
 };
 
 /* ============================== reader ============================== */
-function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,onOpenVideo,initialPanel}){
+function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,onOpenVideo,initialPanel,onFinished}){
   const tr=a.transcriptTr||{};
   const langs=['orig'].concat(Object.keys(tr).filter(k=>String(tr[k]||'').trim()));
   const [lang,setLang]=useState(initialLang&&langs.includes(initialLang)?initialLang:'orig');
@@ -278,7 +278,10 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
   };
   useEffect(()=>{if(!ed&&paras.length&&typeof translateEngine==='function'&&translateEngine(S))build(false)},[lang,text.length]);
   /* reading progress */
+  const finRef=useRef(false);
   const onScroll=()=>{const el=scRef.current;if(!el)return;const m=el.scrollHeight-el.clientHeight;setProg(m>0?Math.min(1,el.scrollTop/m):1);
+    /* read to the end: it leaves the Home shelf for Editions → Read */
+    if(m>200&&el.scrollTop/m>=.97&&!finRef.current&&onFinished){finRef.current=true;onFinished()}
     if(prefs.focus){const line=el.getBoundingClientRect().top+el.clientHeight*.35;let cur=0;for(const n of el.querySelectorAll('[data-i]')){if(n.getBoundingClientRect().top<=line)cur=+n.getAttribute('data-i');else break}if(cur!==focusIdx)setFocusIdx(cur)}};
   /* keep the screen on while reading (Aa → Keep screen awake) */
   useEffect(()=>{if(!prefs.awake||!navigator.wakeLock)return;let lock=null,dead=false;
@@ -552,27 +555,112 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
 }
 function dl(name,text,type){const b=new Blob([text],{type});const u=URL.createObjectURL(b);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{URL.revokeObjectURL(u);x.remove()},1500)}
 
-/* ============================== Editions shelf ============================== */
-function EditionsShelf({T,articles,onOpen,papers,onOpenPaper,onCombine}){
-  const list=(articles||[]).filter(a=>a.isVideo&&a.transcript&&String(a.transcript).trim())
-    .map(a=>{const eds=a.editions||{};const latest=Object.keys(eds).reduce((m,k)=>Math.max(m,eds[k].at||0),0);return{a,at:latest||a.transcriptAt||0,ed:eds.orig||eds[Object.keys(eds)[0]]}})
-    .sort((x,y)=>y.at-x.at).slice(0,20);
-  if(!list.length&&!(papers&&papers.length))return null;
+/* ============================== Editions shelf ==============================
+   Home shows only what you haven't read: unread papers first, then unread editions (newest first). Finishing one
+   (reading to the end, or Mark as read) moves it to the Read tab of the Editions page (All ›). Long-press any card
+   for Open · Mark read · Share · Combine · Delete; the page has Unread / Read / All and Select for several at once.
+   `M` carries the actions from the app: isEdRead(a), isPaperRead(p), onMenu(item), onPage(). */
+const edItems=articles=>(articles||[]).filter(a=>a.isVideo&&!a.isEdition&&a.transcript&&String(a.transcript).trim())
+  .map(a=>{const eds=a.editions||{};const latest=Object.keys(eds).reduce((m,k)=>Math.max(m,eds[k].at||0),0);return{a,at:latest||a.transcriptAt||0,ed:eds.orig||eds[Object.keys(eds)[0]]}})
+  .sort((x,y)=>y.at-x.at);
+function ShelfCard({T,onClick,onMenu,children,dim}){
+  const lp=useLongPress(onMenu);
+  return h('button',Object.assign({},lp,{onClick:e=>{if(lp.firedRef.current.fired){lp.firedRef.current.fired=false;return}onClick(e)},className:'act98',
+    style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:12,padding:'10px 12px 12px',border:'1px solid '+T.hair,opacity:dim?.6:1,WebkitTouchCallout:'none',userSelect:'none',position:'relative'}}),children);
+}
+function EditionsShelf({T,articles,onOpen,papers,onOpenPaper,onCombine,M}){
+  M=M||{};const isEdRead=M.isEdRead||(()=>false),isPaperRead=M.isPaperRead||(()=>false);
+  const all=edItems(articles);const list=all.filter(x=>!isEdRead(x.a)).slice(0,20);
+  const ps=(papers||[]).filter(p=>!isPaperRead(p));
+  const readN=all.length-all.filter(x=>!isEdRead(x.a)).length+((papers||[]).length-ps.length);
+  if(!all.length&&!(papers&&papers.length))return null;
   const SERIF="'Playfair Display'"+INDIC;
+  const menuBtn=item=>h('span',{role:'button','aria-label':'More',onClick:e=>{e.stopPropagation();M.onMenu&&M.onMenu(item)},style:{position:'absolute',right:6,top:6,width:26,height:26,borderRadius:13,display:'flex',alignItems:'center',justifyContent:'center',color:T.sub}},Icons.dots(15));
   return h('div',{style:{padding:'14px 0 4px'}},
-    h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'0 16px 10px'}},
+    h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',padding:'0 16px 10px',gap:10}},
       h('div',{style:{fontSize:19,fontWeight:700,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Editions'),
-      h('div',{style:{display:'flex',alignItems:'center',gap:10}},
-        h('div',{style:{fontSize:12,color:T.sub}},((papers||[]).length?papers.length+' paper'+(papers.length>1?'s':'')+' · ':'')+list.length+' edition'+(list.length===1?'':'s')),
-        onCombine&&((papers||[]).length||list.length>1)?h('button',{onClick:onCombine,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'Combine'):null)),
-    h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
-      PapersShelfCards({T,papers,onOpen:onOpenPaper}),
-      list.map(({a,ed})=>h('button',{key:a.id,onClick:()=>onOpen(a.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px 12px',border:'1px solid '+T.hair}},
-        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+        h('div',{style:{fontSize:12,color:T.sub}},(ps.length+list.length)?(ps.length+list.length)+' unread':'All read'),
+        onCombine&&(all.length>1)?h('button',{onClick:onCombine,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'Combine'):null,
+        M.onPage?h('button',{onClick:M.onPage,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'All ›'):null)),
+    (ps.length||list.length)?h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
+      ps.slice(0,10).map(p=>h(ShelfCard,{key:'p'+p.id,T,onClick:()=>onOpenPaper(p.id),onMenu:()=>M.onMenu&&M.onMenu({type:'paper',id:p.id})},
+        menuBtn({type:'paper',id:p.id}),
+        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7,marginRight:18}},paperMast(p)),
+        h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(p.label||new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))+' · '+p.stories.length+' stories'),
+        h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||''))),
+      list.map(({a,ed})=>h(ShelfCard,{key:a.id,T,onClick:()=>onOpen(a.id),onMenu:()=>M.onMenu&&M.onMenu({type:'ed',id:a.id})},
+        menuBtn({type:'ed',id:a.id}),
+        h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7,marginRight:18}},'The Daily Transcript'),
         h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:15,lineHeight:1.2,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(ed&&ed.headline)||a.title),
-        h('div',{style:{fontSize:11,color:T.sub,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out'))))));
+        h('div',{style:{fontSize:11,color:T.sub,marginTop:6,fontFamily:"'Inter',system-ui",overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(a.author||a.source||'')+(ed?'':' · tap to lay out')))))
+    :h('button',{onClick:M.onPage,className:'act98',style:{margin:'0 16px',width:'calc(100% - 32px)',textAlign:'left',padding:'14px 16px',borderRadius:12,background:T.card,color:T.sub,fontSize:14}},'You’re all caught up'+(readN?' · '+readN+' read':'')+'. ',h('span',{style:{color:T.accent,fontWeight:650}},'See all ›')));
 }
 
+/* Long-press / ⋯ menu for one edition or paper */
+function EditionMenu({T,item,title,read,canDelete,onClose,onOpen,onToggleRead,onCombine,onPostToBlogs,onPublish,onDelete}){
+  const row=(icon,label,sub,fn,danger)=>h('button',{onClick:()=>{onClose();fn()},className:'act98',style:{display:'flex',alignItems:'center',gap:14,width:'100%',textAlign:'left',padding:'13px 20px',color:danger?T.danger:T.fg,borderTop:'1px solid '+T.hair}},
+    h('span',{style:{display:'flex',color:danger?T.danger:T.meta}},icon),h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15.5,fontWeight:550}},label),sub?h('span',{style:{display:'block',fontSize:12,color:T.sub,marginTop:1}},sub):null));
+  return h(Sheet,{T,onClose,title:item.type==='paper'?'Paper':'Edition',z:420},
+    h('div',{style:{padding:'0 20px 10px',fontSize:13.5,color:T.sub,lineHeight:1.4}},title),
+    row(Icons.newspaper(20),'Open',null,onOpen),
+    row(Icons.check(20),read?'Mark as unread':'Mark as read',read?'Back on the Home shelf':'Moves to Editions → Read',onToggleRead),
+    onCombine?row(Icons.plus(20),'Combine with others…','Make one paper with other editions',onCombine):null,
+    row(Icons.rss(20),'Post to my Blogs','Blogs → Saved posts · My papers',onPostToBlogs),
+    row(Icons.globe(20),'Publish as a public web page','On your free GitHub site',onPublish),
+    canDelete?row(Icons.trash(20),'Delete',item.type==='paper'?'Its stories stay as editions':'Removes the edition, transcript, translations and its highlights. The video stays.',onDelete,true):null,
+    h('div',{style:{height:'calc(8px + env(safe-area-inset-bottom))'}}));
+}
+
+/* All editions and papers: Unread / Read / All, Select for several at once */
+function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
+  const [tab,setTab]=useState('unread');const [sel,setSel]=useState(null);const [q,setQ]=useState('');
+  const eds=edItems(articles),ps=papers||[];
+  const inTab=read=>tab==='all'||(tab==='read'?read:!read);
+  const match=t=>!q.trim()||String(t||'').toLowerCase().includes(q.trim().toLowerCase());
+  const rowsP=ps.filter(p=>inTab(M.isPaperRead(p))&&match((p.label||'')+' '+p.stories.map(x=>x.headline).join(' ')));
+  const rowsE=eds.filter(x=>inTab(M.isEdRead(x.a))&&match(((x.ed&&x.ed.headline)||'')+' '+x.a.title+' '+(x.a.author||'')));
+  const count=read=>ps.filter(p=>!!M.isPaperRead(p)===read).length+eds.filter(x=>!!M.isEdRead(x.a)===read).length;
+  const key=it=>it.type+':'+it.id;
+  const flip=it=>setSel(s=>{const n=new Set(s||[]);n.has(key(it))?n.delete(key(it)):n.add(key(it));return n});
+  const chosen=[...(sel||[])].map(k=>{const i=k.indexOf(':');return{type:k.slice(0,i),id:k.slice(i+1)}});
+  const chosenEd=chosen.filter(x=>x.type==='ed').map(x=>x.id),chosenP=chosen.filter(x=>x.type==='paper').map(x=>x.id);
+  const done=()=>setSel(null);
+  const row=(it,title,meta,img,read,onTap)=>{const on=!!(sel&&sel.has(key(it)));
+    return h('div',{key:key(it),role:'button',onClick:()=>sel?flip(it):onTap(),className:'act98',style:{display:'flex',alignItems:'center',gap:12,padding:'10px 4px',borderBottom:'1px solid '+T.hair,cursor:'pointer',background:on?hexA(T.accent,.08):'transparent'}},
+      sel?h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(on?T.accent:T.hair),background:on?T.accent:'transparent',color:'#fff'}},on?Icons.check(13):null):null,
+      img?h('img',{src:img,alt:'',loading:'lazy',style:{width:84,height:48,objectFit:'cover',borderRadius:7,flexShrink:0,opacity:read?.6:1}})
+        :h('span',{style:{width:84,height:48,borderRadius:7,flexShrink:0,background:T.card,display:'flex',alignItems:'center',justifyContent:'center',color:T.accent}},Icons.newspaper(20)),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:14.5,fontWeight:read?500:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',color:read?T.meta:T.fg}},title),
+        h('div',{style:{fontSize:12,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(read?'✓ Read · ':'')+meta)),
+      sel?null:h('button',{onClick:e=>{e.stopPropagation();M.onMenu(it)},'aria-label':'More',className:'act90',style:{display:'flex',color:T.sub,padding:6,flexShrink:0}},Icons.dots(18)));
+  };
+  const head=t=>h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'16px 4px 4px'}},t);
+  const bar=(label,fn,danger,dis)=>h('button',{onClick:fn,disabled:dis,className:'act95',style:{flex:1,minWidth:0,padding:'10px 4px',borderRadius:11,fontSize:13,fontWeight:650,background:T.card,color:danger?T.danger:T.fg,opacity:dis?.4:1}},label);
+  return ReactDOM.createPortal(h('div',{style:{position:'fixed',inset:0,zIndex:390,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'calc(8px + env(safe-area-inset-top)) 12px 6px'}},
+      h('button',{onClick:onClose,'aria-label':'Close',className:'act90',style:{display:'flex',color:T.fg,padding:6}},Icons.x(21)),
+      h('div',{style:{flex:1,fontSize:20,fontWeight:750,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Editions'),
+      h('button',{onClick:()=>sel?done():setSel(new Set()),className:'act95',style:{fontSize:14.5,fontWeight:650,color:T.accent,padding:'6px 10px',borderRadius:14,background:sel?hexA(T.accent,.12):'transparent'}},sel?'Done':'Select')),
+    h('div',{style:{display:'flex',gap:4,margin:'2px 16px 8px',padding:3,borderRadius:11,background:T.card}},[['unread','Unread',count(false)],['read','Read',count(true)],['all','All',ps.length+eds.length]].map(([k,l,n])=>
+      h('button',{key:k,onClick:()=>{setTab(k);setSel(sel?new Set():null)},className:'act95',style:{flex:1,padding:'8px 4px',borderRadius:9,fontSize:13.5,fontWeight:650,background:tab===k?T.bg:'transparent',color:T.fg,boxShadow:tab===k?'0 1px 3px rgba(0,0,0,.12)':'none'}},l+' · '+n))),
+    h('div',{style:{padding:'0 16px 4px'}},h('input',{value:q,onChange:e=>setQ(e.target.value),placeholder:'Search editions',style:{width:'100%',boxSizing:'border-box',padding:'9px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16}})),
+    h('div',{style:{flex:1,overflowY:'auto',padding:'0 12px 20px'}},
+      rowsP.length?head('Papers'):null,
+      rowsP.map(p=>row({type:'paper',id:p.id},(p.label||'Paper')+' — '+p.stories.map(x=>x.headline).slice(0,2).join(' · '),paperMast(p)+' · '+p.stories.length+' stories · '+new Date(p.at).toLocaleDateString([],{day:'numeric',month:'short'}),
+        (p.stories.find(x=>x.videoId)||{}).videoId?ytThumb(p.stories.find(x=>x.videoId).videoId):'',M.isPaperRead(p),()=>onOpenPaper(p.id))),
+      rowsE.length?head('Editions'):null,
+      rowsE.map(({a,ed,at})=>row({type:'ed',id:a.id},(ed&&ed.headline)||a.title,(a.author||'')+' · '+new Date(at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+(ed?'':' · not laid out yet'),
+        a.videoId?ytThumb(a.videoId):'',M.isEdRead(a),()=>onOpen(a.id))),
+      !rowsP.length&&!rowsE.length?h('div',{style:{padding:'50px 20px',textAlign:'center',color:T.sub,fontSize:14.5,lineHeight:1.6}},q?'Nothing matches “'+q.trim()+'”.':tab==='unread'?'All caught up. Read editions are in the Read tab.':tab==='read'?'Nothing read yet. Finish an edition (or Mark as read) and it moves here.':'No editions yet. Transcribe a video and it becomes one.'):null),
+    sel?h('div',{style:{display:'flex',gap:6,padding:'8px 12px calc(8px + env(safe-area-inset-bottom))',borderTop:'1px solid '+T.hair,background:T.bg}},
+      bar('Read',()=>{M.markEd(chosenEd,true);M.markPaper(chosenP,true);done()},false,!chosen.length),
+      bar('Unread',()=>{M.markEd(chosenEd,false);M.markPaper(chosenP,false);done()},false,!chosen.length),
+      bar('Combine',()=>{M.combine(chosenEd);done()},false,chosenEd.length<1),
+      bar('To Blogs',()=>{M.postEdsToBlogs(chosenEd);done()},false,chosenEd.length<1),
+      bar('Delete',()=>{if(window.confirm('Delete '+chosen.length+(chosen.length===1?' item':' items')+'? Editions lose their transcript; the videos stay.')){M.delEd(chosenEd);M.delPaper(chosenP);done()}},true,!chosen.length)):null),document.body);
+}
 
 /* ============================== the daily paper ==============================
    You tick today's videos; each ticked video needs a transcript (Get opens youtubetotranscript for
@@ -689,7 +777,8 @@ function paperHtml(paper,articles,prefs,withFull){
     '<style>'+editionCss(th,font,prefs.size||18,prefs.cols||1)+'.toc{border:1px solid '+th[4]+';padding:12px 14px;margin:0 0 20px}.tc{margin:8px 0}.tch{font:700 11px Inter,system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;opacity:.6;margin-bottom:4px}.toc a{display:flex;gap:8px;color:inherit;text-decoration:none;padding:3px 0;font-weight:600}.toc a span{opacity:.5;min-width:18px}.story{border-top:3px double '+th[3]+';padding-top:14px;margin-top:22px;break-inside:avoid-page}.story h2{font-size:'+Math.round((prefs.size||18)*1.5)+'px;border:0;padding:0;margin:4px 0 8px;font-weight:900}details{margin-top:10px}summary{font:600 13px Inter,system-ui,sans-serif;cursor:pointer;opacity:.75}@media print{details{display:none}}</style></head><body><article class="paper">'+
     '<header class="mast"><div class="dl"><span>'+esc(dateLine(paper.at))+'</span><span>Made '+esc(timeOf(paper.at))+' · '+paper.stories.length+' stories</span></div><div class="mt">The Daily Transcript</div><div class="rule"></div></header>'+toc+body+'<div class="end">— End of today’s paper —</div></article></body></html>';
 }
-function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,onSaveToLibrary,onPostToBlogs,onPublish}){
+function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,onSaveToLibrary,onPostToBlogs,onPublish,onFinished}){
+  const finRef=useRef(false);
   const [prefs,setPrefs]=useState(loadPrefs);const [panel,setPanel]=useState(null);const [prog,setProg]=useState(0);const [open,setOpen]=useState({});
   const scRef=useRef(null);
   const setP=p=>setPrefs(x=>{const n=Object.assign({},x,p);try{localStorage.setItem(PREF_KEY,JSON.stringify(n))}catch(e){}return n});
@@ -697,7 +786,8 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
   const byId=id=>(articles||[]).find(x=>x.id===id);
   const chans=[];paper.stories.forEach((s,i)=>{let c=chans.find(x=>x.name===s.channel);if(!c){c={name:s.channel,items:[]};chans.push(c)}c.items.push(i)});
   const jump=i=>{const el=scRef.current&&scRef.current.querySelector('#ps'+i);if(el)el.scrollIntoView({behavior:'smooth',block:'start'});setPanel(null)};
-  const onScroll=()=>{const el=scRef.current;if(!el)return;const m=el.scrollHeight-el.clientHeight;setProg(m>0?Math.min(1,el.scrollTop/m):1)};
+  const onScroll=()=>{const el=scRef.current;if(!el)return;const m=el.scrollHeight-el.clientHeight;setProg(m>0?Math.min(1,el.scrollTop/m):1);
+    if(m>200&&el.scrollTop/m>=.97&&!finRef.current&&onFinished){finRef.current=true;onFinished()}};
   const words=paper.stories.reduce((n,s)=>n+String(s.story||'').split(/\s+/).length,0);
   const chip=(on,label,onClick)=>h('button',{key:label,onClick,className:'act95',style:{flexShrink:0,padding:'7px 12px',borderRadius:16,fontSize:13,fontWeight:600,background:on?ink:'transparent',color:on?bg:ink,border:'1px solid '+(on?ink:rule)}},label);
   const sheet=(title,children)=>h('div',{style:{position:'absolute',inset:0,zIndex:5}},
@@ -804,9 +894,9 @@ function papersFromEditions(articles){
   return out.sort((x,y)=>(x.kind==='week')-(y.kind==='week')||y.at-x.at);
 }
 /* Combine: tick any transcribed videos and make one paper of them (kept in your papers) */
-function CombinePicker({T,articles,onMake,onClose}){
+function CombinePicker({T,articles,onMake,onClose,preselect}){
   const list=txArticles(articles).map(a=>({a,at:storyAt(a)})).sort((x,y)=>y.at-x.at).slice(0,60);
-  const [sel,setSel]=useState(()=>new Set());const [title,setTitle]=useState('');
+  const [sel,setSel]=useState(()=>new Set(preselect||[]));const [title,setTitle]=useState('');
   const tick=id=>setSel(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n});
   const chosen=list.filter(x=>sel.has(x.a.id));
   return ReactDOM.createPortal(h('div',{style:{position:'fixed',inset:0,zIndex:400,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
@@ -839,5 +929,5 @@ function PapersShelfCards({T,papers,onOpen}){
     h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(p.label||new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))+' · '+p.stories.length+' stories'),
     h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||'')));
 }
-window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml,paperStoriesHtml,papersFromEditions,CombinePicker,storyFromArticle};
+window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml,paperStoriesHtml,papersFromEditions,CombinePicker,storyFromArticle,EditionsPage,EditionMenu};
 })();
