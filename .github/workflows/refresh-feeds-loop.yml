@@ -124,9 +124,11 @@ jobs:
           # Apply "sources" issues opened by the repo owner (the app's "Update sources on GitHub" button):
           # write routine-sources.json, commit it to main, answer and close the issue.
           apply_issues() {
+            # (--author already limits this to issues you opened; gh has no authorAssociation field, and asking
+            #  for it made this list fail silently, so issues were never applied)
             gh issue list --repo "$GITHUB_REPOSITORY" --state open --author "$GITHUB_REPOSITORY_OWNER" --limit 20 \
-                --json number,title,authorAssociation \
-                --jq '[.[] | select(.authorAssociation == "OWNER") | select(.title | ascii_downcase | startswith("sources"))] | sort_by(.number) | .[].number' |
+                --json number,title \
+                --jq '[.[] | select(.title | ascii_downcase | startswith("sources"))] | sort_by(.number) | .[].number' |
             while read -r n; do
               gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/issue.txt"
               if why=$(node scripts/apply-sources.mjs "$RUNNER_TEMP/issue.txt" routine-sources.json 2>&1); then
