@@ -304,9 +304,10 @@ async function ghApi(S,path,init){
     res=await fetchWithTimeout('https://api.github.com/repos/'+owner+'/'+repo+path,Object.assign({},init,{headers:Object.assign({Authorization:'Bearer '+S.ghToken,Accept:'application/vnd.github+json','X-GitHub-Api-Version':'2022-11-28'},init&&init.headers)}),25000);
   }catch(e){throw new Error('Couldn\'t reach GitHub — check your connection.')}
   if(res.status===401)throw new Error('GitHub token is invalid or expired — update it in Settings → AI → Video transcripts.');
-  if(res.status===403)throw new Error('GitHub token can\'t run workflows here. It needs access to '+owner+'/'+repo+' with "Actions: Read and write".');
-  if(res.status===404)throw new Error('GitHub can\'t find the "Transcribe video" workflow in '+owner+'/'+repo+'. Make sure it is on the default branch and the token can see this repo.');
-  if(!res.ok){let m='GitHub error '+res.status;try{const j=await res.json();if(j.message)m+=': '+j.message}catch(e){}const err=new Error(m);err.status=res.status;throw err}
+  const fail=m=>{const err=new Error(m);err.status=res.status;return err};
+  if(res.status===403)throw fail('GitHub token can\'t run workflows here. It needs access to '+owner+'/'+repo+' with "Actions: Read and write".');
+  if(res.status===404)throw fail('GitHub can\'t find the "'+((init&&init.wfName)||'Transcribe video')+'" workflow in '+owner+'/'+repo+'. Make sure it is on the default branch and the token can see this repo.');
+  if(!res.ok){let m='GitHub error '+res.status;try{const j=await res.json();if(j.message)m+=': '+j.message}catch(e){}throw fail(m)}
   return res;
 }
 let ghDefaultBranch='';
@@ -951,8 +952,99 @@ function sourcesIssueUrl(brief,withBody){
   const{owner,repo}=repoSlug(),u='https://github.com/'+owner+'/'+repo+'/issues/new?title='+encodeURIComponent('sources: update');
   return withBody?u+'&body='+encodeURIComponent('```json\n'+sourcesCompact(brief)+'\n```'):u;
 }
+/* ---------- sources sync ----------
+   With a GitHub token (the same one transcripts use, "Actions: Read and write") the app sends your
+   sources straight to the feed job: it starts the "Refresh feeds (every 15 min)" workflow with them as
+   input, which writes routine-sources.json and rebuilds the feeds at once. No GitHub page, no issue.
+   It runs by itself a few seconds after accounts, links or sources change. */
+let GH_TOKEN_NOW=''; // App keeps this current
+const LOOP_WF='refresh-feeds-loop.yml',SYNC_KEY='insta_sources_sync_v1';
+const syncStore={
+  st:(()=>{try{return JSON.parse(localStorage.getItem(SYNC_KEY)||'null')||{}}catch(e){return{}}})(),subs:new Set(),
+  set(p){this.st=Object.assign({},this.st,p);try{localStorage.setItem(SYNC_KEY,JSON.stringify(this.st))}catch(e){}this.subs.forEach(f=>f())}
+};
+function useSourcesSync(){const [,f]=useState(0);useEffect(()=>{const g=()=>f(x=>x+1);syncStore.subs.add(g);return()=>syncStore.subs.delete(g)},[]);return syncStore.st}
+const sourcesSig=brief=>{const t=sourcesCompact(brief);let n=0;for(let i=0;i<t.length;i++)n=(n*31+t.charCodeAt(i))|0;return String(n)};
+const hasSources=brief=>!!(sourceUrlsOf(brief).length||socialAccountsOf(brief).length);
+let syncWatchT=null;
+async function syncSourcesNow(brief){
+  if(!GH_TOKEN_NOW)throw new Error('Add a GitHub token first.');
+  if(!hasSources(brief))throw new Error('Add a YouTube, Telegram, Instagram or X source first.');
+  const body=sourcesCompact(brief),sig=sourcesSig(brief);
+  if(body.length>60000)throw new Error('Too many sources to send in one go. Use “Copy my sources” instead.');
+  syncStore.set({state:'sending',sig,err:'',runUrl:''});
+  const S={ghToken:GH_TOKEN_NOW};
+  const send=ref=>ghApi(S,'/actions/workflows/'+LOOP_WF+'/dispatches',{method:'POST',wfName:'Refresh feeds (every 15 min)',headers:{'Content-Type':'application/json'},body:JSON.stringify({ref,inputs:{sources:body}})});
+  try{
+    try{await send('main')}
+    catch(e){
+      if(e.status===422&&/unexpected input/i.test(e.message))throw new Error('The feed job on GitHub is older than this app. Merge the latest update into main, then tap Sync again.');
+      if(e.status!==422)throw e;
+      if(!ghDefaultBranch){const r=await ghApi(S,'');ghDefaultBranch=(await r.json()).default_branch||'main'}
+      if(ghDefaultBranch==='main')throw e;
+      await send(ghDefaultBranch);
+    }
+    syncStore.set({state:'building',sig,sentSig:sig,sentAt:Date.now(),appliedAt:0,err:'',runUrl:'',social:socialAccountsOf(brief).length>0});
+    watchSync();
+  }catch(e){syncStore.set({state:'error',sig,err:String(e&&e.message||e)});throw e}
+}
+/* follow the run: rejected (its apply step failed) or live (the feed was rebuilt after the apply step finished) */
+function watchSync(){
+  clearTimeout(syncWatchT);
+  const tick=async()=>{
+    const st=syncStore.st;if(st.state!=='building')return;
+    const age=Date.now()-(st.sentAt||0);
+    let after=st.appliedAt||0;
+    if(GH_TOKEN_NOW)try{
+      const r=await ghApi({ghToken:GH_TOKEN_NOW},'/actions/workflows/'+LOOP_WF+'/runs?event=workflow_dispatch&per_page=5',{wfName:'Refresh feeds (every 15 min)'});
+      const run=((await r.json()).workflow_runs||[]).find(x=>Date.parse(x.created_at)>=st.sentAt-90000);
+      if(run){
+        const jr=await ghApi({ghToken:GH_TOKEN_NOW},'/actions/runs/'+run.id+'/jobs',{});
+        const steps=(((await jr.json()).jobs||[])[0]||{}).steps||[];
+        const ap=steps.find(x=>/apply sources/i.test(x.name));
+        if(ap&&ap.conclusion==='failure'){syncStore.set({state:'error',err:'GitHub couldn’t apply your sources. Open the job log to see why.',runUrl:run.html_url});return}
+        if(run.status==='completed'&&run.conclusion!=='success'&&run.conclusion!=='cancelled'){syncStore.set({state:'error',err:'The feed job stopped ('+run.conclusion+').',runUrl:run.html_url});return}
+        if(ap&&ap.conclusion==='success'&&ap.completed_at)after=Date.parse(ap.completed_at);
+        syncStore.set({runUrl:run.html_url,appliedAt:after});
+      }
+    }catch(e){}
+    if(after){
+      try{
+        const r=await fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000);
+        if(r.ok){const j=await r.json();if(j&&j.builtAt>=after){syncStore.set({state:'live',liveAt:j.builtAt,okN:(j.accounts||[]).filter(a=>a.status==='ok').length,allN:(j.accounts||[]).length});return}}
+      }catch(e){}
+      if(!st.social)try{const snap=await fetchFeedsSnapshot(true);if(snap&&+snap.at>=after){syncStore.set({state:'live',liveAt:+snap.at,okN:0,allN:0});return}}catch(e){}
+    }
+    if(age>12*60000){syncStore.set({state:'sent'});return} // applied, but nothing new published yet: stop asking
+    syncWatchT=setTimeout(tick,age<120000?12000:30000);
+  };
+  syncWatchT=setTimeout(tick,15000);
+}
+if(syncStore.st.state==='building'||syncStore.st.state==='sending'){
+  if(Date.now()-(syncStore.st.sentAt||0)<12*60000){syncStore.st.state='building';setTimeout(watchSync,3000)}else syncStore.st.state='sent';
+}
+/* App: send automatically a few seconds after the list changes (only with a token; a failed send waits for a tap) */
+function useSourcesAutoSync(brief,token){
+  const sig=sourcesSig(brief);
+  useEffect(()=>{
+    if(!token||!hasSources(brief))return;
+    const st=syncStore.st;
+    if(st.sentSig===sig||st.state==='sending'||(st.state==='error'&&st.sig===sig))return;
+    const t=setTimeout(()=>{syncSourcesNow(brief).catch(()=>{})},6000);
+    return()=>clearTimeout(t);
+  },[sig,token]);
+}
+const syncLabel=st=>st.state==='sending'?'Sending to GitHub…':st.state==='building'?'Sent ✓ Building your feed (about 1–2 minutes)…'
+  :st.state==='live'?'Live ✓ Feed rebuilt '+fmtAgo(st.liveAt)+(st.allN?' · '+st.okN+' of '+st.allN+' accounts working':'')
+  :st.state==='sent'?'Sent ✓ '+fmtAgo(st.sentAt)+'. The feed updates on its next pass.'
+  :st.state==='error'?st.err:'';
 function setupServerRefresh(brief,toastFn){
-  if(!sourceUrlsOf(brief).length&&!socialAccountsOf(brief).length){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
+  if(!hasSources(brief)){toastFn&&toastFn('Add a YouTube, Telegram or RSS source first');return}
+  if(GH_TOKEN_NOW){
+    toastFn&&toastFn('Sending your sources to GitHub…');
+    syncSourcesNow(brief).then(()=>toastFn&&toastFn('Sent ✓ Your feed rebuilds in about 2 minutes'),e=>toastFn&&toastFn(String(e&&e.message||e)));
+    return;
+  }
   const full=sourcesIssueUrl(brief,true),inline=full.length<=7000; // longer lists don't fit in a link: copy them instead
   if(!inline){copyText('```json\n'+sourcesCompact(brief)+'\n```');toastFn&&toastFn('Sources copied. Paste them into the box, then press “Submit new issue”')}
   else toastFn&&toastFn('On GitHub press “Submit new issue”. It applies within 15 minutes.');
@@ -5070,7 +5162,7 @@ const SRC_ICON={
 function srcOf(it){
   if(!it)return'web';
   if(it.kind==='youtube'||/(^|\/\/|\.)(youtube\.com|youtu\.be)/i.test(String(it.url||'')))return'youtube';
-  const p=window.InstaSocial&&window.InstaSocial.platformOf(it);return p||'web';
+  const R=window.InstaRoutine,p=R&&R.platformOf(it);return p||'web';
 }
 /* Groups: YouTube and Web share brief.groups without a platform; every social platform
    (Instagram, X, Telegram, Threads, Reddit, Bluesky, Mastodon…) has its own groups, marked g.platform. */
@@ -5340,7 +5432,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   /* ---- Today: the watch-first screen ---- */
   const setView=v=>{setViewS(v);try{localStorage.setItem('insta_routine_view',v)}catch(e){}};
   const [todayTab,setTodayTab]=useState('all'); // 'all' | group id | '_other' | 'earlier'
-  const SOC=window.InstaSocial;
+  const SOC=window.InstaRoutine;
   const [todayMax,setTodayMax]=useState(false);
   const [todayMenu,setTodayMenu]=useState(false);
   const [playlist,setPlaylist]=useState(null); // posts snapshot
@@ -7748,37 +7840,165 @@ function Browser({T,sites,onSites,folders,onFolders,history,onHistory,vault,onCh
 /* ============================== settings ============================== */
 /* Settings → Behavior → My social RSS feed: the links the server job publishes (all accounts, and one
    per platform) to open in any RSS reader, plus which accounts still need an RSS.app link. */
-/* a feed link made on RSS.app / FetchRSS (or any .xml/.rss link) */
-const RSS_PEND_KEY='insta_rssapp_pending_v2';
-const readPend=()=>{try{const v=JSON.parse(localStorage.getItem(RSS_PEND_KEY)||'null');return v&&v.id&&Date.now()-v.at<3600000?v:null}catch(e){return null}};
-const writePend=id=>{try{id?localStorage.setItem(RSS_PEND_KEY,JSON.stringify({id,at:Date.now(),opened:false})):localStorage.removeItem(RSS_PEND_KEY)}catch(e){}};
-const isMadeFeedLink=u=>/^https?:\/\//i.test(u)&&(/\/\/(www\.)?(rss\.app|fetchrss\.com)\//i.test(u)||/\.(xml|rss)(\?|$)/i.test(u));
+/* a feed link made on RSS.app / FetchRSS / RSSHub (or any link that looks like a feed) */
+const isMadeFeedLink=u=>/^https?:\/\/\S+$/i.test(u)&&!/\/\/(www\.)?(instagram\.com|x\.com|twitter\.com|threads\.net)\//i.test(u)
+  &&(/\/\/(www\.)?(rss\.app|fetchrss\.com|rsshub\.app|politepol\.com|feeds\.feedburner\.com)\//i.test(u)||/\.(xml|rss|atom)(\?|$)|\/(feed|rss|atom)(\/|\?|$)/i.test(u));
+const isProfileLink=u=>/\/\/(www\.)?(instagram\.com|x\.com|twitter\.com|threads\.net)\//i.test(u||'');
+const IS_IOS=(()=>{try{return/iP(hone|od|ad)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)}catch(e){return false}})();
+const RSSAPP_NEW='https://rss.app/new-rss-feed';
+
+/* ---------- Connect Instagram / X accounts to RSS.app ----------
+   One guided flow, opened from Settings → Social RSS feed and from My Routine. It walks the accounts one
+   by one: open RSS.app (the profile link is already copied) → Generate → Copy → back here → Paste.
+   It survives iPhone closing the app while you are in Safari: reopening the app reopens it where you were. */
+const FC_KEY='insta_feed_connect_v1';
+const fcStore={
+  st:(()=>{try{const v=JSON.parse(localStorage.getItem(FC_KEY)||'null');return v&&Array.isArray(v.ids)&&Date.now()-v.at<3600000?v:null}catch(e){return null}})(),
+  subs:new Set(),
+  save(v){this.st=v;try{v?localStorage.setItem(FC_KEY,JSON.stringify(v)):localStorage.removeItem(FC_KEY)}catch(e){}this.subs.forEach(f=>f())},
+  open(ids,startId){ids=(ids||[]).filter(Boolean);if(!ids.length)return;const i=Math.max(0,startId?ids.indexOf(startId):0);this.save({ids,i,opened:'',at:Date.now(),done:[],skipped:[]})},
+  patch(p){if(this.st)this.save(Object.assign({},this.st,p,{at:Date.now()}))},
+  close(){this.save(null)}
+};
+window.openFeedConnect=(ids,startId)=>fcStore.open(ids,startId);
+function useFeedConnect(){const [,f]=useState(0);useEffect(()=>{const g=()=>f(x=>x+1);fcStore.subs.add(g);return()=>fcStore.subs.delete(g)},[]);return fcStore.st}
+const PLAT_NAME={instagram:'Instagram',x:'X',threads:'Threads',telegram:'Telegram',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
+/* accounts that still need a link made on a feed service (Telegram, Bluesky … have free feeds) */
+const needsMadeFeed=a=>a.platform!=='telegram'&&!a.feed;
+
+function FeedConnect({T,brief,update,toastFn}){
+  const st=useFeedConnect();
+  const all=socialAccountsOf(brief);
+  const accts=st?st.ids.map(id=>all.find(a=>a.id===id)).filter(Boolean):[];
+  const i=st?Math.min(st.i,Math.max(0,accts.length-1)):0;
+  const cur=accts[i];
+  const [val,setVal]=useState(''),[err,setErr]=useState(''),[back,setBack]=useState(false),[verify,setVerify]=useState({});
+  const [finished,setFinished]=useState(false),[just,setJust]=useState('');
+  const inputRef=useRef(null),nextRef=useRef(null);
+  /* a link just went in: show the tick for a moment, then move on to the next account by itself */
+  useEffect(()=>{if(!just)return;const t=setTimeout(()=>{setJust('');nextRef.current&&nextRef.current()},1300);return()=>clearTimeout(t)},[just]);
+  useEffect(()=>{setVal('');setErr('');setBack(false)},[cur&&cur.id]);
+  /* coming back from RSS.app: light up Paste. Off iPhone the clipboard can be read quietly, so try that first. */
+  useEffect(()=>{
+    if(!st||!cur||st.opened!==cur.id)return;
+    const onVis=()=>{if(document.visibilityState!=='visible')return;setBack(true);
+      if(!IS_IOS&&navigator.clipboard&&navigator.permissions)navigator.permissions.query({name:'clipboard-read'}).then(p=>{if(p.state==='granted')pasteNow(true)},()=>{})};
+    if(document.visibilityState==='visible'&&Date.now()-st.at>1500)setBack(true);
+    document.addEventListener('visibilitychange',onVis);window.addEventListener('focus',onVis);
+    return()=>{document.removeEventListener('visibilitychange',onVis);window.removeEventListener('focus',onVis)};
+  },[st&&st.opened,cur&&cur.id]);
+  if(!st)return null;
+  if(!accts.length){setTimeout(()=>fcStore.close(),0);return null}
+  const close=()=>{fcStore.close();setFinished(false)};
+  const doneIds=st.done||[],skipped=st.skipped||[];
+  const isLinked=a=>!!a.feed||doneIds.includes(a.id);
+  const goNext=()=>{
+    const nextI=accts.findIndex((a,k)=>k>i&&!isLinked(a));
+    const wrapI=nextI>=0?nextI:accts.findIndex(a=>!isLinked(a)&&a.id!==cur.id&&!skipped.includes(a.id));
+    if(wrapI>=0)fcStore.patch({i:wrapI,opened:''});else setFinished(true);
+  };
+  nextRef.current=goNext;
+  const openRssApp=()=>{
+    copyText(cur.profile||'');
+    fcStore.patch({opened:cur.id});setBack(false);setErr('');
+    openExternalUrl(RSSAPP_NEW);
+  };
+  const attach=url=>{
+    const id=cur.id;
+    update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===id?{...x,kind:'rss',feedUrl:url}:x)}}));
+    fcStore.patch({done:doneIds.concat(id),skipped:skipped.filter(x=>x!==id),opened:''});
+    setVerify(v=>({...v,[id]:{state:'checking'}}));
+    /* check the link really returns posts, and keep them so My Routine shows them right away */
+    const it=((brief.items||[]).find(x=>x.id===id))||{id};
+    fetchFeed({...it,kind:'rss',feedUrl:url}).then(es=>{
+      if(es&&es.length)update(d=>({...d,brief:{...d.brief,feeds:{...(d.brief.feeds||{}),[id]:{fetchedAt:Date.now(),entries:es}}}}));
+      setVerify(v=>({...v,[id]:{state:es&&es.length?'ok':'empty',n:es?es.length:0}}));
+    },()=>setVerify(v=>({...v,[id]:{state:'empty',n:0}})));
+    if(navigator.vibrate)try{navigator.vibrate(12)}catch(e){}
+    setJust(id);
+  };
+  const tryValue=(raw,quiet)=>{
+    const u=extractFirstUrl(raw||'')||String(raw||'').trim();
+    if(!u){if(!quiet)setErr('Nothing to paste yet. In RSS.app, tap Copy next to the feed link first.');return false}
+    if(isProfileLink(u)){if(!quiet)setErr('That’s the profile link. In RSS.app, tap Generate, then copy the new feed link it shows (it starts with rss.app/feeds/).');return false}
+    if(!isMadeFeedLink(u)){if(!quiet)setErr('That doesn’t look like a feed link. Copy the link RSS.app shows after Generate (it starts with rss.app/feeds/).');return false}
+    setErr('');setVal('');attach(u);return true;
+  };
+  async function pasteNow(quiet){
+    let t=null;try{t=await navigator.clipboard.readText()}catch(e){}
+    if(t==null){if(!quiet){setErr('');inputRef.current&&inputRef.current.focus()}return}
+    tryValue(t,quiet);
+  }
+  const linkedN=accts.filter(isLinked).length;
+  const ver=cur&&verify[cur.id];
+  const stepS=(on,doneS)=>({display:'flex',gap:12,alignItems:'flex-start',padding:'10px 0',opacity:on?1:.45,transition:'opacity 220ms'});
+  const num=(n,doneS)=>h('span',{style:{width:24,height:24,borderRadius:12,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12.5,fontWeight:700,
+    background:doneS?'#2f9e44':T.fg,color:doneS?'#fff':T.bg,transition:'background 220ms'}},doneS?'✓':n);
+  const title=finished?'All set':'Connect '+(accts.length===1?(PLAT_NAME[accts[0].platform]||'account'):'accounts');
+  const body=finished?h('div',{style:{padding:'4px 20px 20px'}},
+      h('div',{className:'fc-pop',style:{width:64,height:64,borderRadius:32,background:'#2f9e44',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,margin:'8px auto 12px'}},'✓'),
+      h('div',{style:{textAlign:'center',fontSize:17,fontWeight:700}},linkedN+' of '+accts.length+(accts.length===1?' account':' accounts')+' connected'),
+      h('div',{style:{textAlign:'center',fontSize:13.5,color:T.sub,lineHeight:1.5,margin:'8px 0 16px'}},
+        GH_TOKEN_NOW?'Your sources go to GitHub by themselves in a few seconds. The feed rebuilds in about 2 minutes.':'Last step: send your sources to the server so it starts building your feed.'),
+      !GH_TOKEN_NOW?h('button',{onClick:()=>{setupServerRefresh(brief,toastFn);close()},className:'act95',style:{width:'100%',padding:13,borderRadius:12,background:T.accent,color:'#fff',fontSize:15,fontWeight:650,marginBottom:8}},'Send to the server'):null,
+      h('button',{onClick:close,className:'act95',style:{width:'100%',padding:13,borderRadius:12,background:GH_TOKEN_NOW?T.fg:T.card,color:GH_TOKEN_NOW?T.bg:T.fg,fontSize:15,fontWeight:650}},'Done'))
+  :h('div',{style:{padding:'0 20px 16px'}},
+    /* progress */
+    accts.length>1?h('div',{style:{marginBottom:12}},
+      h('div',{style:{display:'flex',justifyContent:'space-between',fontSize:12.5,color:T.sub,marginBottom:6}},h('span',null,'Account '+(i+1)+' of '+accts.length),h('span',null,linkedN+' connected')),
+      h('div',{style:{height:4,borderRadius:2,background:T.hair,overflow:'hidden'}},h('div',{style:{height:'100%',width:(linkedN/accts.length*100)+'%',background:'#2f9e44',transition:'width 400ms cubic-bezier(.2,.8,.2,1)'}})),
+      h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',marginTop:10,paddingBottom:2}},accts.map((a,k)=>h('button',{key:a.id,onClick:()=>fcStore.patch({i:k,opened:''}),className:'act95',
+        style:{padding:'6px 11px',borderRadius:14,fontSize:12.5,fontWeight:600,flexShrink:0,background:k===i?T.fg:T.search,color:k===i?T.bg:T.fg}},(isLinked(a)?'✓ ':'')+(a.name||'@'+a.handle).replace(/\s*·.*$/,''))))):null,
+    /* the account */
+    h('div',{key:cur.id,className:'fc-in',style:{display:'flex',alignItems:'center',gap:12,padding:12,borderRadius:12,background:T.card,border:'1px solid '+T.hair}},
+      h('span',{style:{width:40,height:40,borderRadius:20,background:cur.platform==='x'?'#000':'linear-gradient(45deg,#f9a825,#e91e63,#7b1fa2)',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontWeight:700,fontSize:16,flexShrink:0}},
+        ((cur.handle||cur.name||'?').replace(/^@/,'')[0]||'?').toUpperCase()),
+      h('div',{style:{flex:1,minWidth:0}},
+        h('div',{style:{fontSize:15.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'@'+(cur.handle||'').replace(/^@/,'')),
+        h('div',{style:{fontSize:12,color:T.sub}},PLAT_NAME[cur.platform]||'')),
+      isLinked(cur)?h('span',{className:'fc-pop',style:{fontSize:12.5,fontWeight:700,color:'#2f9e44'}},'✓ Connected'):null),
+    isLinked(cur)?h('div',{className:'fc-in',style:{padding:'16px 2px 4px'}},
+        h('div',{style:{fontSize:13.5,color:T.sub,lineHeight:1.5}},
+          !ver?'This account already has a feed link.':ver.state==='checking'?'Checking the feed…':ver.state==='ok'?'✓ The feed works: '+ver.n+' posts.':'Linked. RSS.app may still be preparing posts; they’ll show up on the next refresh.'),
+        h('div',{style:{display:'flex',gap:8,marginTop:14}},
+          h('button',{onClick:()=>{setJust('');goNext()},className:'act95',style:{flex:1,padding:13,borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650}},linkedN===accts.length?'Finish':just===cur.id?'Next account…':'Next account'),
+          h('button',{onClick:()=>{setJust('');fcStore.patch({done:doneIds.filter(x=>x!==cur.id)});update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===cur.id?{...x,kind:'link',feedUrl:''}:x)}}))},className:'act95',
+            style:{padding:'13px 14px',borderRadius:12,background:T.card,color:T.fg,fontSize:14,fontWeight:600}},'Redo')))
+    :h('div',{style:{marginTop:6}},
+      h('div',{style:stepS(true)},num(1,st.opened===cur.id),
+        h('div',{style:{flex:1}},
+          h('div',{style:{fontSize:14.5,fontWeight:600,marginBottom:8}},'Open RSS.app'),
+          h('button',{onClick:openRssApp,className:'act95',style:{width:'100%',padding:12,borderRadius:11,background:st.opened===cur.id?T.card:T.accent,color:st.opened===cur.id?T.fg:'#fff',fontSize:14.5,fontWeight:650,border:st.opened===cur.id?'1px solid '+T.hair:'none'}},
+            st.opened===cur.id?'Open RSS.app again ↗':'Copy profile link & open RSS.app ↗'),
+          h('div',{style:{fontSize:12,color:T.sub,marginTop:6}},'The profile link is copied for you.'))),
+      h('div',{style:stepS(st.opened===cur.id)},num(2),
+        h('div',{style:{flex:1,fontSize:14,lineHeight:1.5}},'In RSS.app, tap the link box, choose ',h('b',null,'Paste'),', then tap ',h('b',null,'Generate'),'.')),
+      h('div',{style:stepS(st.opened===cur.id)},num(3),
+        h('div',{style:{flex:1,fontSize:14,lineHeight:1.5}},'Tap ',h('b',null,'Copy'),' next to the new feed link (it starts with ',h('span',{style:{fontFamily:'ui-monospace,monospace',fontSize:12.5}},'rss.app/feeds/'),'), then come back here.')),
+      h('div',{style:stepS(st.opened===cur.id||!!val)},num(4),
+        h('div',{style:{flex:1,minWidth:0}},
+          h('button',{onClick:()=>pasteNow(false),className:'act95'+(back?' fc-pulse':''),
+            style:{width:'100%',padding:12,borderRadius:11,background:back?T.accent:T.fg,color:back?'#fff':T.bg,fontSize:14.5,fontWeight:650}},'Paste the feed link'),
+          h('input',{ref:inputRef,value:val,placeholder:'…or paste it here',inputMode:'url',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+            onChange:e=>{const v=e.target.value;setVal(v);setErr('');if(/^https?:\/\/\S+$/i.test(v.trim())&&isMadeFeedLink(v.trim()))tryValue(v,false)},
+            onKeyDown:e=>{if(e.key==='Enter')tryValue(val,false)},
+            style:{width:'100%',boxSizing:'border-box',marginTop:8,padding:'11px 12px',borderRadius:10,border:'1px solid '+(err?'#c2410c':T.hair),background:T.search,color:T.fg,fontSize:16}}),
+          IS_IOS&&back?h('div',{style:{fontSize:12,color:T.sub,marginTop:6}},'iPhone asks once: tap the small “Paste” bubble that appears.'):null,
+          err?h('div',{className:'fc-in',style:{fontSize:12.5,color:'#c2410c',marginTop:6,lineHeight:1.45}},err):null))),
+    !isLinked(cur)?h('div',{style:{display:'flex',justifyContent:'space-between',marginTop:8}},
+      h('button',{onClick:()=>{fcStore.patch({skipped:skipped.concat(cur.id)});goNext()},style:{fontSize:14,color:T.sub,padding:'8px 2px'}},accts.length>1?'Skip this one':'Not now'),
+      h('button',{onClick:()=>openExternalUrl(cur.profile),style:{fontSize:14,color:T.accent,padding:'8px 2px'}},'View profile ↗')):null);
+  return h(Sheet,{T,onClose:close,title,z:160,maxH:'92%'},body);
+}
+
+/* Settings → Social RSS feed: the published links, add accounts, connect them, and the server sync */
 function SocialFeedBox({T,brief,update}){
   const [ix,setIx]=useState(null),[err,setErr]=useState(false),[copied,setCopied]=useState('');
-  /* the account whose RSS.app link is being made, and a one-line status */
-  const [pending,setPending]=useState(()=>{const v=readPend();return v?v.id:''});
   const [note,setNote]=useState('');
-  const pend=id=>{setPending(id);writePend(id)};
-  const attach=(id,url)=>{
-    update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).map(x=>x.id===id?{...x,kind:'rss',feedUrl:url}:x)}}));
-    pend('');setNote('✓ Link added');setTimeout(()=>setNote(''),3500);
-  };
-  /* read the clipboard; true when it held a feed link and it was attached */
-  const takeClipboard=async id=>{
-    try{const t=await navigator.clipboard.readText();const u=extractFirstUrl(t||'');if(u&&isMadeFeedLink(u)){attach(id,u);return true}}catch(e){}
-    return false;
-  };
-  /* coming back from RSS.app: pick the copied link up by itself (iPhone may need the Paste button) */
-  useEffect(()=>{
-    if(!pending)return;
-    takeClipboard(pending);
-    const onBack=()=>{if(document.visibilityState==='visible')takeClipboard(pending)};
-    document.addEventListener('visibilitychange',onBack);
-    return()=>document.removeEventListener('visibilitychange',onBack);
-  },[pending]);
+  const sync=useSourcesSync();
   useEffect(()=>{let alive=true;
     fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000).then(r=>r.ok?r.json():null).then(j=>{if(alive){if(j&&j.links)setIx(j);else setErr(true)}},()=>{if(alive)setErr(true)});
-    return()=>{alive=false}},[]);
+    return()=>{alive=false}},[sync.state==='live'?sync.liveAt:0]);
   const mine=socialAccountsOf(brief);
   /* add accounts right here: pick a platform, type or paste handles (several at once) */
   const [addP,setAddP]=useState('instagram'),[addTxt,setAddTxt]=useState('');
@@ -7795,17 +8015,26 @@ function SocialFeedBox({T,brief,update}){
         ?{...base,kind:'telegram',handle:hh,url:'https://t.me/'+hh,name:'@'+hh}
         :{...base,kind:'link',handle:hh,url:SOCIAL[addP].profile(hh),platform:addP,socialHandle:hh,name:'@'+hh+' · '+SOCIAL[addP].label});
     });
-    if(fresh.length){update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).concat(fresh)}}));setAddTxt('')}
-    setNote(fresh.length?'✓ Added '+fresh.length+(fresh.length===1?' account':' accounts')+(addP==='telegram'?'. Telegram needs no link.':'. Now get its RSS.app link below.')+(skipped?' ('+skipped+' skipped: duplicate or not a handle)':''):'Nothing added: type a handle like natgeo (or paste a profile link).');
+    if(fresh.length){
+      update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).concat(fresh)}}));setAddTxt('');
+      /* Instagram / X: go straight into connecting the new accounts */
+      if(addP!=='telegram')setTimeout(()=>fcStore.open(fresh.map(x=>x.id)),250);
+    }
+    setNote(fresh.length?'✓ Added '+fresh.length+(fresh.length===1?' account':' accounts')+(addP==='telegram'?'. Telegram needs no link.':'.')+(skipped?' ('+skipped+' skipped: duplicate or not a handle)':''):'Nothing added: type a handle like natgeo (or paste a profile link).');
     setTimeout(()=>setNote(''),6000);
   };
   const NAMES={all:'All accounts',telegram:'Telegram',instagram:'Instagram',x:'X',threads:'Threads',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
   const copy=(k,u)=>{copyText(u);setCopied(k);setTimeout(()=>setCopied(''),2000)};
-  const noLink=mine.filter(a=>a.platform!=='telegram'&&!a.feed);
+  const noLink=mine.filter(needsMadeFeed);
   const bad=ix?ix.accounts.filter(a=>a.status!=='ok'&&a.status!=='needs-feed-link'):[];
   const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
   return h('div',{style:{padding:'0 20px'}},
-    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app. After adding or removing accounts, tap “Update sources on GitHub” at the bottom of this page.'),
+    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app.'),
+    noLink.length?h('button',{onClick:()=>fcStore.open(noLink.map(a=>a.id)),className:'act95',
+      style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'13px 14px',borderRadius:12,background:T.accent,color:'#fff',marginBottom:12}},
+      h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15,fontWeight:700}},'Connect '+noLink.length+(noLink.length===1?' account':' accounts')),
+        h('span',{style:{display:'block',fontSize:12.5,opacity:.85,marginTop:2}},noLink.map(a=>'@'+a.handle).slice(0,4).join(', ')+(noLink.length>4?' +'+(noLink.length-4):'')+' · about 30 seconds each')),
+      h('span',{style:{fontSize:20}},'›')):null,
     !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts yet. Add them below.')
     :ix?h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
       Object.keys(ix.links).map(k=>h('div',{key:k,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
@@ -7815,31 +8044,59 @@ function SocialFeedBox({T,brief,update}){
         h('button',{onClick:()=>copy(k,ix.links[k]),className:'act95',style:{padding:'7px 12px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,flexShrink:0}},copied===k?'Copied ✓':'Copy'))),
       h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
       bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
-    :h('div',{style:small},err?'Not published yet. Tap “Update sources on GitHub” at the bottom of this page and press “Submit new issue”; the feed appears within 15 minutes.':'Loading…'),
+    :h('div',{style:small},err?'Not published yet. Send your sources to the server below; the feed appears within a few minutes.':'Loading…'),
     h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
       h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
       h('div',{style:{display:'flex',gap:6,marginBottom:8}},[['instagram','Instagram'],['x','X'],['telegram','Telegram']].map(([k,l])=>h('button',{key:k,onClick:()=>setAddP(k),className:'act95',
         style:{padding:'6px 12px',borderRadius:14,fontSize:13,fontWeight:600,background:addP===k?T.fg:T.search,color:addP===k?T.bg:T.fg}},l))),
       h('textarea',{value:addTxt,onChange:e=>setAddTxt(e.target.value),rows:2,autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
         placeholder:addP==='telegram'?'Channel names, e.g. telugutechnews (or t.me links)':'Handles, e.g. natgeo  nasa  (or profile links), one or many',
-        style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:9,padding:'10px 11px',fontSize:14,resize:'none',fontFamily:'inherit'}}),
+        style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:9,padding:'10px 11px',fontSize:16,resize:'none',fontFamily:'inherit'}}),
       h('button',{onClick:addAccounts,disabled:!addTxt.trim(),className:'act95',
-        style:{marginTop:8,padding:'9px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:addTxt.trim()?1:.5}},'Add')),
-    noLink.length||pending?h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
-      h('div',{style:{fontSize:14,fontWeight:650,marginBottom:4}},noLink.length+(noLink.length===1?' account needs':' accounts need')+' an RSS.app link'),
-      pending&&mine.find(a=>a.id===pending)?h('div',{style:{marginBottom:10}},
-        h('div',{style:{...small,color:T.fg,marginBottom:8}},
-          'Making the link for ',h('b',null,mine.find(a=>a.id===pending).name||'this account'),'. In RSS.app: paste the profile link (already copied), tap Generate, then tap ',h('b',null,'Copy'),' next to the feed link. Come back here: it is picked up by itself.'),
-        h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
-          h('button',{onClick:async()=>{if(!(await takeClipboard(pending)))setNote('No feed link copied yet. Copy it in RSS.app first.')},className:'act95',
-            style:{padding:'9px 14px',borderRadius:9,background:T.accent,color:'#fff',fontSize:13.5,fontWeight:650}},'Paste the link I copied'),
-          h('button',{onClick:()=>{pend('');setNote('')},className:'act95',style:{padding:'9px 14px',borderRadius:9,background:T.search,color:T.fg,fontSize:13.5,fontWeight:600}},'Cancel'))):
-      h('div',{style:{...small,marginBottom:8}},'Instagram and X have no public feed. Tap an account: its profile link is copied and RSS.app opens. Make the feed there, copy it, and come back.'),
-      h('div',{style:{display:'flex',flexWrap:'wrap',gap:6}},noLink.map(a=>h('button',{key:a.id||a.platform+a.handle,
-        onClick:()=>{copyText(a.profile||'');pend(a.id||'');setNote('');openExternalUrl('https://rss.app/new-rss-feed')},className:'act95',
-        style:{padding:'7px 11px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.id===pending?T.fg:T.search,color:a.id===pending?T.bg:T.fg}},(a.name||'@'+a.handle)+' ↗')))):null,
-    note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null,
-    mine.length&&!noLink.length&&!pending?h('div',{style:{...small,marginTop:10}},'All accounts have a feed. Tap “Update sources on GitHub” at the bottom of this page (and press “Submit new issue”) so the server starts building your feed.'):null);
+        style:{marginTop:8,padding:'9px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:addTxt.trim()?1:.5}},addP==='telegram'?'Add':'Add & connect')),
+    mine.length?h('div',{style:{marginTop:12}},
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 0 6px'}},'Your accounts'),
+      mine.map(a=>h('div',{key:a.id||a.platform+a.handle,style:{display:'flex',alignItems:'center',gap:10,padding:'9px 0',borderBottom:'1px solid '+T.hair}},
+        h('div',{style:{flex:1,minWidth:0}},
+          h('div',{style:{fontSize:14.5,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'@'+(a.handle||'').replace(/^@/,'')),
+          h('div',{style:{fontSize:12,color:needsMadeFeed(a)?'#c2410c':T.sub}},(PLAT_NAME[a.platform]||'')+' · '+(a.platform==='telegram'?'free feed':a.feed?'connected':'needs a feed link'))),
+        a.platform!=='telegram'?h('button',{onClick:()=>fcStore.open(noLink.some(x=>x.id===a.id)?noLink.map(x=>x.id):[a.id],a.id),className:'act95',
+          style:{padding:'6px 12px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.feed?T.search:T.fg,color:a.feed?T.fg:T.bg,flexShrink:0}},a.feed?'Change':'Connect'):null))):null,
+    note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null);
+}
+/* Settings: how sources reach the server. With a token: automatic, with a status line. Without: the GitHub issue page. */
+function SourcesSyncBox({T,S,brief,set,toastFn}){
+  const st=useSourcesSync();
+  const [draft,setDraft]=useState('');
+  const sig=sourcesSig(brief),pending=hasSources(brief)&&st.sentSig!==sig;
+  const{owner,repo}=repoSlug();
+  const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
+  const color=st.state==='error'?'#c2410c':st.state==='live'?'#2f9e44':T.fg;
+  return h('div',{style:{padding:'0 20px 12px'}},
+    S.ghToken?h(Fragment,null,
+      h('div',{style:{...small,marginBottom:10}},'Automatic: a few seconds after you add, remove or connect an account, the app sends your sources to GitHub and the feed rebuilds in about 2 minutes. No GitHub page to open.'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:10,padding:'11px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+        st.state==='sending'||st.state==='building'?h(Spinner,{T,size:15}):h('span',{style:{width:9,height:9,borderRadius:5,flexShrink:0,background:st.state==='error'?'#c2410c':pending?'#f59f00':'#2f9e44'}}),
+        h('div',{style:{flex:1,fontSize:13.5,lineHeight:1.45,color}},pending&&st.state!=='sending'&&st.state!=='error'?'Changes waiting to send…':syncLabel(st)||'Up to date'),
+        st.runUrl&&(st.state==='error'||st.state==='building')?h('button',{onClick:()=>openExternalUrl(st.runUrl),style:{fontSize:12.5,color:T.accent,flexShrink:0}},'Log ↗'):null),
+      h('div',{style:{display:'flex',gap:8,marginTop:10}},
+        h('button',{onClick:()=>syncSourcesNow(brief).then(()=>toastFn('Sent ✓'),e=>toastFn(String(e&&e.message||e))),disabled:st.state==='sending',className:'act95',
+          style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:st.state==='sending'?.5:1}},st.state==='error'?'Try again':'Sync now')))
+    :h(Fragment,null,
+      h('div',{style:{...small,marginBottom:10}},'Make this automatic (recommended): paste a GitHub token and the app sends your sources itself. You only do this once, and transcripts use the same token.'),
+      h('div',{style:{...small,lineHeight:1.7,marginBottom:8}},
+        '1. ',h('a',{href:'https://github.com/settings/personal-access-tokens/new',target:'_blank',rel:'noopener',style:{color:T.accent}},'Create a fine-grained GitHub token ↗'),h('br'),
+        '2. Repository access: only ',h('b',null,owner+'/'+repo),h('br'),
+        '3. Permissions → Actions: ',h('b',null,'Read and write'),h('br'),
+        '4. Generate, copy, and paste it here:'),
+      h('div',{style:{display:'flex',gap:8}},
+        h('input',{type:'password',value:draft,onChange:e=>setDraft(e.target.value),placeholder:'github_pat_…',autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+          style:{flex:1,minWidth:0,padding:'10px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,fontFamily:'ui-monospace,monospace'}}),
+        h('button',{disabled:!draft.trim(),onClick:()=>{set({ghToken:draft.trim()});setDraft('');toastFn('GitHub connected. Sending your sources…')},className:'act95',
+          style:{padding:'0 16px',borderRadius:10,background:T.fg,color:T.bg,fontSize:14,fontWeight:650,opacity:draft.trim()?1:.4}},'Save')),
+      h('div',{style:{...small,marginTop:12}},'Or without a token: GitHub opens a ready-made page; press “Submit new issue” (you need to be signed in to GitHub in Safari).'),
+      h('button',{onClick:()=>setupServerRefresh(brief,toastFn),className:'act95',
+        style:{marginTop:8,padding:'10px 16px',borderRadius:10,background:T.card,color:T.fg,fontSize:14,fontWeight:600,border:'1px solid '+T.hair}},'Send via GitHub page ↗')));
 }
 function socialFeedAllUrl(){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/all.xml?t='+Math.floor(Date.now()/60000)}
 /* In-app reader for your social feed: the server-built list (all accounts, newest first), or, until that exists,
@@ -7878,7 +8135,7 @@ function SocialReader({T,brief,onClose}){
     h('div',{style:{flex:1,overflowY:'auto',padding:'4px 14px calc(24px + '+SAFE_B+')'}},
       posts===null?h('div',{style:{padding:'40px 10px',textAlign:'center',color:T.sub}},'Loading…')
       :!shown.length?h('div',{style:{padding:'40px 16px',textAlign:'center',color:T.sub,lineHeight:1.6,fontSize:14.5}},
-        'Nothing to show yet.',h('br'),'Add your accounts in Settings → Social RSS feed, tap “Update sources on GitHub” and press “Submit new issue”. Posts appear within about 15 minutes.')
+        'Nothing to show yet.',h('br'),'Add your accounts in Settings → Social RSS feed and connect them. Posts appear a few minutes after your sources reach the server.')
       :h('div',{style:{display:'flex',flexDirection:'column',gap:10}},
         src==='phone'?h('div',{style:{fontSize:12,color:T.sub,padding:'0 2px'}},'Showing what this phone has fetched so far. The combined server feed isn’t published yet.'):null,
         shown.slice(0,150).map(p=>h('button',{key:p.id+p.url,onClick:()=>openExternalUrl(p.url),className:'act98',
@@ -7888,7 +8145,7 @@ function SocialReader({T,brief,onClose}){
             h('div',{style:{fontSize:15,lineHeight:1.4,overflow:'hidden',display:'-webkit-box',WebkitLineClamp:4,WebkitBoxOrient:'vertical'}},p.title||p.excerpt||'Post')),
           p.thumb?h('img',{src:p.thumb,alt:'',loading:'lazy',style:{width:84,height:84,objectFit:'cover',borderRadius:10,flexShrink:0}}):null)))));
 }
-function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,onClose}){
+function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,onForceReload,onExport,onImport,onClearArchived,onEraseAll,onOpenBrowser,vaultSession,toastFn,onClose}){
   const set=p=>update(d=>({...d,settings:{...d.settings,...p}}));
   const [engSaved,setEngSaved]=useState('');
   const fileRef=useRef(null);
@@ -8045,7 +8302,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
           style:{width:'100%',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:14,boxSizing:'border-box'}})),
       head('Server-side refresh (GitHub)'),
       h('div',{style:{padding:'0 20px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. Tap the button, then press “Submit new issue” on GitHub. The server applies it within 15 minutes. Re-do this whenever you add or remove sources.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'A scheduled GitHub job fetches your sources from a server and the app reads the result instantly — no public proxies. '+(S.ghToken?'Your GitHub token is set, so the app sends your sources by itself whenever they change.':'Tap the button, then press “Submit new issue” on GitHub. Or add a GitHub token in Settings → Social RSS feed and it happens by itself.')),
         h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},
           h('button',{onClick:()=>setupServerRefresh(data.brief,msg=>{setSrcCopied(-1);setTimeout(()=>setSrcCopied(0),2500)}),
             className:'act95',style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},
@@ -8171,10 +8428,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
         style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650}},'Read my social feed in the app')),
       h(SocialFeedBox,{T,brief:data.brief,update}),
       head('Send to the server'),
-      h('div',{style:{padding:'0 20px 12px'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,marginBottom:10}},'After adding accounts or links, send your sources to GitHub so the server builds the feed. GitHub opens a ready-made page: press “Submit new issue”. It is applied within 15 minutes.'),
-        h('button',{onClick:()=>setupServerRefresh(data.brief,()=>{}),className:'act95',
-          style:{padding:'10px 16px',borderRadius:10,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},snapshotWasSeen()?'Update sources on GitHub':'Save sources to GitHub')));
+      h(SourcesSyncBox,{T,S,brief:data.brief,set,toastFn:toastFn||(()=>{})}));
   }else if(page==='sites'){
     const curEng=window.InstaSearch?window.InstaSearch.engineOf(S):'google';
     const pickEng=e=>{set({agent:Object.assign({},S.agent||{},{engine:e})});setEngSaved(e)};
@@ -8624,6 +8878,7 @@ function App(){
   const byId=id=>dataRef.current.articles.find(a=>a.id===id);
 
   const S=data.settings;
+  GH_TOKEN_NOW=S.ghToken||'';
   CHAT_APP=S.chatApp==='deepseek'?'deepseek':'claude'; // which app no-key AI hand-offs open
   const T0=THEMES[S.theme]||THEMES.light;
   /* Settings → Display & Motion → Higher contrast: secondary text one step darker (lighter in dark mode) */
@@ -8688,6 +8943,8 @@ function App(){
   useEffect(()=>{if(scope.type==='search'){const t=setTimeout(()=>{if(searchRef.current)searchRef.current.focus()},60);return()=>clearTimeout(t)}},[scope.type]);
   const toastT=useRef(null);
   const toastFn=useCallback(msg=>{setToast(msg);if(toastT.current)clearTimeout(toastT.current);toastT.current=setTimeout(()=>setToast(null),2000)},[]);
+  /* sources reach the server by themselves when a GitHub token is set */
+  useSourcesAutoSync(data.brief||{},S.ghToken||'');
 
   /* Force reload to the latest deployed version: drop the service worker + all
      PWA caches, then reload with a cache-buster. Saved data in localStorage /
@@ -8811,17 +9068,6 @@ function App(){
     }catch(e){}
   },[]);
 
-  useEffect(()=>{ // back from RSS.app with a link half-made: open Settings → Social RSS feed once so it can be finished
-    const check=()=>{
-      if(document.visibilityState!=='visible')return;
-      let v=null;try{v=JSON.parse(localStorage.getItem(RSS_PEND_KEY)||'null')}catch(e){}
-      if(!v||!v.id||v.opened||Date.now()-v.at>3600000)return;
-      try{localStorage.setItem(RSS_PEND_KEY,JSON.stringify({...v,opened:true}))}catch(e){}
-      if(!settingsOpenR.current){setSettingsPage0('socialrss');setSettingsOpen(true)}
-    };
-    check();document.addEventListener('visibilitychange',check);
-    return()=>document.removeEventListener('visibilitychange',check);
-  },[]);
   useEffect(()=>{const f=()=>setSocialO(true);window.addEventListener('insta-social-open',f);return()=>window.removeEventListener('insta-social-open',f)},[]);
   useEffect(()=>{ // scan / knowledge-base entry points raised from anywhere (Photos, sidebar, Books)
     const o=e=>setOcrO((e&&e.detail)||{});const s=()=>setScansO(true);
@@ -9607,7 +9853,7 @@ function App(){
         else eraseAll();
       }}):null,
 
-    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,usageKB,storeQuota:storeEst?storeEst.quota:0,initialPage:settingsPage0,onClose:()=>{setSettingsOpen(false);setSettingsPage0('root')},
+    settingsOpen?h(SettingsSheet,{T,S,data,voices,update,toastFn,usageKB,storeQuota:storeEst?storeEst.quota:0,initialPage:settingsPage0,onClose:()=>{setSettingsOpen(false);setSettingsPage0('root')},
       onForceReload:forceReload,
       onExport:exportBackup,onImport:importBackup,
       onClearArchived:()=>setSheet({type:'confirm',kind:'clearArchive'}),
@@ -9640,6 +9886,7 @@ function App(){
       onFinish:()=>{patchArticle(speedA.id,{progress:1});toastFn('Completed — nice!')},
       saveWpm:v=>update(d=>({...d,settings:{...d.settings,wpm:v}}))}):null,
 
+    h(FeedConnect,{T,brief:data.brief||{},update,toastFn}),
     h(Toast,{T,toast})
   );
 }

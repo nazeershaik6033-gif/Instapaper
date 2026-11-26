@@ -41,7 +41,8 @@ const EXAMPLES=[
 /* Shields (shields.js): Cromite-style blocking, URL hygiene and per-site settings */
 const SXm=()=>window.InstaShields||null;
 const navClean=u=>{const X=SXm();return X?X.navUrl(u):u};
-const socialOn=u=>{const S2=window.InstaSocial;return!!(S2&&S2.handles(u))};
+/* never let a missing or broken viewer module take the browser down: fall back to a normal page */
+const socialOn=u=>{const S2=window.InstaSocial;if(!S2||typeof S2.handles!=='function'||typeof S2.View!=='function')return false;try{return!!S2.handles(u)}catch(e){return false}};
 const siteJs=u=>{const X=SXm();return X?X.siteCfg(u).js:''};
 function liveSandbox(u){
   const X=SXm();if(!X)return LIVE_SANDBOX;

@@ -159,9 +159,9 @@ async function sourcesFor(build){
   PIPED_DEFAULT.forEach(b=>build.piped&&out.push({id:'piped:'+b,run:()=>build.piped(b)}));
   return out;
 }
-const cache=new Map();
-function cached(key,fn){if(cache.has(key))return cache.get(key);const p=fn().catch(e=>{cache.delete(key);throw e});cache.set(key,p);return p}
-const dropCache=key=>cache.delete(key);
+const cache=new Map(),ready=new Map(); // ready: results already in hand, shown with no loading flash
+function cached(key,fn){if(cache.has(key))return cache.get(key);const p=fn().then(v=>{ready.set(key,v);return v},e=>{cache.delete(key);throw e});cache.set(key,p);return p}
+const dropCache=key=>{cache.delete(key);ready.delete(key)};
 const hasList=r=>Array.isArray(r)&&r.length>0;
 function ytSearch(q){return cached('s:'+q,async()=>race(await sourcesFor({
   yt:async()=>videosIn(jsonAfter(await ytFetch('https://www.youtube.com/results?search_query='+encodeURIComponent(q)),'ytInitialData'),40),
@@ -218,9 +218,10 @@ async function oembedTitle(url){
 const watchUrl=id=>'https://www.youtube.com/watch?v='+id;
 const thumb=id=>'https://i.ytimg.com/vi/'+id+'/mqdefault.jpg';
 function useLoad(fn,deps,key){
-  const [st,setSt]=useState({loading:true,data:null,err:'',slow:false});
+  const have=()=>key&&ready.has(key)?{loading:false,data:ready.get(key),err:'',slow:false}:null;
+  const [st,setSt]=useState(()=>have()||{loading:true,data:null,err:'',slow:false});
   const [n,setN]=useState(0);
-  useEffect(()=>{let live=true;setSt({loading:true,data:null,err:'',slow:false});
+  useEffect(()=>{let live=true;const got=have();if(got){setSt(got);return}setSt({loading:true,data:null,err:'',slow:false});
     const t=setTimeout(()=>{if(live)setSt(x=>x.loading?Object.assign({},x,{slow:true}):x)},6000);
     fn().then(data=>{if(live)setSt({loading:false,data,err:'',slow:false})},e=>{if(live)setSt({loading:false,data:null,err:String(e&&e.message||e),slow:false})}).then(()=>clearTimeout(t));
     return()=>{live=false;clearTimeout(t)}},deps.concat([n]));
@@ -232,6 +233,22 @@ function Pill({T,children,onClick,primary}){
 }
 function Note({T,children}){return h('div',{style:{fontSize:12.5,color:T.sub,lineHeight:1.5,margin:'10px 0'}},children)}
 function Loading({T,label}){return h('div',{style:{display:'flex',alignItems:'center',gap:10,color:T.sub,fontSize:13.5,padding:'22px 2px'}},h(Spinner,{T,size:16}),label||'Loading…')}
+/* video-shaped placeholders while a list loads, so the page doesn't jump when it arrives */
+function Skeleton({T,label,rows}){
+  const bar=(w,hh,mt)=>h('span',{className:'shimmer',style:{display:'block',width:w,height:hh,borderRadius:5,marginTop:mt||0}});
+  return h('div',{'aria-busy':true,'aria-label':label||'Loading'},
+    label?h('div',{style:{fontSize:12.5,color:T.sub,padding:'4px 0 6px'}},label):null,
+    Array.from({length:rows||6}).map((_,i)=>h('div',{key:i,style:{display:'flex',gap:11,padding:'8px 0',opacity:1-i*.12}},
+      h('span',{className:'shimmer',style:{width:150,height:84,borderRadius:9,flexShrink:0}}),
+      h('span',{style:{flex:1,paddingTop:4}},bar('92%',13),bar('64%',13,7),bar('40%',10,10)))));
+}
+/* images fade in once decoded instead of popping in */
+function FadeImg(props){
+  const [on,setOn]=useState(false);
+  return h('img',Object.assign({},props,{decoding:'async',className:'img-fade'+(on?' on':''),onLoad:()=>setOn(true),onError:e=>{setOn(true);props.onError&&props.onError(e)}}));
+}
+/* start loading a video's details the moment a finger lands on it, so "Up next" is often ready on arrival */
+const prefetchVideo=id=>{try{ytVideo(id).catch(()=>{})}catch(e){}};
 function SearchBar({T,placeholder,initial,onSearch}){
   const [q,setQ]=useState(initial||'');
   return h('form',{onSubmit:e=>{e.preventDefault();const v=q.trim();if(v){onSearch(v);try{document.activeElement.blur()}catch(err){}}},style:{display:'flex',gap:8,margin:'2px 0 12px'}},
@@ -240,9 +257,9 @@ function SearchBar({T,placeholder,initial,onSearch}){
     h('button',{type:'submit',className:'act95',style:{padding:'0 15px',borderRadius:10,background:T.fg,color:T.bg,fontWeight:600,fontSize:14.5}},'Search'));
 }
 function VideoRow({T,v,onNav}){
-  return h('button',{onClick:()=>onNav(v.short?'https://www.youtube.com/shorts/'+v.id:watchUrl(v.id)),className:'act98',style:{display:'flex',gap:11,width:'100%',textAlign:'left',padding:'8px 0',color:T.fg}},
+  return h('button',{onClick:()=>onNav(v.short?'https://www.youtube.com/shorts/'+v.id:watchUrl(v.id)),onPointerDown:()=>prefetchVideo(v.id),className:'act98',style:{display:'flex',gap:11,width:'100%',textAlign:'left',padding:'8px 0',color:T.fg}},
     h('span',{style:{position:'relative',width:150,height:84,borderRadius:9,overflow:'hidden',background:T.card,flexShrink:0}},
-      h('img',{src:thumb(v.id),alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover'}}),
+      h(FadeImg,{src:thumb(v.id),alt:'',loading:'lazy',style:{width:'100%',height:'100%',objectFit:'cover',display:'block'}}),
       v.len||v.short?h('span',{style:{position:'absolute',right:5,bottom:5,background:'rgba(0,0,0,.8)',color:'#fff',fontSize:10.5,fontWeight:600,padding:'1px 5px',borderRadius:4}},v.short?'SHORT':v.len):null),
     h('span',{style:{flex:1,minWidth:0}},
       h('span',{style:{display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',fontSize:14,fontWeight:600,lineHeight:1.3}},v.title),
@@ -279,8 +296,11 @@ function AutoFrame({src,minH,host,title,T}){
     };
     window.addEventListener('message',f);return()=>window.removeEventListener('message',f);
   },[]);
-  return h('iframe',{ref,src,title,allow:'autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
-    style:{width:'100%',height:hgt,border:0,borderRadius:12,background:T.card,display:'block'}});
+  const [ok,setOk]=useState(false);
+  return h('div',{style:{position:'relative'}},
+    ok?null:h('div',{className:'shimmer',style:{position:'absolute',inset:0,borderRadius:12}}),
+    h('iframe',{ref,src,title,onLoad:()=>setOk(true),allow:'autoplay; encrypted-media; picture-in-picture; fullscreen; clipboard-write',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
+      style:{width:'100%',height:hgt,border:0,borderRadius:12,background:T.card,display:'block',opacity:ok?1:0,transition:'opacity 240ms ease-out'}}));
 }
 
 /* ---------- YouTube ---------- */
@@ -298,7 +318,7 @@ function YouTube({T,m,url,onNav,onSaveUrl,toastFn,onTitle}){
 }
 function YtList({T,load,deps,onNav,empty,ckey,url}){
   const st=useLoad(load,deps,ckey);
-  if(st.loading)return h(Loading,{T,label:st.slow?'Still loading — trying other sources…':'Loading from YouTube…'});
+  if(st.loading)return h(Skeleton,{T,label:st.slow?'Still loading — trying other sources…':''});
   if(st.err||!st.data)return h(Failed,{T,retry:st.retry,url});
   if(!st.data.length)return h(Note,{T},empty);
   return h('div',null,st.data.map(v=>h(VideoRow,{key:v.id,T,v,onNav})));
@@ -317,10 +337,14 @@ function YtVideo({T,m,url,onNav,onSaveUrl,toastFn,onTitle,top}){
   useEffect(()=>{if(title){onTitle&&onTitle(title+' — YouTube');addRecent({kind:'yt',url:watchUrl(m.id),title,thumb:thumb(m.id)})}},[title]);
   const start=m.t?'&start='+parseInt(String(m.t).replace(/s$/,''),10):'';
   const src='https://www.youtube-nocookie.com/embed/'+m.id+'?playsinline=1&rel=0&modestbranding=1&autoplay=1'+start+(m.list?'&list='+encodeURIComponent(m.list):'');
+  const [ready,setReady]=useState(false);
+  useEffect(()=>{setReady(false)},[m.id]);
+  /* the thumbnail sits behind the player, so there's no black flash while YouTube's player starts */
   return h(Fragment,null,
-    h('div',{style:{position:'relative',width:'calc(100% + 32px)',margin:'-14px -16px 0',paddingTop:m.short?'min(160%, 72vh)':'56.25%',background:'#000'}},
-      h('iframe',{key:m.id,src,title:title||'YouTube video',allow:'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
-        style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0}})),
+    h('div',{style:{position:'relative',width:'calc(100% + 32px)',margin:'-14px -16px 0',paddingTop:m.short?'min(160%, 72vh)':'56.25%',background:'#000 center/cover no-repeat url("https://i.ytimg.com/vi/'+m.id+'/hqdefault.jpg")'}},
+      ready?null:h('span',{style:{position:'absolute',left:'50%',top:'50%',transform:'translate(-50%,-50%)',width:56,height:56,borderRadius:28,background:'rgba(0,0,0,.55)',display:'flex',alignItems:'center',justifyContent:'center'}},h(Spinner,{T:Object.assign({},T,{fg:'#fff'}),size:20})),
+      h('iframe',{key:m.id,src,title:title||'YouTube video',onLoad:()=>setReady(true),allow:'accelerometer; autoplay; clipboard-write; encrypted-media; gyroscope; picture-in-picture; fullscreen',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',
+        style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0,opacity:ready?1:0,transition:'opacity 220ms ease-out'}})),
     h('div',{style:{fontSize:17,fontWeight:700,lineHeight:1.3,marginTop:12}},title||(st.loading?'':'YouTube video')),
     h('div',{style:{fontSize:12.5,color:T.sub,marginTop:4}},[d.views,d.date].filter(Boolean).join(' · ')),
     (d.author||lite.author)?h('button',{onClick:()=>d.channelId&&onNav('https://www.youtube.com/channel/'+d.channelId),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:10,color:T.fg,fontSize:14.5,fontWeight:650}},
@@ -329,7 +353,7 @@ function YtVideo({T,m,url,onNav,onSaveUrl,toastFn,onTitle,top}){
     d.desc?h('div',{onClick:()=>setMore(v=>!v),style:{background:T.card,borderRadius:12,padding:'10px 12px',marginTop:8,fontSize:13,lineHeight:1.5,whiteSpace:'pre-wrap',wordBreak:'break-word',
       maxHeight:more?'none':84,overflow:'hidden',position:'relative',cursor:'pointer'}},d.desc,more?null:h('span',{style:{position:'absolute',right:10,bottom:6,background:T.card,color:T.accent,fontWeight:600,paddingLeft:6}},'…more')):null,
     h('div',{style:{marginTop:14}},top),
-    st.loading?h(Loading,{T,label:st.slow?'Still loading — trying other sources…':'Loading up next…'}):st.err?h(Failed,{T,retry:st.retry}):d.related&&d.related.length?h(Fragment,null,
+    st.loading?h(Skeleton,{T,rows:4,label:st.slow?'Still loading — trying other sources…':'Up next'}):st.err?h(Failed,{T,retry:st.retry}):d.related&&d.related.length?h(Fragment,null,
       h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'2px 0 4px'}},'Up next'),
       d.related.map(v=>h(VideoRow,{key:v.id,T,v,onNav}))):null);
 }
@@ -342,7 +366,7 @@ function YtChannel({T,m,url,onNav,onSaveUrl,toastFn,onTitle}){
       d.avatar?h('img',{src:d.avatar,alt:'',style:{width:54,height:54,borderRadius:27}}):null,
       h('div',null,h('div',{style:{fontSize:19,fontWeight:750}},d.name||m.path.slice(1)),d.subs?h('div',{style:{fontSize:12.5,color:T.sub}},d.subs):null)),
     h(Actions,{T,url:'https://www.youtube.com'+m.path,onSaveUrl:null,toastFn,label:'YouTube'}),
-    st.loading?h(Loading,{T,label:st.slow?'Still loading — trying other sources…':'Loading videos…'}):st.err?h(Failed,{T,retry:st.retry,url:'https://www.youtube.com'+m.path}):
+    st.loading?h(Skeleton,{T,label:st.slow?'Still loading — trying other sources…':''}):st.err?h(Failed,{T,retry:st.retry,url:'https://www.youtube.com'+m.path}):
       (d.videos||[]).length?d.videos.map(v=>h(VideoRow,{key:v.id,T,v,onNav})):h(Note,{T},'No videos found.'));
 }
 function YtPlaylist({T,m,url,onNav,onSaveUrl,toastFn,onTitle}){
@@ -353,7 +377,7 @@ function YtPlaylist({T,m,url,onNav,onSaveUrl,toastFn,onTitle}){
       h('iframe',{src:'https://www.youtube-nocookie.com/embed/videoseries?list='+encodeURIComponent(m.list)+'&playsinline=1&rel=0',title:'Playlist',allow:'autoplay; encrypted-media; picture-in-picture; fullscreen',allowFullScreen:true,referrerPolicy:'strict-origin-when-cross-origin',style:{position:'absolute',inset:0,width:'100%',height:'100%',border:0}})),
     h('div',{style:{fontSize:17,fontWeight:700,marginTop:12}},d.title||'Playlist'),
     h(Actions,{T,url,onSaveUrl:null,toastFn,label:'YouTube'}),
-    st.loading?h(Loading,{T}):(d.videos||[]).map((v,i)=>h(VideoRow,{key:v.id+i,T,v:Object.assign({},v,{}),onNav:()=>onNav(watchUrl(v.id)+'&list='+encodeURIComponent(m.list))})));
+    st.loading?h(Skeleton,{T}):(d.videos||[]).map((v,i)=>h(VideoRow,{key:v.id+i,T,v:Object.assign({},v,{}),onNav:()=>onNav(watchUrl(v.id)+'&list='+encodeURIComponent(m.list))})));
 }
 
 /* ---------- Instagram ---------- */
@@ -422,10 +446,24 @@ function XView({T,m,url,onNav,onSaveUrl,toastFn,onTitle}){
     h(RecentList,{T,kind:'x',onNav}));
 }
 
+/* where you were on each page, so Back lands on the same spot in a list (new pages start at the top) */
+const scrollMem=new Map();
 function View({T,url,onNav,onSaveUrl,toastFn,onTitle}){
   const m=match(url);
+  const ref=useRef(null),prev=useRef(url);
+  useEffect(()=>{
+    const el=ref.current;if(!el)return;
+    const y=scrollMem.get(url)||0;
+    el.scrollTop=y;
+    /* a list can still be loading: try again once it has height */
+    let n=0;const again=()=>{if(!ref.current||n++>12||ref.current.scrollTop>=y-2)return;ref.current.scrollTop=y;setTimeout(again,120)};
+    if(y)setTimeout(again,60);
+    prev.current=url;
+  },[url]);
+  const onScroll=e=>{scrollMem.set(prev.current,e.currentTarget.scrollTop);if(scrollMem.size>80)scrollMem.delete(scrollMem.keys().next().value)};
   const body=!m?null:m.kind==='yt'?h(YouTube,{T,m,url,onNav,onSaveUrl,toastFn,onTitle}):m.kind==='ig'?h(Instagram,{T,m,url,onNav,onSaveUrl,toastFn,onTitle}):h(XView,{T,m,url,onNav,onSaveUrl,toastFn,onTitle});
-  return h('div',{className:'sy bu-scroll',style:{position:'absolute',inset:0,overflowY:'auto',padding:'14px 16px 40px',background:T.bg,color:T.fg,fontFamily:UIF}},body);
+  return h('div',{ref,onScroll,className:'sy bu-scroll',style:{position:'absolute',inset:0,overflowY:'auto',overscrollBehavior:'contain',padding:'14px 16px 40px',background:T.bg,color:T.fg,fontFamily:UIF}},
+    h('div',{key:url,className:'soc-in'},body));
 }
 
 window.InstaSocial={match,handles,enabled,titleFor,label:k=>LABEL[k]||'',View,ytSearch,ytVideo,ytChannel,videosIn,jsonAfter};
