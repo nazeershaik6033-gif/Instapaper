@@ -553,7 +553,7 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
 function dl(name,text,type){const b=new Blob([text],{type});const u=URL.createObjectURL(b);const x=document.createElement('a');x.href=u;x.download=name;document.body.appendChild(x);x.click();setTimeout(()=>{URL.revokeObjectURL(u);x.remove()},1500)}
 
 /* ============================== Editions shelf ============================== */
-function EditionsShelf({T,articles,onOpen,papers,onOpenPaper}){
+function EditionsShelf({T,articles,onOpen,papers,onOpenPaper,onCombine}){
   const list=(articles||[]).filter(a=>a.isVideo&&a.transcript&&String(a.transcript).trim())
     .map(a=>{const eds=a.editions||{};const latest=Object.keys(eds).reduce((m,k)=>Math.max(m,eds[k].at||0),0);return{a,at:latest||a.transcriptAt||0,ed:eds.orig||eds[Object.keys(eds)[0]]}})
     .sort((x,y)=>y.at-x.at).slice(0,20);
@@ -562,7 +562,9 @@ function EditionsShelf({T,articles,onOpen,papers,onOpenPaper}){
   return h('div',{style:{padding:'14px 0 4px'}},
     h('div',{style:{display:'flex',alignItems:'baseline',justifyContent:'space-between',padding:'0 16px 10px'}},
       h('div',{style:{fontSize:19,fontWeight:700,fontFamily:"ui-serif,'New York',Georgia,serif"}},'Editions'),
-      h('div',{style:{fontSize:12,color:T.sub}},((papers||[]).length?papers.length+' daily paper'+(papers.length>1?'s':'')+' · ':'')+list.length+' edition'+(list.length===1?'':'s'))),
+      h('div',{style:{display:'flex',alignItems:'center',gap:10}},
+        h('div',{style:{fontSize:12,color:T.sub}},((papers||[]).length?papers.length+' paper'+(papers.length>1?'s':'')+' · ':'')+list.length+' edition'+(list.length===1?'':'s')),
+        onCombine&&((papers||[]).length||list.length>1)?h('button',{onClick:onCombine,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,padding:'4px 10px',borderRadius:12,background:T.card}},'Combine'):null)),
     h('div',{className:'sx',style:{display:'flex',gap:12,overflowX:'auto',padding:'0 16px 6px'}},
       PapersShelfCards({T,papers,onOpen:onOpenPaper}),
       list.map(({a,ed})=>h('button',{key:a.id,onClick:()=>onOpen(a.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px 12px',border:'1px solid '+T.hair}},
@@ -687,7 +689,7 @@ function paperHtml(paper,articles,prefs,withFull){
     '<style>'+editionCss(th,font,prefs.size||18,prefs.cols||1)+'.toc{border:1px solid '+th[4]+';padding:12px 14px;margin:0 0 20px}.tc{margin:8px 0}.tch{font:700 11px Inter,system-ui,sans-serif;letter-spacing:.1em;text-transform:uppercase;opacity:.6;margin-bottom:4px}.toc a{display:flex;gap:8px;color:inherit;text-decoration:none;padding:3px 0;font-weight:600}.toc a span{opacity:.5;min-width:18px}.story{border-top:3px double '+th[3]+';padding-top:14px;margin-top:22px;break-inside:avoid-page}.story h2{font-size:'+Math.round((prefs.size||18)*1.5)+'px;border:0;padding:0;margin:4px 0 8px;font-weight:900}details{margin-top:10px}summary{font:600 13px Inter,system-ui,sans-serif;cursor:pointer;opacity:.75}@media print{details{display:none}}</style></head><body><article class="paper">'+
     '<header class="mast"><div class="dl"><span>'+esc(dateLine(paper.at))+'</span><span>Made '+esc(timeOf(paper.at))+' · '+paper.stories.length+' stories</span></div><div class="mt">The Daily Transcript</div><div class="rule"></div></header>'+toc+body+'<div class="end">— End of today’s paper —</div></article></body></html>';
 }
-function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,onSaveToLibrary}){
+function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,onSaveToLibrary,onPostToBlogs,onPublish}){
   const [prefs,setPrefs]=useState(loadPrefs);const [panel,setPanel]=useState(null);const [prog,setProg]=useState(0);const [open,setOpen]=useState({});
   const scRef=useRef(null);
   const setP=p=>setPrefs(x=>{const n=Object.assign({},x,p);try{localStorage.setItem(PREF_KEY,JSON.stringify(n))}catch(e){}return n});
@@ -715,7 +717,7 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
     h('style',null,'.pp-drop::first-letter{float:left;font-family:'+HEAD+';font-weight:900;font-size:'+Math.round(size*3.3)+'px;line-height:.85;margin:4px 8px 0 0;color:'+accent+'}.pp,.pp *{-webkit-user-select:text!important;user-select:text!important}'),
     h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:2,padding:'calc(4px + env(safe-area-inset-top)) 6px 4px',borderBottom:'1px solid '+rule,fontFamily:sans}},
       tbtn(Icons.x(21),'Close',onClose),
-      h('div',{style:{flex:1,minWidth:0,fontSize:14,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'Today’s paper · '+new Date(paper.at).toLocaleDateString([],{day:'numeric',month:'short'})),
+      h('div',{style:{flex:1,minWidth:0,fontSize:14,fontWeight:700,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(paper.label||'Today’s paper')+' · '+new Date(paper.at).toLocaleDateString([],{day:'numeric',month:'short'})),
       tbtn(Icons.menu(19),'Contents',()=>setPanel('contents')),
       tbtn(h('span',{style:{fontFamily:'Georgia,serif',fontSize:18,fontWeight:600}},'Aa'),'Appearance',()=>setPanel('aa')),
       tbtn(Icons.download(19),'Download',()=>setPanel('download')),
@@ -726,8 +728,9 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
         h('header',{style:{textAlign:'center',marginBottom:14}},
           h('div',{style:{display:'flex',justifyContent:'space-between',gap:10,fontFamily:sans,fontSize:10.5,fontWeight:600,letterSpacing:'.08em',textTransform:'uppercase',opacity:.7,borderBottom:'1px solid '+rule,paddingBottom:6}},
             h('span',null,dateLine(paper.at)),h('span',null,'Made '+timeOf(paper.at)+' · '+paper.stories.length+' stories')),
-          h('div',{style:{fontFamily:HEAD,fontWeight:900,fontSize:34,letterSpacing:'-.01em',margin:'10px 0 6px',lineHeight:1.05}},'The Daily Transcript'),
+          h('div',{style:{fontFamily:HEAD,fontWeight:900,fontSize:34,letterSpacing:'-.01em',margin:'10px 0 6px',lineHeight:1.05}},paperMast(paper)),
           h('div',{style:{borderTop:'3px double '+ink}}),
+          paper.label&&paper.kind!=='day'?h('div',{style:{fontFamily:HEAD,fontStyle:'italic',fontSize:17,marginTop:8}},paper.label):null,
           h('div',{style:{fontFamily:sans,fontSize:12,opacity:.7,marginTop:6}},chans.length+' channel'+(chans.length>1?'s':'')+' · about '+Math.max(1,Math.round(words/230))+' min of stories · full transcripts under each story')),
         tocBox,
         paper.stories.map((s,i)=>{const a=byId(s.articleId);const isOpen=!!open[i];
@@ -749,7 +752,7 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
               h('span',{style:{fontSize:11,opacity:.55,alignSelf:'center'}},s.plain?'From the transcript':'Story written by AI from the transcript')),
             isOpen&&a?h('div',{style:{marginTop:12,paddingTop:10,borderTop:'1px solid '+rule}},paragraphsOf(a.transcript).map((p,k)=>h('p',{key:k,style:{fontSize:Math.round(size*.95),lineHeight:1.6,margin:'0 0 .85em'}},p))):null);
         }),
-        h('div',{style:{textAlign:'center',fontFamily:sans,fontSize:12,fontWeight:600,letterSpacing:'.12em',textTransform:'uppercase',opacity:.55,marginTop:28}},'— End of today’s paper —'))),
+        h('div',{style:{textAlign:'center',fontFamily:sans,fontSize:12,fontWeight:600,letterSpacing:'.12em',textTransform:'uppercase',opacity:.55,marginTop:28}},'— End of the paper —'))),
     panel==='contents'?sheet('Contents',tocBox):null,
     panel==='aa'?sheet('Appearance',h(Fragment,null,
       h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'4px 0 8px'}},'Font'),
@@ -759,21 +762,82 @@ function PaperReader({T,S,paper,articles,toastFn,onClose,onDelete,onOpenEdition,
       h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 8px'}},'Paper'),
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap'}},THEMES.map(t=>h('button',{key:t[0],onClick:()=>setP({theme:t[0]}),className:'act95',style:{padding:'7px 12px',borderRadius:12,background:t[2],color:t[3],border:'2px solid '+(prefs.theme===t[0]?accent:t[4]),fontSize:13.5,fontWeight:600}},t[1]))),
       null)):null,
-    panel==='download'?sheet('Download today’s paper',h(Fragment,null,
+    panel==='download'?sheet('Share or download',h(Fragment,null,
+      onPostToBlogs?row('Post to my Blogs','Appears in Blogs → Saved posts · My papers (private, on this phone)',()=>{setPanel(null);onPostToBlogs(paper)}):null,
+      onPublish?row('Publish as a public web page','A page anyone with the link can read, on your free GitHub site',()=>{setPanel(null);onPublish(paper)}):null,
       row('PDF','The stories, contents and key points — Print → Share → Save to Files',()=>{setPanel(null);printHtml(paperHtml(paper,articles,prefs,false))}),
       row('HTML file','Everything, with each full transcript folded under its story',()=>{setPanel(null);(window.InstaShields?window.InstaShields.downloadText:dl)('daily-transcript-'+new Date(paper.at).toISOString().slice(0,10)+'.html',paperHtml(paper,articles,prefs,true),'text/html')}),
-      row('Save to my library','The whole paper as one article, with highlights and listen-aloud',()=>{setPanel(null);const {toc,body}=paperStoriesHtml(paper,articles,false);onSaveToLibrary({title:'The Daily Transcript — '+dateLine(paper.at),html:body.replace(/<section[^>]*>/g,'<div>').replace(/<\/section>/g,'</div><hr>'),text:paper.stories.map(s=>s.headline+'\n\n'+s.story).join('\n\n'),words,standfirst:paper.stories.length+' stories from '+chans.length+' channels',lang:'paper-'+paper.id})}))):null,
+      row('Save to my library','The whole paper as one article, with highlights and listen-aloud',()=>{setPanel(null);const {toc,body}=paperStoriesHtml(paper,articles,false);onSaveToLibrary({title:paperMast(paper)+' — '+(paper.label&&paper.kind!=='day'?paper.label:dateLine(paper.at)),html:body.replace(/<section[^>]*>/g,'<div>').replace(/<\/section>/g,'</div><hr>'),text:paper.stories.map(s=>s.headline+'\n\n'+s.story).join('\n\n'),words,standfirst:paper.stories.length+' stories from '+chans.length+' channels',lang:'paper-'+paper.id})}))):null,
     panel==='more'?sheet('Paper',h(Fragment,null,
-      row('Delete this paper','Transcripts and videos stay in your library',()=>{if(window.confirm('Delete this paper?')){onDelete();}}))):null);
+      onDelete?row('Delete this paper','Transcripts and videos stay in your library',()=>{if(window.confirm('Delete this paper?')){onDelete();}})
+        :h('div',{style:{fontSize:13.5,opacity:.7,lineHeight:1.5,padding:'4px 2px'}},'This paper is made automatically from your editions and always stays up to date. To remove a story, delete that video’s transcript.'))):null);
   return ReactDOM.createPortal(node,document.body);
 }
+/* ---------- papers made from your editions ----------
+   Every transcribed video can be a story. Without any AI call, a story takes its edition's headline and
+   standfirst (or the video title and first sentence) and the first ~230 words of the transcript; the full
+   transcript stays one tap away under it. Day papers and the weekly digest are rebuilt from your library
+   every time, so they are always up to date; papers you combine by hand are kept. */
+const dayKey=t=>{const d=new Date(t);return d.getFullYear()+'-'+(d.getMonth()+1)+'-'+d.getDate()};
+const weekStart=t=>{const d=new Date(t);d.setHours(0,0,0,0);d.setDate(d.getDate()-((d.getDay()+6)%7));return d.getTime()};
+const txArticles=articles=>(articles||[]).filter(a=>a.isVideo&&!a.isEdition&&a.transcript&&String(a.transcript).trim().length>80);
+const storyAt=a=>{const eds=a.editions||{};const t=Object.keys(eds).reduce((m,k)=>Math.max(m,eds[k].at||0),0);return t||a.transcriptAt||a.addedAt||0};
+function storyFromArticle(a){
+  const ed=(a.editions||{}).orig||null;const paras=paragraphsOf(a.transcript||'');const w=paras.join('\n\n').split(/\s+/);
+  let story=w.slice(0,230).join(' ');if(w.length>230)story+='…';
+  const first=((paras[0]||'').split(/(?<=[.!?।])\s+/)[0]||'').slice(0,220);
+  const pq=ed&&Array.isArray(ed.pullQuotes)?ed.pullQuotes[0]:'';
+  return{articleId:a.id,videoId:a.videoId||vidOf(a.url),channel:a.author||a.source||'',publishedMs:a.publishedAt||0,title:a.title,plain:true,
+    headline:(ed&&ed.headline)||a.title||'Untitled',standfirst:(ed&&ed.standfirst)||first,story,keyPoints:[],quote:typeof pq==='string'?pq:((pq&&pq.text)||'')};
+}
+function papersFromEditions(articles){
+  const list=txArticles(articles).map(a=>({a,at:storyAt(a)})).filter(x=>x.at).sort((x,y)=>y.at-x.at);
+  const now=Date.now(),today=dayKey(now),yest=dayKey(now-86400000),out=[];
+  const days={};list.forEach(x=>{(days[dayKey(x.at)]=days[dayKey(x.at)]||[]).push(x)});
+  Object.keys(days).forEach(k=>{const xs=days[k];if(xs.length<2||now-xs[0].at>14*86400000)return;
+    const at=xs[0].at;const name=k===today?'Today’s paper':k===yest?'Yesterday’s paper':new Date(at).toLocaleDateString([],{weekday:'long'})+'’s paper';
+    out.push({id:'day:'+k,kind:'day',virtual:true,at,label:name,stories:xs.map(x=>storyFromArticle(x.a))})});
+  const weeks={};list.forEach(x=>{const w=weekStart(x.at);(weeks[w]=weeks[w]||[]).push(x)});
+  const thisW=weekStart(now);
+  Object.keys(weeks).map(Number).sort((a,b)=>b-a).slice(0,2).forEach(w=>{const xs=weeks[w];if(xs.length<2)return;
+    out.push({id:'week:'+w,kind:'week',virtual:true,at:xs[0].at,label:w===thisW?'This week’s digest':'Last week’s digest',stories:xs.map(x=>storyFromArticle(x.a))})});
+  return out.sort((x,y)=>(x.kind==='week')-(y.kind==='week')||y.at-x.at);
+}
+/* Combine: tick any transcribed videos and make one paper of them (kept in your papers) */
+function CombinePicker({T,articles,onMake,onClose}){
+  const list=txArticles(articles).map(a=>({a,at:storyAt(a)})).sort((x,y)=>y.at-x.at).slice(0,60);
+  const [sel,setSel]=useState(()=>new Set());const [title,setTitle]=useState('');
+  const tick=id=>setSel(s=>{const n=new Set(s);n.has(id)?n.delete(id):n.add(id);return n});
+  const chosen=list.filter(x=>sel.has(x.a.id));
+  return ReactDOM.createPortal(h('div',{style:{position:'fixed',inset:0,zIndex:400,background:T.bg,color:T.fg,display:'flex',flexDirection:'column',fontFamily:UIF}},
+    h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'calc(8px + env(safe-area-inset-top)) 12px 8px',borderBottom:'1px solid '+T.hair}},
+      h('button',{onClick:onClose,'aria-label':'Close',className:'act90',style:{display:'flex',color:T.fg,padding:6}},Icons.x(21)),
+      h('div',{style:{flex:1,fontSize:17,fontWeight:750}},'Combine into one paper'),
+      h('button',{onClick:()=>setSel(new Set(list.map(x=>x.a.id)))  ,style:{fontSize:14,fontWeight:600,color:T.accent,padding:6}},'All')),
+    h('div',{style:{padding:'10px 16px 4px'}},h('input',{value:title,onChange:e=>setTitle(e.target.value),placeholder:'Title (optional), e.g. Investing notes',
+      style:{width:'100%',boxSizing:'border-box',padding:'11px 12px',borderRadius:10,border:'1px solid '+T.hair,background:T.search,color:T.fg,fontSize:16}})),
+    h('div',{style:{flex:1,overflowY:'auto',padding:'6px 10px 20px'}},
+      !list.length?h('div',{style:{padding:'40px 20px',textAlign:'center',color:T.sub,lineHeight:1.6}},'No transcribed videos yet. Transcribe a video (My Routine → ⌄ → Transcribe) and it can join a paper.'):
+      list.map(({a,at})=>{const on=sel.has(a.id);const ed=(a.editions||{}).orig;
+        return h('button',{key:a.id,onClick:()=>tick(a.id),className:'act98',style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'10px 6px',borderBottom:'1px solid '+T.hair,color:T.fg}},
+          h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(on?T.accent:T.hair),background:on?T.accent:'transparent',color:'#fff'}},on?Icons.check(13):null),
+          a.videoId?h('img',{src:ytThumb(a.videoId),alt:'',style:{width:72,height:40,objectFit:'cover',borderRadius:6,flexShrink:0}}):null,
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:14.5,fontWeight:600,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},(ed&&ed.headline)||a.title),
+            h('div',{style:{fontSize:12,color:T.sub,marginTop:2}},(a.author||'')+' · '+new Date(at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))));
+      })),
+    h('div',{style:{padding:'10px 16px calc(12px + env(safe-area-inset-bottom))',borderTop:'1px solid '+T.hair}},
+      h('button',{disabled:chosen.length<1,onClick:()=>onMake({id:uid(),kind:'custom',at:Date.now(),label:title.trim()||('Your paper · '+chosen.length+' stories'),stories:chosen.map(x=>storyFromArticle(x.a))}),className:'act95',
+        style:{width:'100%',padding:14,borderRadius:13,background:T.accent,color:'#fff',fontSize:15.5,fontWeight:700,opacity:chosen.length?1:.45}},chosen.length?'Make the paper · '+chosen.length+(chosen.length===1?' story':' stories'):'Tick the videos to combine'))),document.body);
+}
+const paperMast=p=>p&&p.kind==='week'?'The Weekly Transcript':'The Daily Transcript';
 function PapersShelfCards({T,papers,onOpen}){
   const SERIF="'Playfair Display'"+INDIC;
   /* same card as an edition (follows the theme: light, sepia, dark, black); the accent date line marks it as a daily paper */
   return(papers||[]).slice(0,10).map(p=>h('button',{key:'p'+p.id,onClick:()=>onOpen(p.id),className:'act98',style:{flexShrink:0,width:200,textAlign:'left',background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px 12px',border:'1px solid '+T.hair}},
-    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7}},'The Daily Transcript'),
-    h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent}},new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'})+' · '+p.stories.length+' stories'),
+    h('div',{style:{textAlign:'center',fontFamily:SERIF,fontWeight:900,fontSize:13,borderBottom:'2px double '+T.fg,paddingBottom:4,marginBottom:7}},paperMast(p)),
+    h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(p.label||new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))+' · '+p.stories.length+' stories'),
     h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||'')));
 }
-window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml};
+window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml,paperStoriesHtml,papersFromEditions,CombinePicker,storyFromArticle};
 })();

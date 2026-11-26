@@ -1,0 +1,89 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>The Daily Transcript</title>
+<meta name="description" content="Papers made from the videos I follow.">
+<link rel="alternate" type="application/rss+xml" title="The Daily Transcript" id="rss">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link href="https://fonts.googleapis.com/css2?family=Playfair+Display:ital,wght@0,700;0,900;1,400&family=Source+Serif+4:ital,wght@0,400;0,600;1,400&family=Inter:wght@500;600;700&display=swap" rel="stylesheet">
+<style>
+/* Public page for papers published from Evolve (scripts/publish-post.mjs puts them on the blog-posts branch).
+   ?p=<slug> shows one paper; no ?p shows the list. Everything from the post is inserted as text, never as HTML. */
+:root{--bg:#f7f3ea;--ink:#1d1a16;--sub:#6d655a;--rule:#d9d0bf;--accent:#9b2c1f;--card:#efe8da}
+@media (prefers-color-scheme:dark){:root:not([data-theme="light"]){--bg:#15130f;--ink:#ece6da;--sub:#a59c8d;--rule:#353028;--accent:#e0866f;--card:#1f1c17}}
+:root[data-theme="dark"]{--bg:#15130f;--ink:#ece6da;--sub:#a59c8d;--rule:#353028;--accent:#e0866f;--card:#1f1c17}
+*{box-sizing:border-box}
+body{margin:0;background:var(--bg);color:var(--ink);font:18px/1.65 'Source Serif 4',Georgia,serif;-webkit-text-size-adjust:100%}
+main{max-width:760px;margin:0 auto;padding:22px 16px 60px}
+.mast{text-align:center;border-bottom:3px double var(--ink);padding-bottom:10px;margin-bottom:6px}
+.dl{display:flex;justify-content:space-between;gap:10px;font:600 11px/1.4 Inter,system-ui,sans-serif;letter-spacing:.08em;text-transform:uppercase;color:var(--sub);border-bottom:1px solid var(--rule);padding-bottom:6px}
+.mt{font:900 clamp(30px,8vw,46px)/1.05 'Playfair Display',Georgia,serif;margin:12px 0 4px;letter-spacing:-.01em}
+.mt a{color:inherit;text-decoration:none}
+.sub{font:italic 17px 'Playfair Display',Georgia,serif;color:var(--sub)}
+section{border-top:3px double var(--ink);padding-top:14px;margin-top:26px}
+.kick{font:700 11.5px Inter,system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--accent)}
+h2{font:900 28px/1.15 'Playfair Display',Georgia,serif;margin:6px 0 8px;letter-spacing:-.01em}
+.sf{font-style:italic;font-size:19px;color:var(--sub);margin:0 0 12px}
+figure{margin:0 0 12px}figure img{width:100%;display:block;border-radius:4px}
+figcaption{font-size:13px;font-style:italic;color:var(--sub);margin-top:5px}
+figcaption a{color:var(--accent);font-style:normal;font-weight:600;text-decoration:none}
+p{margin:0 0 .9em}
+.toc{list-style:none;padding:0;margin:14px 0 0;border:1px solid var(--rule);background:var(--card)}
+.toc li{border-bottom:1px solid var(--rule)}.toc li:last-child{border:0}
+.toc a{display:flex;gap:12px;padding:12px 14px;color:inherit;text-decoration:none}
+.toc img{width:96px;height:54px;object-fit:cover;border-radius:3px;flex-shrink:0}
+.toc .t{font:700 17px/1.25 'Playfair Display',Georgia,serif}.toc .m{font:500 12px Inter,system-ui,sans-serif;color:var(--sub);margin-top:4px}
+.end{text-align:center;font:600 12px Inter,system-ui,sans-serif;letter-spacing:.12em;text-transform:uppercase;color:var(--sub);margin-top:30px}
+.end a{color:var(--accent);text-decoration:none}
+.msg{text-align:center;color:var(--sub);padding:60px 10px;font-family:Inter,system-ui,sans-serif;font-size:15px}
+</style>
+</head>
+<body>
+<main id="app"><div class="msg">Loading…</div></main>
+<script>
+(function(){
+  'use strict';
+  var host=location.hostname,owner='nazeershaik6033-gif',repo='Instapaper';
+  if(/\.github\.io$/i.test(host)){owner=host.split('.')[0];var seg=location.pathname.split('/')[1];if(seg&&!/\.html$/.test(seg))repo=seg}
+  var RAW='https://raw.githubusercontent.com/'+owner+'/'+repo+'/blog-posts/';
+  document.getElementById('rss').href=RAW+'feed.xml';
+  var app=document.getElementById('app');
+  function el(tag,attrs,kids){var e=document.createElement(tag);for(var k in (attrs||{})){if(k==='text')e.textContent=attrs[k];else e.setAttribute(k,attrs[k])}
+    (kids||[]).forEach(function(c){if(c)e.appendChild(typeof c==='string'?document.createTextNode(c):c)});return e}
+  function day(t){return new Date(t).toLocaleDateString(undefined,{weekday:'long',day:'numeric',month:'long',year:'numeric'})}
+  function thumb(v){return v?'https://i.ytimg.com/vi/'+v+'/hqdefault.jpg':''}
+  function mast(title,line){return el('header',{class:'mast'},[el('div',{class:'dl'},[el('span',{text:line[0]}),el('span',{text:line[1]})]),
+    el('div',{class:'mt'},[el('a',{href:'post.html',text:/weekly/i.test(title)?'The Weekly Transcript':'The Daily Transcript'})]),
+    el('div',{class:'sub',text:title.replace(/^The (Daily|Weekly) Transcript\s*[—-]\s*/,'')})])}
+  function fail(m){app.textContent='';app.appendChild(el('div',{class:'msg',text:m}))}
+  function get(u){return fetch(u+(u.indexOf('?')<0?'?':'&')+'t='+Math.floor(Date.now()/60000)).then(function(r){if(!r.ok)throw new Error(r.status);return r.json()})}
+  var slug=new URLSearchParams(location.search).get('p');
+  if(slug&&!/^[\w-]{1,90}$/.test(slug)){fail('That page doesn’t exist.');return}
+  if(!slug){
+    get(RAW+'index.json').then(function(list){
+      document.title='The Daily Transcript';app.textContent='';
+      app.appendChild(mast('Papers made from the videos I follow',[list.length+' papers','RSS: feed.xml']));
+      app.appendChild(el('ul',{class:'toc'},list.map(function(x){return el('li',null,[el('a',{href:'post.html?p='+x.slug},[
+        x.videoId?el('img',{src:thumb(x.videoId),alt:'',loading:'lazy'}):null,
+        el('div',null,[el('div',{class:'t',text:x.title.replace(/^The (Daily|Weekly) Transcript\s*[—-]\s*/,'')}),el('div',{class:'m',text:day(x.at)+' · '+x.stories+' stories · '+x.lead})])])])})));
+    }).catch(function(){fail('No papers published yet.')});
+    return;
+  }
+  get(RAW+'posts/'+slug+'.json').then(function(p){
+    document.title=p.title;app.textContent='';
+    app.appendChild(mast(p.title,[day(p.at),p.stories.length+' stories']));
+    p.stories.forEach(function(s,i){
+      var kids=[el('div',{class:'kick',text:s.channel||''}),el('h2',{text:s.headline}),s.standfirst?el('p',{class:'sf',text:s.standfirst}):null];
+      if(s.videoId)kids.push(el('figure',null,[el('img',{src:thumb(s.videoId),alt:'',loading:i?'lazy':'eager'}),
+        el('figcaption',null,[(s.title||'')+' ',el('a',{href:'https://www.youtube.com/watch?v='+s.videoId,target:'_blank',rel:'noopener',text:'▶ Watch'})])]));
+      String(s.story||'').split(/\n{2,}/).filter(Boolean).forEach(function(t){kids.push(el('p',{text:t}))});
+      app.appendChild(el('section',null,kids));
+    });
+    app.appendChild(el('div',{class:'end'},['— End of the paper — · ',el('a',{href:'post.html',text:'All papers'})]));
+  }).catch(function(){fail('That paper isn’t here (yet). If it was just published, give it a minute.')});
+})();
+</script>
+</body>
+</html>

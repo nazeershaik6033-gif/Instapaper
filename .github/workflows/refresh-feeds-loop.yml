@@ -143,6 +143,30 @@ jobs:
               gh issue close "$n" --repo "$GITHUB_REPOSITORY" || true
             done
           }
+          # Publish papers sent by the app ("publish: …" issues you opened, from Daily / Weekly Transcript → Share →
+          # Publish as a public web page): scripts/publish-post.mjs adds the post to the blog-posts branch, which
+          # post.html on your GitHub Pages site shows. The issue gets the link and is closed.
+          apply_publish() {
+            gh issue list --repo "$GITHUB_REPOSITORY" --state open --author "$GITHUB_REPOSITORY_OWNER" --limit 10 --json number,title \
+                --jq '[.[] | select(.title | ascii_downcase | startswith("publish"))] | sort_by(.number) | .[].number' |
+            while read -r n; do
+              gh issue view "$n" --repo "$GITHUB_REPOSITORY" --json body --jq .body > "$RUNNER_TEMP/pub.txt"
+              blog="$RUNNER_TEMP/blog"; rm -rf "$blog"
+              remote="https://x-access-token:${GH_TOKEN}@github.com/${GITHUB_REPOSITORY}.git"
+              if ! git clone -q --depth 1 --branch blog-posts "$remote" "$blog" 2>/dev/null; then
+                mkdir -p "$blog" && ( cd "$blog" && git init -q -b blog-posts && git remote add origin "$remote" )
+              fi
+              if slug=$(node scripts/publish-post.mjs "$RUNNER_TEMP/pub.txt" "$blog" 2>&1); then
+                if ( cd "$blog" && git config user.name "feed-refresh[bot]" && git config user.email "feed-refresh@users.noreply.github.com" \
+                     && git add -A && git commit -q -m "Publish $slug" && git push -q origin HEAD:blog-posts ); then
+                  msg="Published: https://${GITHUB_REPOSITORY_OWNER,,}.github.io/${GITHUB_REPOSITORY#*/}/post.html?p=${slug}"
+                else msg="Could not save the post. Nothing was published."; fi
+              else msg="Not published: $slug"; fi
+              echo "publish #$n: $msg"
+              gh issue comment "$n" --repo "$GITHUB_REPOSITORY" --body "$msg" || true
+              gh issue close "$n" --repo "$GITHUB_REPOSITORY" || true
+            done
+          }
           end=$(( $(date +%s) + RUN_FOR_MIN * 60 ))
           while :; do
             started=$(date +%s)
@@ -150,6 +174,7 @@ jobs:
             # always start a pass from the newest main (new sources, scripts, workflow tweaks)
             git fetch -q --depth 1 origin main && git reset -q --hard FETCH_HEAD || true
             apply_issues || true
+            apply_publish || true
             pub="$RUNNER_TEMP/pub"; rm -rf "$pub"; mkdir -p "$pub/feeds" "$pub/social"
             if [ -f routine-sources.json ] && node scripts/refresh-feeds.mjs routine-sources.json "$pub/feeds/feeds.json"; then
               # Instagram / X / Threads from free bridges (RSS.app link last), into the same feeds.json

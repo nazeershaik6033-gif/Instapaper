@@ -9751,6 +9751,39 @@ function App(){
   const [vidTool,setVidTool]=useState(null); // {id} — transcript sheet for a video
   const [paperBuild,setPaperBuild]=useState(null); // posts snapshot for the daily paper
   const [paperOpen,setPaperOpen]=useState(null); // paper id
+  const [combineO,setCombineO]=useState(false);
+  /* your papers: day papers and weekly digests made on the fly from your editions, plus the ones you made */
+  const allPapers=useMemo(()=>{const E=window.InstaEdition;const auto=E&&E.papersFromEditions?E.papersFromEditions(data.articles):[];return auto.concat(data.papers||[])},[data.articles,data.papers]);
+  const paperTitle=p=>(p.kind==='week'?'The Weekly Transcript':'The Daily Transcript')+' — '+(p.label||new Date(p.at).toLocaleDateString([],{weekday:'long',day:'numeric',month:'short'}));
+  /* Post to Blogs: the paper becomes one library article, listed in Blogs → Saved posts under "My papers" */
+  const postPaperToBlogs=paper=>{
+    const E=window.InstaEdition;const {body}=E.paperStoriesHtml(paper,data.articles,false);
+    const url='evolve:paper:'+paper.id+':'+paper.stories.length,title=paperTitle(paper);
+    const words=paper.stories.reduce((n,st)=>n+String(st.story||'').split(/\s+/).length,0);
+    const art={id:uid(),url,title,source:'My papers',author:'',image:paper.stories[0]&&paper.stories[0].videoId?'https://i.ytimg.com/vi/'+paper.stories[0].videoId+'/hqdefault.jpg':'',
+      html:body.replace(/<section[^>]*>/g,'<div>').replace(/<\/section>/g,'</div><hr>'),text:paper.stories.map(st=>st.headline+'\n\n'+st.story).join('\n\n'),
+      excerpt:paper.stories.map(st=>st.headline).slice(0,3).join(' · '),words,readMin:Math.max(1,Math.round(words/230)),isVideo:false,videoId:null,isEdition:true,
+      publishedAt:Date.now(),addedAt:Date.now(),liked:false,archived:false,folderId:null,tags:['paper'],progress:0,opens:0,highlights:[]};
+    update(d=>{
+      const feeds=(d.feeds||[]).some(f=>f.id===BLOG_SAVED)?d.feeds:(d.feeds||[]).concat([{id:BLOG_SAVED,name:'Saved posts',site:'',feedUrl:'',groupId:null}]);
+      const bf=Object.assign({},d.blogFeeds||{});const cur=((bf[BLOG_SAVED]||{}).entries||[]).filter(e=>e.url!==url);
+      bf[BLOG_SAVED]={fetchedAt:Date.now(),entries:[{url,title,publishedMs:Date.now(),excerpt:art.excerpt,image:art.image,author:'Evolve',label:'My papers'}].concat(cur)};
+      return{...d,articles:[art,...d.articles.filter(x=>x.url!==url)],feeds,blogFeeds:bf};
+    });
+    toastFn('Posted to Blogs → Saved posts · My papers');
+  };
+  /* Publish: a public page on your GitHub site. Like the sources sync without a token, GitHub opens a ready-made
+     issue ("publish: …"); press Submit and the feed job puts the page up within 15 minutes and replies with its link. */
+  const publishPaper=paper=>{
+    const cap=(t,n)=>{t=String(t||'');return t.length>n?t.slice(0,n-1)+'…':t};
+    const stories=paper.stories.map(st=>({headline:cap(st.headline,200),standfirst:cap(st.standfirst,320),story:cap(st.story,1900),channel:cap(st.channel,80),videoId:st.videoId||'',publishedMs:st.publishedMs||0,title:cap(st.title,200)}));
+    let payload={v:1,kind:paper.kind||'day',title:paperTitle(paper),at:paper.at,stories};
+    while(JSON.stringify(payload).length>58000&&payload.stories.length>1)payload={...payload,stories:payload.stories.slice(0,-1)};
+    const body='```json\n'+JSON.stringify(payload)+'\n```';
+    const{owner,repo}=repoSlug();const base='https://github.com/'+owner+'/'+repo+'/issues/new?title='+encodeURIComponent('publish: '+paperTitle(paper).slice(0,120));
+    if(body.length<6500){openExternalUrl(base+'&body='+encodeURIComponent(body));toastFn('On GitHub press “Submit new issue”. The page goes up within 15 minutes.')}
+    else{copyText(body);openExternalUrl(base);toastFn('Copied. On GitHub paste it into the box, then press “Submit new issue”.')}
+  };
   useEffect(()=>{
     if(!vidTool||!vidTool.autoRead)return;
     const a=data.articles.find(x=>x.id===vidTool.id);
@@ -10186,7 +10219,7 @@ function App(){
   }
   /* premium Home: insights above the library (week / month comparisons) */
   if(scope.type==='home'&&!q&&!selecting&&window.InstaStats)body=h('div',null,h(window.InstaStats.HomeDashboard,{T,data:libData,onOpen:openArticle,onGo:t=>{setScope({type:t});setQuery('')}}),
-    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:libData.articles,onOpen:id=>setEdition({id}),papers:data.papers||[],onOpenPaper:id=>setPaperOpen(id)}):null,body);
+    window.InstaEdition?h(window.InstaEdition.EditionsShelf,{T,articles:libData.articles,onOpen:id=>setEdition({id}),papers:allPapers,onOpenPaper:id=>setPaperOpen(id),onCombine:()=>setCombineO(true)}):null,body);
 
   return h('div',{className:'appframe'},
     h('div',{style:{height:'100%',display:'flex',flexDirection:'column',background:T.bg,color:T.fg,fontFamily:UIF,overflow:'hidden',paddingTop:SAFE_T}},
@@ -10352,8 +10385,11 @@ function App(){
       onMaximize:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})},onNewspaper:()=>{const id=vidTool.id;setVidTool(null);setEdition({id})}}):null,
     paperBuild&&window.InstaEdition?h(window.InstaEdition.PaperBuilder,{T,S,posts:paperBuild,articles:data.articles,ensure:ensureVideoArticle,patchArticle,toastFn,
       onClose:()=>setPaperBuild(null),onBuilt:p=>{update(d=>({...d,papers:[p,...(d.papers||[])].slice(0,30)}));setPaperBuild(null);setPaperOpen(p.id);toastFn('Today’s paper is ready')}}):null,
-    paperOpen&&window.InstaEdition&&(data.papers||[]).some(p=>p.id===paperOpen)?h(window.InstaEdition.PaperReader,{key:paperOpen,T,S,paper:(data.papers||[]).find(p=>p.id===paperOpen),articles:data.articles,toastFn,
-      onClose:()=>setPaperOpen(null),onDelete:()=>{const id=paperOpen;setPaperOpen(null);update(d=>({...d,papers:(d.papers||[]).filter(p=>p.id!==id)}));toastFn('Paper deleted')},
+    combineO&&window.InstaEdition?h(window.InstaEdition.CombinePicker,{T,articles:data.articles,onClose:()=>setCombineO(false),
+      onMake:p=>{update(d=>({...d,papers:[p,...(d.papers||[])].slice(0,40)}));setCombineO(false);setPaperOpen(p.id);toastFn('Your paper is ready')}}):null,
+    paperOpen&&window.InstaEdition&&allPapers.some(p=>p.id===paperOpen)?h(window.InstaEdition.PaperReader,{key:paperOpen,T,S,paper:allPapers.find(p=>p.id===paperOpen),articles:data.articles,toastFn,
+      onPostToBlogs:postPaperToBlogs,onPublish:publishPaper,
+      onClose:()=>setPaperOpen(null),onDelete:allPapers.find(p=>p.id===paperOpen).virtual?null:()=>{const id=paperOpen;setPaperOpen(null);update(d=>({...d,papers:(d.papers||[]).filter(p=>p.id!==id)}));toastFn('Paper deleted')},
       onOpenEdition:id=>setEdition({id}),onSaveToLibrary:c=>saveEditionCopy(null,Object.assign({},c,{url:'paper:'+paperOpen}))}):null,
     edition&&byId(edition.id)&&window.InstaEdition?h(window.InstaEdition.EditionReader,{key:edition.id,T,S,a:byId(edition.id),patch:p=>patchArticle(edition.id,p),toastFn,initialPanel:edition.panel,
       onClose:()=>setEdition(null),onSaveToLibrary:c=>saveEditionCopy(edition.id,c),onOpenVideo:()=>{const id=edition.id;setEdition(null);setReadingId(id)}}):null,
