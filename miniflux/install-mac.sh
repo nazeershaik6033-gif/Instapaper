@@ -58,8 +58,6 @@ fi
 if [ "$("${PSQL[@]}" -c "SELECT 1 FROM pg_database WHERE datname='miniflux'")" != 1 ]; then
   "${PSQL[@]}" -c "CREATE DATABASE miniflux OWNER miniflux"
 fi
-# Miniflux needs the hstore extension, which only a superuser (you) can create
-"$PGBIN/psql" -h localhost -d miniflux -tAq -c "CREATE EXTENSION IF NOT EXISTS hstore" >/dev/null 2>&1 || true
 
 say "3/6 Tailscale (free https address)"
 TS=""
@@ -91,6 +89,19 @@ BASE_URL=https://$HOST
 POLLING_FREQUENCY=15
 EOF
 chmod 600 "$CONF"
+
+# An earlier version of this script created the hstore extension as you, and Miniflux's database setup later
+# removes it, which only the owner can do ("must be owner of extension hstore"). If it's there and not Miniflux's,
+# give the miniflux role superuser rights just for one setup run, then take them back. No data is touched.
+HS_OWNER="$("$PGBIN/psql" -h localhost -d miniflux -tAq -c "SELECT r.rolname FROM pg_extension e JOIN pg_roles r ON r.oid=e.extowner WHERE e.extname='hstore'" 2>/dev/null || true)"
+if [ -n "$HS_OWNER" ] && [ "$HS_OWNER" != miniflux ]; then
+  echo "fixing the database set up by an earlier version of this script…"
+  launchctl bootout "gui/$(id -u)/app.miniflux" >/dev/null 2>&1 || true
+  "${PSQL[@]}" -c "ALTER ROLE miniflux SUPERUSER"
+  mig=0; "$BREW/opt/miniflux/bin/miniflux" -c "$CONF" -migrate >>"$DIR/miniflux.log" 2>&1 || mig=$?
+  "${PSQL[@]}" -c "ALTER ROLE miniflux NOSUPERUSER"
+  [ "$mig" = 0 ] || die "Miniflux's database setup failed. The last lines of $DIR/miniflux.log say why."
+fi
 
 say "5/6 Start Miniflux whenever you log in"
 mkdir -p "$(dirname "$PLIST")"
