@@ -1051,6 +1051,7 @@ function useSourcesAutoSync(brief,token){
    the GitHub job publishes (free bridge first, RSS.app backup), since Miniflux can't read those apps itself. */
 const MF_KEY='insta_miniflux_v1';
 const MF_INSTALL_CMD=(()=>{const{owner,repo}=repoSlug();return'curl -fsSL https://raw.githubusercontent.com/'+owner+'/'+repo+'/main/miniflux/install.sh | sudo bash'})();
+const MF_INSTALL_MAC=(()=>{const{owner,repo}=repoSlug();return'curl -fsSL https://raw.githubusercontent.com/'+owner+'/'+repo+'/main/miniflux/install-mac.sh | bash'})();
 const mfStore={
   st:(()=>{try{return JSON.parse(localStorage.getItem(MF_KEY)||'null')||{}}catch(e){return{}}})(),subs:new Set(),
   set(p){this.st=Object.assign({},this.st,p);try{localStorage.setItem(MF_KEY,JSON.stringify(this.st))}catch(e){}this.subs.forEach(f=>f())}
@@ -1173,10 +1174,11 @@ function MinifluxBox({T,S,data,set,toastFn}){
       err?h('div',{style:{...small,color:'#c2410c',marginTop:8}},err):null,
       h('div',{style:{fontSize:14,fontWeight:650,margin:'20px 0 6px'}},'Don’t have Miniflux yet?'),
       h('div',{style:{...small,lineHeight:1.7}},
-        '1. Create a free Oracle Cloud “Always Free” server (Ubuntu) and open ports 80 and 443.',h('br'),
-        '2. Run one command on it. It installs Miniflux with a free https address and prints a link that fills this page in:',h('br'),
-        h('span',{onClick:()=>{copyText(MF_INSTALL_CMD);toastFn('Install command copied')},style:{display:'block',margin:'4px 0',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_CMD+'  ⧉'),
-        '3. Open your Miniflux, sign in, Settings → API Keys → Create a new API key, and paste it above.'),
+        h('b',{style:{color:T.fg}},'On your Mac (free, no card):'),' open Terminal and run this. It installs Miniflux, starts it whenever you log in, gives it a free https address with Tailscale, and prints a link that fills this page in. Miniflux runs while the Mac is on; your feeds in this app don’t need it.',
+        h('span',{onClick:()=>{copyText(MF_INSTALL_MAC);toastFn('Mac command copied')},style:{display:'block',margin:'4px 0 8px',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_MAC+'  ⧉'),
+        h('b',{style:{color:T.fg}},'Or on an always-on cloud server:'),' run this on a fresh Ubuntu server (e.g. Oracle Cloud Always Free, which verifies a card).',
+        h('span',{onClick:()=>{copyText(MF_INSTALL_CMD);toastFn('Server command copied')},style:{display:'block',margin:'4px 0 8px',padding:'8px 10px',borderRadius:8,background:T.search,color:T.fg,fontFamily:'ui-monospace,monospace',fontSize:11.5,wordBreak:'break-all',cursor:'pointer'}},MF_INSTALL_CMD+'  ⧉'),
+        'Then open your Miniflux, sign in, Settings → API Keys → Create a new API key, and paste it above.'),
       h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
         h('button',{onClick:()=>openExternalUrl(guide),className:'act95',style:btn(false)},'Step-by-step guide ↗'),
         h('button',{onClick:()=>openExternalUrl('https://miniflux.app/docs/'),className:'act95',style:btn(false)},'Miniflux docs ↗')),

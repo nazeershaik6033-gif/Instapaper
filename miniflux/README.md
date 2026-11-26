@@ -6,10 +6,32 @@ free Instagram / X / Threads feeds with RSS-Bridge and RSSHub, and publishes the
 Run Miniflux only if you also want everything in Miniflux's own web reader, or in a Fever or Google
 Reader app such as Reeder, NetNewsWire or ReadKit.
 
-## Self-host it free (about 15 minutes, once)
+## On your Mac: free, no card (about 10 minutes, once)
 
-Miniflux needs a computer that's always on. **Oracle Cloud's "Always Free" server** costs nothing, forever.
-Oracle asks for a card to verify you're a person, but doesn't charge it for Always Free resources.
+Open **Terminal** on the Mac and run:
+
+```bash
+curl -fsSL https://raw.githubusercontent.com/nazeershaik6033-gif/Instapaper/main/miniflux/install-mac.sh | bash
+```
+
+It installs Homebrew if needed, then PostgreSQL and Miniflux (no Docker). It sets Miniflux to start by itself whenever
+you log in, and gives it a free https address with [Tailscale Funnel](https://tailscale.com/kb/1223/funnel)
+(`https://<your-mac>.<tailnet>.ts.net`), so your phone reaches it from anywhere. Along the way it asks for your Mac
+password, and for a free Tailscale sign-in (Google / Apple / GitHub / Microsoft, no card). If Tailscale asks you to
+turn on Funnel or HTTPS, open the link it shows and allow it. At the end it prints the admin password and a link that
+opens the app's **Settings → Miniflux** with the address filled in. Then create an API key in Miniflux
+(**Settings → API Keys**) and paste it into the app.
+
+- Miniflux only runs while the Mac is on and awake. When it's off, the Miniflux website and the Miniflux sync pause;
+  everything in the app (My Routine, Blogs, the social feed) keeps working, because it comes from GitHub. Miniflux
+  catches up when the Mac wakes.
+- Run the same command again to update; it keeps your data and password (`~/.miniflux/secrets`).
+- To remove it: `launchctl bootout gui/$(id -u)/app.miniflux; tailscale funnel --https=443 off; brew uninstall miniflux`
+
+## On a cloud server: always on (about 15 minutes, once)
+
+For Miniflux that's always on, use a server. **Oracle Cloud's "Always Free" server** costs nothing, but sign-up asks
+for a card and places a small verification hold (about US $1, around ₹80–100), which Oracle reverses.
 
 ### 1. Create the free server
 1. Sign up at <https://signup.cloud.oracle.com>. Choose a **Home Region** near you (e.g. India South / Mumbai).
