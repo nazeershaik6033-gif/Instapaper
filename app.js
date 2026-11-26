@@ -694,7 +694,9 @@ function parseYtText(raw){
     const tn=entry.getElementsByTagName('media:thumbnail')[0];
     const thumb=(tn&&tn.getAttribute('url'))||('https://i.ytimg.com/vi/'+videoId+'/hqdefault.jpg');
     const alt=[].slice.call(entry.getElementsByTagName('link')).map(l=>l.getAttribute('href')||'').find(x=>/youtube\.com\/(shorts|watch)/.test(x))||'';
-    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb,short:/\/shorts\//.test(alt)||undefined};
+    const st=entry.getElementsByTagName('media:statistics')[0];const views=st?+(st.getAttribute('views')||0):0;
+    const desc=tx('media:description').replace(/\s+/g,' ').slice(0,260);
+    return{videoId,title:tx('title'),publishedMs:Date.parse(tx('published'))||0,thumb,short:/\/shorts\//.test(alt)||undefined,desc:desc||undefined,views:views||undefined};
   }).filter(Boolean);
 }
 function tmin(t){const m=/^(\d{1,2}):(\d{2})/.exec(t||'');return m?(+m[1])*60+(+m[2]):0}
@@ -881,7 +883,8 @@ const acctSlug=h=>String(h||'').toLowerCase().replace(/^@/,'').replace(/[^a-z0-9
 const bridgedSnapKey=(p,hd)=>'social:'+p+':'+acctSlug(hd);
 function bridgedFeedUrl(p,hd){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/accounts/'+p+'-'+acctSlug(hd)+'.xml'}
 function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)||!!bridgedHandle(it)}
-const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb,short:x.short||undefined}));
+const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb,short:x.short||undefined,excerpt:x.desc||undefined,views:x.views||undefined}));
+const fmtViews=n=>!n?'':n>=1e6?(n/1e6).toFixed(n>=1e7?0:1).replace(/\.0$/,'')+'M views':n>=1e3?(n/1e3).toFixed(n>=1e4?0:1).replace(/\.0$/,'')+'K views':n+' views';
 const isShortEntry=e=>!!(e&&(e.short||/\/shorts\//.test(e.url||'')));
 /* What to fetch and how to read it, for a source — shared by the one-by-one path and the batch path. */
 function feedSpec(it){
@@ -2268,6 +2271,7 @@ const Icons={
   expandAll:s=>Svg({size:s},P('M7 8.5 12 4l5 4.5M7 15.5l5 4.5 5-4.5')),
   back:s=>Svg({size:s},P('M14.5 5.5 8 12l6.5 6.5')),
   chevR:s=>Svg({size:s},P('M9.5 5.5 16 12l-6.5 6.5')),
+  chevD:s=>Svg({size:s},P('M5.5 9.5 12 16l6.5-6.5')),
   share:s=>Svg({size:s},P('M12 3.5v11M8.2 7 12 3.3 15.8 7'),P('M6.5 11H5.8C4.8 11 4 11.8 4 12.8v6c0 1 .8 1.8 1.8 1.8h12.4c1 0 1.8-.8 1.8-1.8v-6c0-1-.8-1.8-1.8-1.8h-.7')),
   play:(s,fill)=>Svg({size:s},h('path',{d:'M7.5 5.2v13.6L19 12 7.5 5.2Z',fill:fill?'currentColor':'none',stroke:'currentColor',strokeWidth:1.7,strokeLinejoin:'round'})),
   pause:s=>Svg({size:s},h('rect',{x:6.4,y:5,width:3.6,height:14,rx:1,fill:'currentColor'}),h('rect',{x:14,y:5,width:3.6,height:14,rx:1,fill:'currentColor'})),
@@ -3107,7 +3111,11 @@ function Reader({a,T,S,patch,onAction,toastFn,addHighlight,onHighlightTap,onRetr
     if(selbar)setSelbar(null);
     if(blockPopup)setBlockPopup(null);
     const max=el.scrollHeight-el.clientHeight;
-    const p=max>0?clamp(el.scrollTop/max,0,1):1;
+    /* a video page is short (player + transcript label): scrolling it, or the page shifting when the transcript
+       sheet closes, used to count as "read to the end" and auto-archive the video. Videos are only marked watched
+       when you say so; and a page too short to scroll says nothing about reading. */
+    if(a.isVideo||max<=4)return;
+    const p=clamp(el.scrollTop/max,0,1);
     if(Math.abs(p-lastSaved.current)>0.02||(p>=0.97&&lastSaved.current<0.97)){
       lastSaved.current=p;
       // debounce the actual (app-wide) state write until the scroll gesture settles —
@@ -5636,6 +5644,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     document.addEventListener('visibilitychange',wake);window.addEventListener('focus',wake);window.addEventListener('pageshow',wake);
     return()=>{clearInterval(iv);document.removeEventListener('visibilitychange',wake);window.removeEventListener('focus',wake);window.removeEventListener('pageshow',wake)};
   },[]);
+  const [openRows,setOpenRows]=useState(()=>new Set());const [rowPlay,setRowPlay]=useState('');
+  const toggleRow=id=>{vibrate(6);setOpenRows(cur=>{const n=new Set(cur);n.has(id)?n.delete(id):n.add(id);return n})};
   const newEntries=it=>{const c=feeds[it.id];if(!c||!c.entries)return[];return c.entries.filter(e=>e.publishedMs>=win.start&&e.publishedMs<=win.end).sort((a,b)=>b.publishedMs-a.publishedMs)};
   const toggle=id=>{if(!win.key)return;vibrate(8);onBrief(b=>{const map=normalizeDone(b.done);const cur=map[win.key]||[];map[win.key]=cur.includes(id)?cur.filter(x=>x!==id):cur.concat([id]);return{...b,done:map}})};
   const markSeen=urls=>{const list=(urls||[]).filter(Boolean);if(!list.length)return;onBrief(b=>{const s=Object.assign({},b.seen||{});const t=Date.now();list.forEach(u=>{s[u]=t});const cut=t-30*86400000;for(const k in s){if(s[k]<cut)delete s[k]}return{...b,seen:s}})};
@@ -6092,8 +6102,39 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     toastFn((on?'Marked done: ':'Marked not done: ')+ids.length);setMSel(null)};
   const lpStart=it=>{lpRef.current.fired=false;clearTimeout(lpRef.current.t);lpRef.current.t=setTimeout(()=>{lpRef.current.fired=true;vibrate(10);setMSel(cur=>cur&&cur.includes(it.id)?cur:(cur||[]).concat([it.id]))},460)};
   const lpEnd=()=>clearTimeout(lpRef.current.t);
+  /* ▾ under a channel: its new videos as cards (thumbnail, title, views, description) with Watch (plays right in
+     the card), Transcribe → the newspaper opens by itself once the transcript is in (or Read, when it already is),
+     Done and Save. */
+  const entriesOf=it=>{const ne=newEntries(it);const all=((feeds[it.id]||{}).entries)||[];return(ne.length?ne:all.slice(0,3)).slice(0,6)};
+  const videoCard=(it,e)=>{
+    const vid=ytIdOf(e.url),seen=!!seenMap[e.url],has=!!(txOf&&txOf(e)),saved=!!(isSaved&&isSaved(e.url)),isShort=isShortEntry(e),playingHere=rowPlay===e.url;
+    const pill=(icon,label,fn,primary,on)=>h('button',{onClick:ev=>{ev.stopPropagation();fn()},className:'act95',
+      style:{display:'flex',alignItems:'center',justifyContent:'center',gap:6,flex:primary?1.4:1,minWidth:0,padding:'9px 6px',borderRadius:11,fontSize:13,fontWeight:650,whiteSpace:'nowrap',
+        background:primary?T.fg:on?hexA(T.accent,.14):T.bg,color:primary?T.bg:on?T.accent:T.fg,border:primary?'none':'1px solid '+T.hair}},icon,label);
+    return h('div',{key:e.url,style:{borderRadius:16,overflow:'hidden',background:T.card,opacity:seen&&!playingHere?.78:1}},
+      h('div',{style:{position:'relative',width:'100%',aspectRatio:'16 / 9',background:'#000'}},
+        playingHere&&vid?h(YtPlayer,{vid,onEnded:()=>{setRowPlay('');markSeen([e.url])}})
+        :h('button',{onClick:()=>{if(vid){setRowPlay(e.url);markSeen([e.url])}else openEntry(e)},'aria-label':'Watch '+(e.title||''),style:{position:'absolute',inset:0,display:'block'}},
+          h('img',{src:entryThumb(e),alt:'',loading:'lazy',referrerPolicy:'no-referrer',onError:x=>{x.target.style.visibility='hidden'},style:{width:'100%',height:'100%',objectFit:'cover',display:'block'}}),
+          h('span',{style:{position:'absolute',inset:0,display:'flex',alignItems:'center',justifyContent:'center'}},
+            h('span',{style:{width:52,height:52,borderRadius:26,background:'rgba(0,0,0,.55)',backdropFilter:'blur(6px)',WebkitBackdropFilter:'blur(6px)',display:'flex',alignItems:'center',justifyContent:'center',color:'#fff',paddingLeft:3}},Icons.play(22,true))),
+          h('span',{style:{position:'absolute',left:8,top:8,display:'flex',gap:5}},
+            !seen?h('span',{style:{fontSize:10.5,fontWeight:800,letterSpacing:'.04em',padding:'3px 7px',borderRadius:6,background:T.accent,color:'#fff'}},'NEW'):null,
+            isShort?h('span',{style:{fontSize:10.5,fontWeight:800,padding:'3px 7px',borderRadius:6,background:'rgba(0,0,0,.6)',color:'#fff'}},'SHORT'):null,
+            has?h('span',{style:{fontSize:10.5,fontWeight:800,padding:'3px 7px',borderRadius:6,background:'rgba(0,0,0,.6)',color:'#fff'}},'TRANSCRIPT ✓'):null))),
+      h('div',{style:{padding:'11px 12px 4px'}},
+        h('div',{style:{fontSize:15,fontWeight:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden'}},cleanEntryTitle(e.title,it.name)||e.title||'Video'),
+        h('div',{style:{fontSize:12.5,color:T.sub,marginTop:4}},[fmtAgo(e.publishedMs),fmtViews(e.views),isShort?'Short':''].filter(Boolean).join(' · ')),
+        e.excerpt?h('div',{style:{fontSize:13,color:T.meta,lineHeight:1.45,marginTop:6,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},e.excerpt):null),
+      h('div',{style:{display:'flex',gap:7,padding:'10px 12px 12px'}},
+        isShort?null:pill(has?Icons.newspaper(15):Icons.notes(15),has?'Read':'Transcribe',()=>vtool({e,it},has?'newspaper':'read'),true),
+        pill(Icons.check(15),seen?'Done':'Done?',()=>{if(seen)unSeen(e.url);else{markSeen([e.url]);vibrate(8)}},false,seen),
+        pill(Icons.heart(15),saved?'Saved':'Save',()=>onSaveEntry&&onSaveEntry(e,it.name),false,saved),
+        pill(Icons.external(15),'',()=>openEntry(e))));
+  };
   const subRow=it=>{const n=newOf(it),done=doneIds.includes(it.id)||autoDone(it),selOn=!!(mSel&&mSel.includes(it.id));const nm=String(it.name||'Item');
-    return h('div',{key:it.id,role:'button',tabIndex:0,onClick:()=>{if(lpRef.current.fired){lpRef.current.fired=false;return}mSel?flipSel(it.id):setAct(it)},
+    const canOpen=!mSel&&it.kind==='youtube'&&entriesOf(it).length>0,isOpen=canOpen&&openRows.has(it.id);
+    return h(Fragment,{key:it.id},h('div',{key:it.id,role:'button',tabIndex:0,onClick:()=>{if(lpRef.current.fired){lpRef.current.fired=false;return}mSel?flipSel(it.id):setAct(it)},
       onTouchStart:()=>lpStart(it),onTouchEnd:lpEnd,onTouchMove:lpEnd,onContextMenu:e=>{e.preventDefault();setMSel(cur=>(cur||[]).includes(it.id)?cur:(cur||[]).concat([it.id]))},
       className:'act98',style:{display:'flex',alignItems:'center',gap:13,width:'100%',textAlign:'left',padding:'9px 4px',color:T.fg,background:selOn?hexA(T.accent,.08):'transparent',borderRadius:12,WebkitTouchCallout:'none',userSelect:'none'}},
       mSel?h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(selOn?T.accent:T.hair),background:selOn?T.accent:'transparent',color:'#fff'}},selOn?Icons.check(13):null):null,
@@ -6105,9 +6146,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('span',{style:{display:'block',fontSize:15.5,fontWeight:600,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap',opacity:done?.6:1}},nm),
         h('span',{style:{display:'block',fontSize:13,color:T.sub,marginTop:1,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
           handleOf(it),n?h('span',{style:{color:T.accent,fontWeight:600}},' · '+n+' new'):null,done?' · Done':'')),
+      canOpen?h('button',{onClick:e=>{e.stopPropagation();toggleRow(it.id)},onTouchStart:e=>e.stopPropagation(),'aria-label':(isOpen?'Hide ':'Show ')+nm+'’s videos','aria-expanded':isOpen,className:'act90',
+        style:{width:36,height:36,borderRadius:18,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:isOpen?hexA(T.accent,.14):T.card,color:isOpen?T.accent:T.fg,transform:isOpen?'rotate(180deg)':'none',transition:'transform 200ms, background 200ms'}},Icons.chevD(17)):null,
       n&&!mSel?h('button',{onClick:e=>{e.stopPropagation();openShorts('ch:'+it.id)},onTouchStart:e=>e.stopPropagation(),'aria-label':'Play '+nm+' — '+n+' new',className:'act90',
         style:{width:36,height:36,borderRadius:18,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',background:T.fg,color:T.bg,paddingLeft:2}},Icons.play(14,true))
-        :mSel?null:h('span',{style:{display:'flex',color:T.hair,flexShrink:0}},Icons.chevR(15)))};
+        :mSel||canOpen?null:h('span',{style:{display:'flex',color:T.hair,flexShrink:0}},Icons.chevR(15))),
+      isOpen?h('div',{key:it.id+'-v',className:'fdin',style:{display:'flex',flexDirection:'column',gap:12,padding:'4px 4px 14px 16px'}},entriesOf(it).map(e=>videoCard(it,e))):null)};
   const secHead=(g,list)=>{const key=g?g.id:'_other';
     return h('div',{key:'h'+key,style:{position:'sticky',top:0,zIndex:2,background:T.bg,display:'flex',alignItems:'center',gap:8,padding:'14px 4px 7px',borderBottom:'1px solid '+T.hair,marginBottom:2}},
       h('span',{style:{flex:1,minWidth:0,fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.meta,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(g?g.name:'Not in a group')+'  ·  '+list.length),
@@ -9707,6 +9751,13 @@ function App(){
   const [vidTool,setVidTool]=useState(null); // {id} — transcript sheet for a video
   const [paperBuild,setPaperBuild]=useState(null); // posts snapshot for the daily paper
   const [paperOpen,setPaperOpen]=useState(null); // paper id
+  useEffect(()=>{
+    if(!vidTool||!vidTool.autoRead)return;
+    const a=data.articles.find(x=>x.id===vidTool.id);
+    if(a&&String(a.transcript||'').trim().length>=200&&(a.transcriptAt||0)>vidTool.at){
+      const id=vidTool.id;setVidTool(null);setTimeout(()=>{setEdition({id,panel:null});toastFn('Transcript in · opening the newspaper')},250);
+    }
+  },[data.articles,vidTool]);
   const findVideo=vid=>dataRef.current.articles.find(a=>!a.isEdition&&(a.videoId===vid||ytIdOf(a.url)===vid));
   /* a routine video becomes a library item (once) so it can hold its transcript, editions and notes */
   const ensureVideoArticle=(e,sourceName)=>{
@@ -9724,6 +9775,9 @@ function App(){
     const id=ensureVideoArticle(e,sourceName);if(!id){if(e&&e.url)openExternalUrl(e.url);return}
     const a=findVideo(ytIdOf(e.url));const has=!!(a&&a.transcript&&String(a.transcript).trim());
     if(kind==='summary'){setAiOpen({articleId:id});return}
+    /* Transcribe → read: the transcript sheet asks how (Whisper, Gemini, Claude, a website); the moment a
+       transcript lands, the sheet closes and the newspaper edition opens by itself */
+    if(kind==='read'){if(has){setEdition({id,panel:null});return}setVidTool({id,autoRead:true,at:(a&&a.transcriptAt)||0});return}
     if(kind==='transcript'||!has){if(kind!=='transcript')toastFn('Add the transcript first — it then becomes a newspaper');setVidTool({id});return}
     setEdition({id,panel:kind==='translate'?'translate':kind==='notes'?'notes':null});
   };
