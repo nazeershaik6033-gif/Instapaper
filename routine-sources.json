@@ -1,22 +1,84 @@
 {
-  "urls": [
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCb-xXZ7ltTvrh9C6DgB9H-Q",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCKk2f4aRbSCifjCRgRj8Rkg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCuzDC9g05hef_fCN56wci4g",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCEW_Fg9lQ2VaS7DLVma01Cg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UC4alTWCTl6y_jt2_jgmxPZQ",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCY0ZvC4Ae99MOiZqn89Nr3A",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCXbKJML9pVclFHLFzpvBgWw",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCXmAKxh_qFL5703W9VPgpnA",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCY6N8zZhs2V7gNTUxPuKWoQ",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UClXAalunTPaX1YV185DWUeg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCzwCEE_PchiBULMnAJqhGVg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCKZozRVHRYsYHGEyNKuhhdA",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UC83iGbaOhZR8AWNYYNzSNjg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCeudZuDYinOWlWk69fTZCTg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCF_kWxafJ5Nr0OLd9aoCHsQ",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UC5fcjujOsqD-126Chn_BAuA",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UC-CBQChrXvLzYc9oxpMfFPg",
-    "https://www.youtube.com/feeds/videos.xml?channel_id=UCKAB3SSR5WnYA_VuDCX5AVQ"
-  ]
+ "urls": [
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCb-xXZ7ltTvrh9C6DgB9H-Q",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCKk2f4aRbSCifjCRgRj8Rkg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCuzDC9g05hef_fCN56wci4g",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCEW_Fg9lQ2VaS7DLVma01Cg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UC4alTWCTl6y_jt2_jgmxPZQ",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCY0ZvC4Ae99MOiZqn89Nr3A",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCXbKJML9pVclFHLFzpvBgWw",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCXmAKxh_qFL5703W9VPgpnA",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCY6N8zZhs2V7gNTUxPuKWoQ",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UClXAalunTPaX1YV185DWUeg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCzwCEE_PchiBULMnAJqhGVg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCKZozRVHRYsYHGEyNKuhhdA",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UC83iGbaOhZR8AWNYYNzSNjg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCeudZuDYinOWlWk69fTZCTg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCF_kWxafJ5Nr0OLd9aoCHsQ",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UC5fcjujOsqD-126Chn_BAuA",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UC-CBQChrXvLzYc9oxpMfFPg",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCKAB3SSR5WnYA_VuDCX5AVQ"
+ ],
+ "accounts": [
+  {
+   "platform": "instagram",
+   "handle": "theindianidiot",
+   "name": "@theindianidiot · Instagram",
+   "profile": "https://www.instagram.com/theindianidiot/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "thekitiki",
+   "name": "@thekitiki · Instagram",
+   "profile": "https://www.instagram.com/thekitiki/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "kalyan_battersetty",
+   "name": "@kalyan_battersetty · Instagram",
+   "profile": "https://www.instagram.com/kalyan_battersetty/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "appledsign",
+   "name": "@appledsign · Instagram",
+   "profile": "https://www.instagram.com/appledsign/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "drvikranta",
+   "name": "@drvikranta · Instagram",
+   "profile": "https://www.instagram.com/drvikranta/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "fit.khurana",
+   "name": "@fit.khurana · Instagram",
+   "profile": "https://www.instagram.com/fit.khurana/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "prasadtechinteluguofficial",
+   "name": "@prasadtechinteluguofficial · Instagram",
+   "profile": "https://www.instagram.com/prasadtechinteluguofficial/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "rajshamani",
+   "name": "@rajshamani · Instagram",
+   "profile": "https://www.instagram.com/rajshamani/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "dr.pal.manickam",
+   "name": "@dr.pal.manickam · Instagram",
+   "profile": "https://www.instagram.com/dr.pal.manickam/"
+  },
+  {
+   "platform": "x",
+   "handle": "learningeleven",
+   "name": "@learningeleven · X",
+   "profile": "https://x.com/learningeleven"
+  }
+ ]
 }
