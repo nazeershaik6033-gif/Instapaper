@@ -1225,9 +1225,13 @@ async function fetchFeed(it){
   const bh=bridgedHandle(it);
   if(bh){
     /* the server's free-bridge feed first (raw.githubusercontent.com allows CORS: no proxy needed), then the RSS.app backup */
-    try{const r=await fetchWithTimeout(bridgedFeedUrl(it.platform,bh)+'?t='+Math.floor(Date.now()/300000),{cache:'no-store'},9000);
+    let status=0;
+    try{const r=await fetchWithTimeout(bridgedFeedUrl(it.platform,bh)+'?t='+Math.floor(Date.now()/300000),{cache:'no-store'},9000);status=r.status;
       if(r.ok){const es=parseRssText(await r.text());if(es.length)return es}}catch(e){}
     if(it.feedUrl)return await fetchRss(it.feedUrl);
+    /* no file yet: the server hasn't been sent this account, or the free bridges can't reach it right now.
+       That's "no posts yet" (the account shows as a profile card), not a source that failed. */
+    if(status===404)return[];
     return null;
   }
   if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return ytEntries(vs)}
