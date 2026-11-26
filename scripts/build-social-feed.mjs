@@ -1,92 +1,58 @@
-// Builds your own RSS feeds from the social accounts in My Routine (Telegram, Instagram, X, …).
-// Reads routine-sources.json ("accounts", written by the app's "Update sources on GitHub" button)
-// and the feeds.json that refresh-feeds.mjs just fetched, and writes into <outDir>:
-//   all.xml          every account, newest first
-//   <platform>.xml   one per platform (telegram.xml, instagram.xml, x.xml, …)
-//   index.json       the links and each account's status, read by the app (Settings → Behavior)
-// Telegram channels are read straight from their public t.me/s/<handle> page. Instagram and X
-// have no public feed, so each account needs a feed link from RSS.app pasted into My Routine.
+// Builds your own RSS feeds from the social accounts in My Routine (Telegram, Instagram, X, Substack, …).
+// Reads routine-sources.json ("accounts", sent by the app) and the feeds.json that refresh-feeds.mjs and
+// bridge-social.mjs just filled, and writes into <outDir>:
+//   all.xml               every account, newest first
+//   <platform>.xml        one per platform (telegram.xml, instagram.xml, x.xml, substack.xml, …)
+//   accounts/<key>.xml    one per account (My Routine reads Instagram / X / Threads accounts from here)
+//   index.json            the links and each account's status, read by the app (Settings → Social RSS feed)
+// Telegram channels are read from their public t.me/s/<handle> page; Substack, Bluesky, Mastodon and
+// Reddit from their own feeds. Instagram, X and Threads come from a free bridge (bridge-social.mjs), with
+// the account's RSS.app link, if it has one, as the backup.
 // Run by .github/workflows/refresh-feeds-loop.yml:
 //   node scripts/build-social-feed.mjs routine-sources.json feeds.json out/social
 import fs from 'node:fs';
 import path from 'node:path';
+import { LABEL, BRIDGED, accountKey, snapKey, esc, cdata, parseTelegram, parseRss } from './feed-utils.mjs';
 
 const [,, srcPath = 'routine-sources.json', feedsPath = 'feeds.json', outDir = 'out/social'] = process.argv;
-const LABEL = { telegram: 'Telegram', instagram: 'Instagram', x: 'X', threads: 'Threads', bluesky: 'Bluesky', mastodon: 'Mastodon', reddit: 'Reddit' };
 const PER_ACCOUNT = 30, ALL_MAX = 300, PLATFORM_MAX = 150;
 
 const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
 const accounts = (Array.isArray(src.accounts) ? src.accounts : []).filter(a => a && a.platform && (a.handle || a.feed));
-let feeds = {};
-try { feeds = JSON.parse(fs.readFileSync(feedsPath, 'utf8')).feeds || {}; } catch { /* nothing fetched */ }
+let feeds = {}, bridges = {};
+try { const j = JSON.parse(fs.readFileSync(feedsPath, 'utf8')); feeds = j.feeds || {}; bridges = j.bridges || {}; } catch { /* nothing fetched */ }
 
-/* ---------- small text helpers (no DOM in Node) ---------- */
-const decode = s => String(s || '')
-  .replace(/<!\[CDATA\[([\s\S]*?)\]\]>/g, '$1')
-  .replace(/&#(\d+);/g, (_, n) => String.fromCodePoint(+n)).replace(/&#x([0-9a-f]+);/gi, (_, n) => String.fromCodePoint(parseInt(n, 16)))
-  .replace(/&quot;/g, '"').replace(/&apos;|&#39;/g, "'").replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&nbsp;/g, ' ').replace(/&amp;/g, '&');
-const strip = html => decode(String(html || '').replace(/<br\s*\/?>/gi, '\n').replace(/<\/p>/gi, '\n').replace(/<[^>]+>/g, ' '))
-  .replace(/[ \t]+/g, ' ').replace(/\s*\n\s*/g, '\n').trim();
-const esc = s => String(s || '').replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
-const cdata = s => '<![CDATA[' + String(s || '').replace(/\]\]>/g, ']]&gt;') + ']]>';
-const titleOf = text => { const t = String(text || '').split('\n')[0].trim(); return t.length > 110 ? t.slice(0, 107).replace(/\s+\S*$/, '') + '…' : t; };
-const tag = (xml, name) => { const m = new RegExp('<' + name + '(?:\\s[^>]*)?>([\\s\\S]*?)</' + name + '>', 'i').exec(xml); return m ? m[1] : ''; };
-
-/* ---------- parsers ---------- */
-function parseTelegram(html, handle) {
-  return html.split(/<div class="tgme_widget_message_wrap/).slice(1).map(block => {
-    const post = (/data-post="([^"]+)"/.exec(block) || [])[1] || '';
-    const when = Date.parse((/<time[^>]*datetime="([^"]+)"/.exec(block) || [])[1] || '') || 0;
-    const textHtml = (/<div class="tgme_widget_message_text[^"]*"[^>]*>([\s\S]*?)<\/div>/.exec(block) || [])[1] || '';
-    const img = (/tgme_widget_message_(?:photo_wrap|video_thumb)[^>]*background-image:url\('([^']+)'\)/.exec(block) || [])[1] || '';
-    const text = strip(textHtml);
-    const link = post ? 'https://t.me/' + post : 'https://t.me/' + handle;
-    let body = textHtml;
-    if (img) body = '<p><img src="' + esc(img) + '"/></p>' + body;
-    return { id: link, title: titleOf(text) || (img ? '📷 Photo' : 'Post'), link, date: when, html: body, image: img };
-  }).filter(p => p.date);
-}
-function parseRss(xml) {
-  const isAtom = !/<item[\s>]/i.test(xml);
-  const blocks = xml.split(isAtom ? /<entry[\s>]/i : /<item[\s>]/i).slice(1);
-  return blocks.map(b => {
-    let link = decode(tag(b, 'link')).trim();
-    if (!link) link = (/<link[^>]*href="([^"]+)"/i.exec(b) || [])[1] || decode(tag(b, 'guid')).trim();
-    const body = decode(tag(b, 'content:encoded') || tag(b, 'content') || tag(b, 'description') || tag(b, 'summary'));
-    const text = strip(body);
-    const t = strip(tag(b, 'title'));
-    const date = Date.parse(decode(tag(b, 'pubDate') || tag(b, 'published') || tag(b, 'updated') || tag(b, 'dc:date')).trim()) || 0;
-    const image = (/<media:content[^>]*url="([^"]+)"/i.exec(b) || /<enclosure[^>]*url="([^"]+)"[^>]*type="image/i.exec(b) || /<img[^>]+src=["']([^"']+)/i.exec(body) || [])[1] || '';
-    return { id: decode(tag(b, 'guid')).trim() || link, title: titleOf(t || text) || 'Post', link, date, html: body, image: decode(image) };
-  }).filter(p => p.link && p.date);
-}
+const repo = process.env.GITHUB_REPOSITORY || 'nazeershaik6033-gif/Instapaper';
+const base = `https://raw.githubusercontent.com/${repo}/social-feed/`;
 
 /* ---------- collect ---------- */
-const status = [], all = [], byPlatform = {};
+const status = [], all = [], byPlatform = {}, byAccount = [];
 for (const a of accounts) {
-  const url = a.platform === 'telegram' && a.handle ? 'https://t.me/s/' + encodeURIComponent(a.handle) : (a.feed || '');
+  const bridged = BRIDGED.has(a.platform);
+  const key = bridged ? snapKey(a.platform, a.handle || a.feed) : a.platform === 'telegram' && a.handle ? 'https://t.me/s/' + encodeURIComponent(a.handle) : (a.feed || '');
   const who = (a.name || (a.handle ? '@' + a.handle : 'Account')).replace(/\s*·\s*\w+$/, '');
-  const st = { platform: a.platform, name: who, handle: a.handle || '', profile: a.profile || '', feed: url, status: 'ok', posts: 0 };
-  if (!url) { st.status = 'needs-feed-link'; status.push(st); continue; }
-  const got = feeds[url];
-  if (!got || !got.body) { st.status = 'not-fetched'; status.push(st); continue; }
+  const file = 'accounts/' + accountKey(a.platform, a.handle || a.feed) + '.xml';
+  const st = { platform: a.platform, name: who, handle: a.handle || '', profile: a.profile || '', feed: a.feed || '', status: 'ok', posts: 0, accountFeed: base + file };
+  if (bridged) { const b = bridges[key] || {}; st.via = b.via || ''; st.backup = !!b.backup; st.tried = b.tried || []; st.stale = !!b.stale; }
+  if (!key) { st.status = 'needs-feed-link'; status.push(st); continue; }
+  const got = feeds[key];
+  if (!got || !got.body) { st.status = bridged ? (a.feed ? 'not-reachable' : 'not-reachable-no-backup') : 'not-fetched'; status.push(st); continue; }
   let posts = [];
   try { posts = a.platform === 'telegram' ? parseTelegram(got.body, a.handle) : parseRss(got.body); } catch { posts = []; }
   posts = posts.sort((p, q) => q.date - p.date).slice(0, PER_ACCOUNT);
   if (!posts.length) st.status = 'empty';
   st.posts = posts.length; st.latest = posts[0] ? posts[0].date : 0; st.fetchedAt = got.at || 0;
   status.push(st);
-  for (const p of posts) {
-    const item = { ...p, who, platform: a.platform };
+  const items = posts.map(p => ({ ...p, who, platform: a.platform }));
+  byAccount.push({ file, title: who + ' · ' + (LABEL[a.platform] || a.platform), items });
+  for (const item of items) {
     all.push(item);
     (byPlatform[a.platform] = byPlatform[a.platform] || []).push(item);
   }
 }
 
 /* ---------- write ---------- */
-const repo = process.env.GITHUB_REPOSITORY || 'nazeershaik6033-gif/Instapaper';
-const base = `https://raw.githubusercontent.com/${repo}/social-feed/`;
-function rss(name, title, items, max) {
+function rss(name, title, items, max, prefixWho = true) {
   const seen = new Set();
   const list = items.sort((p, q) => q.date - p.date).filter(p => !seen.has(p.id) && seen.add(p.id)).slice(0, max);
   const out = [
@@ -96,14 +62,14 @@ function rss(name, title, items, max) {
     `<title>${esc(title)}</title>`,
     `<link>https://github.com/${esc(repo)}</link>`,
     `<atom:link href="${esc(base + name)}" rel="self" type="application/rss+xml"/>`,
-    `<description>${esc(title)} — built from the accounts in My Routine, refreshed every 15 minutes.</description>`,
+    `<description>${esc(title)}, built from the accounts in My Routine and refreshed every 15 minutes.</description>`,
     `<lastBuildDate>${new Date().toUTCString()}</lastBuildDate>`,
     '<ttl>15</ttl>',
   ];
   for (const p of list) {
     const label = LABEL[p.platform] || p.platform;
     out.push('<item>',
-      `<title>${esc(p.who + ': ' + p.title)}</title>`,
+      `<title>${esc(prefixWho ? p.who + ': ' + p.title : p.title)}</title>`,
       `<link>${esc(p.link)}</link>`,
       `<guid isPermaLink="false">${esc(p.platform + ':' + p.id)}</guid>`,
       `<pubDate>${new Date(p.date).toUTCString()}</pubDate>`,
@@ -114,6 +80,7 @@ function rss(name, title, items, max) {
       '</item>');
   }
   out.push('</channel>', '</rss>', '');
+  fs.mkdirSync(path.dirname(path.join(outDir, name)), { recursive: true });
   fs.writeFileSync(path.join(outDir, name), out.filter(Boolean).join('\n'));
   return list.length;
 }
@@ -125,6 +92,10 @@ for (const p of Object.keys(LABEL)) {
   rss(p + '.xml', 'My ' + LABEL[p] + ' feed', (byPlatform[p] || []).slice(), PLATFORM_MAX);
   links[p] = base + p + '.xml';
 }
+for (const a of byAccount) rss(a.file, a.title, a.items, PER_ACCOUNT, false); // one account: no name in every title
 fs.writeFileSync(path.join(outDir, 'index.json'), JSON.stringify({ builtAt: Date.now(), links, accounts: status }, null, 1));
-console.log(`social feed: ${n} posts from ${status.filter(s => s.status === 'ok').length}/${accounts.length} accounts; ` +
-  `${status.filter(s => s.status === 'needs-feed-link').length} need an RSS.app link`);
+const okN = status.filter(s => s.status === 'ok').length;
+const freeN = status.filter(s => s.status === 'ok' && BRIDGED.has(s.platform) && !s.backup).length;
+const backupN = status.filter(s => s.status === 'ok' && s.backup).length;
+const downN = status.filter(s => /^not-reachable/.test(s.status)).length;
+console.log(`social feed: ${n} posts from ${okN}/${accounts.length} accounts; Instagram/X/Threads: ${freeN} via a free bridge, ${backupN} via RSS.app backup, ${downN} not reachable`);

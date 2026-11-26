@@ -871,11 +871,21 @@ async function discoverFeed(url){
   }
   return'';
 }
-function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)}
+/* Instagram / X / Threads: the GitHub feed job makes each account's feed with a free bridge and publishes
+   it as social-feed/accounts/<platform>-<handle>.xml (scripts/build-social-feed.mjs); the same posts sit in
+   the server snapshot under "social:<platform>:<handle>". An RSS.app link on the account is the backup. */
+const BRIDGED_PLATS={instagram:1,x:1,threads:1};
+const bridgedHandle=it=>(it&&BRIDGED_PLATS[it.platform]&&String(it.socialHandle||it.handle||'').replace(/^@/,''))||'';
+const acctSlug=h=>String(h||'').toLowerCase().replace(/^@/,'').replace(/[^a-z0-9._-]+/g,'_').slice(0,80);
+const bridgedSnapKey=(p,hd)=>'social:'+p+':'+acctSlug(hd);
+function bridgedFeedUrl(p,hd){const{owner,repo}=repoSlug();return'https://raw.githubusercontent.com/'+owner+'/'+repo+'/social-feed/accounts/'+p+'-'+acctSlug(hd)+'.xml'}
+function hasFeed(it){return(it.kind==='youtube'&&it.channelId)||(it.kind==='telegram'&&it.handle)||(it.kind==='rss'&&it.feedUrl)||!!bridgedHandle(it)}
 const ytEntries=vs=>vs.map(x=>({id:x.videoId,title:x.title,url:'https://www.youtube.com/watch?v='+x.videoId,publishedMs:x.publishedMs,thumb:x.thumb,short:x.short||undefined}));
 const isShortEntry=e=>!!(e&&(e.short||/\/shorts\//.test(e.url||'')));
 /* What to fetch and how to read it, for a source — shared by the one-by-one path and the batch path. */
 function feedSpec(it){
+  const bh=bridgedHandle(it);
+  if(bh)return{url:bridgedFeedUrl(it.platform,bh),key:bridgedSnapKey(it.platform,bh),bridged:true,parse:parseRssText};
   if(it.kind==='youtube'&&it.channelId)return{url:ytFeedUrl(it.channelId),parse:raw=>ytEntries(parseYtText(raw))};
   if(it.kind==='telegram'&&it.handle)return{url:tgFeedUrl(it.handle),parse:parseTelegramText};
   if(it.kind==='rss'&&it.feedUrl)return{url:it.feedUrl,parse:parseRssText};
@@ -915,7 +925,7 @@ const SNAP_OK_KEY='insta_snapshot_ok';
 const snapshotWasSeen=()=>{try{return localStorage.getItem(SNAP_OK_KEY)==='1'}catch(e){return false}};
 /* Every feed URL the routine reads — what the GitHub job needs in routine-sources.json. */
 function sourceUrlsOf(brief){
-  return[...new Set(((brief&&brief.items)||[]).map(it=>{const sp=feedSpec(it);return sp?sp.url:null}).filter(Boolean))];
+  return[...new Set(((brief&&brief.items)||[]).map(it=>{const sp=feedSpec(it);return sp&&!sp.bridged?sp.url:null}).filter(Boolean))];
 }
 /* One tap to set up (or update) server-side refresh. First time: GitHub's "new file" page with
    routine-sources.json already filled in — just press Commit. After that the file exists, so the
@@ -969,7 +979,7 @@ const hasSources=brief=>!!(sourceUrlsOf(brief).length||socialAccountsOf(brief).l
 let syncWatchT=null;
 async function syncSourcesNow(brief){
   if(!GH_TOKEN_NOW)throw new Error('Add a GitHub token first.');
-  if(!hasSources(brief))throw new Error('Add a YouTube, Telegram, Instagram or X source first.');
+  if(!hasSources(brief))throw new Error('Add a YouTube, Telegram, Instagram, X or Substack source first.');
   const body=sourcesCompact(brief),sig=sourcesSig(brief);
   if(body.length>60000)throw new Error('Too many sources to send in one go. Use “Copy my sources” instead.');
   syncStore.set({state:'sending',sig,err:'',runUrl:''});
@@ -1070,6 +1080,14 @@ async function fetchFeedsSnapshotNow(){
   }catch(e){return null}
 }
 async function fetchFeed(it){
+  const bh=bridgedHandle(it);
+  if(bh){
+    /* the server's free-bridge feed first (raw.githubusercontent.com allows CORS: no proxy needed), then the RSS.app backup */
+    try{const r=await fetchWithTimeout(bridgedFeedUrl(it.platform,bh)+'?t='+Math.floor(Date.now()/300000),{cache:'no-store'},9000);
+      if(r.ok){const es=parseRssText(await r.text());if(es.length)return es}}catch(e){}
+    if(it.feedUrl)return await fetchRss(it.feedUrl);
+    return null;
+  }
   if(it.kind==='youtube'&&it.channelId){const vs=await fetchYtVideos(it.channelId);return ytEntries(vs)}
   if(it.kind==='telegram'&&it.handle)return await fetchTelegram(it.handle);
   if(it.kind==='rss'&&it.feedUrl)return await fetchRss(it.feedUrl);
@@ -4645,25 +4663,40 @@ function MediaViewer({T,m,onClose,onActions}){
 }
 
 /* ============================== daily brief ============================== */
-/* Social accounts in My Routine. Bluesky, Mastodon and Reddit publish real feeds; Instagram, X and
-   Threads don't, so they take a feed link from a bridge service (RSS.app, FetchRSS, RSSHub) — without
-   one they appear in Today as a live profile card built from the platform's own embed. Stored as an
-   ordinary 'rss' source (with a feed) or 'link' source (without), plus platform + handle. */
+/* Social accounts in My Routine. Bluesky, Mastodon, Reddit and Substack publish real feeds; Instagram,
+   X and Threads don't, so the GitHub feed job makes one for each with a free bridge (RSS-Bridge, RSSHub,
+   Nitter; scripts/bridge-social.mjs) and My Routine reads it from the social-feed branch. An RSS.app link
+   pasted into the account is the backup. With no posts at all they show as a live profile card built from
+   the platform's own embed. Stored as an 'rss' source (with a feed link) or 'link' source (without), plus
+   platform + handle. */
+/* a Substack is <name>.substack.com, or its own domain (stored as the host, e.g. www.slowboring.com) */
+const substackSite=h=>{const v=String(h||'').trim();return v?(v.indexOf('.')>=0?'https://'+v:'https://'+v+'.substack.com'):''};
 const SOCIAL={
   instagram:{label:'Instagram',c:'#d6249f',profile:h=>'https://www.instagram.com/'+h+'/',embed:h=>'https://www.instagram.com/'+encodeURIComponent(h)+'/embed/',bridge:h=>'https://rsshub.app/instagram/user/'+h},
   x:{label:'X',c:'#111111',profile:h=>'https://x.com/'+h,embed:h=>'https://syndication.twitter.com/srv/timeline-profile/screen-name/'+encodeURIComponent(h)+'?dnt=true',bridge:h=>'https://rsshub.app/twitter/user/'+h},
   threads:{label:'Threads',c:'#101010',profile:h=>'https://www.threads.net/@'+h,embed:null,bridge:h=>'https://rsshub.app/threads/'+h},
   bluesky:{label:'Bluesky',c:'#1185fe',profile:h=>'https://bsky.app/profile/'+h,feed:h=>'https://bsky.app/profile/'+h+'/rss'},
   mastodon:{label:'Mastodon',c:'#6364ff',profile:h=>{const m=/^@?([^@\s]+)@([^@\s]+)$/.exec(h);return m?'https://'+m[2]+'/@'+m[1]:''},feed:h=>{const m=/^@?([^@\s]+)@([^@\s]+)$/.exec(h);return m?'https://'+m[2]+'/@'+m[1]+'.rss':''}},
-  reddit:{label:'Reddit',c:'#ff4500',profile:h=>'https://www.reddit.com/'+h+'/',feed:h=>'https://www.reddit.com/'+h.replace(/^u\//,'user/')+'/.rss'}
+  reddit:{label:'Reddit',c:'#ff4500',profile:h=>'https://www.reddit.com/'+h+'/',feed:h=>'https://www.reddit.com/'+h.replace(/^u\//,'user/')+'/.rss'},
+  substack:{label:'Substack',c:'#ff6719',profile:h=>substackSite(h),feed:h=>substackSite(h)?substackSite(h)+'/feed':''}
 };
 function socialHandle(p,raw){
   let v=String(raw||'').trim().replace(/[?#].*$/,'').replace(/\/+$/,'');
   if(p==='reddit'){const m=/reddit\.com\/(r|u|user)\/([\w-]+)/i.exec(v);if(m)return(m[1].toLowerCase()==='r'?'r/':'u/')+m[2];v=v.replace(/^\//,'');return/^(r|u)\//i.test(v)?v:'r/'+v.replace(/^r\//i,'')}
   if(p==='mastodon'){const m=/^https?:\/\/([^/]+)\/@([\w.]+)/i.exec(v);if(m)return m[2]+'@'+m[1];return v.replace(/^@/,'')}
   if(p==='bluesky'){const m=/bsky\.app\/profile\/([^/]+)/i.exec(v);return(m?m[1]:v).replace(/^@/,'')}
+  if(p==='substack')return substackHandle(v);
   const m=/(?:instagram\.com|x\.com|twitter\.com|threads\.net)\/@?([\w.]+)/i.exec(v);
   return(m?m[1]:v).replace(/^@/,'');
+}
+/* "noahpinion", "@noahpinion", "noahpinion.substack.com", "https://substack.com/@noahpinion",
+   "https://www.slowboring.com/p/some-post" → "noahpinion" / "www.slowboring.com" ('' if unreadable) */
+function substackHandle(raw){
+  let v=String(raw||'').trim().replace(/[?#].*$/,'');
+  let m=/substack\.com\/@([\w-]+)/i.exec(v);if(m)return m[1].toLowerCase();
+  m=/^(?:https?:\/\/)?([\w-]+)\.substack\.com\b/i.exec(v);if(m&&!/^(www|open|on|support|substack)$/i.test(m[1]))return m[1].toLowerCase();
+  m=/^https?:\/\/([^/\s]+\.[a-z]{2,})(\/|$)/i.exec(v);if(m&&!/(^|\.)substack\.com$/i.test(m[1]))return m[1].toLowerCase();
+  v=v.replace(/^@/,'');return/^[a-z0-9][\w-]{0,62}$/i.test(v)?v.toLowerCase():'';
 }
 const BRIEF_KIND={youtube:{c:'#d4564a',ic:s=>Icons.video(s)},telegram:{c:'#3aa0e0',ic:s=>Icons.send(s)},rss:{c:'#e8801f',ic:s=>Icons.rss(s)}};
 /* "2h ago" style stamp — a routine is about recency, so an absolute date only
@@ -5147,7 +5180,7 @@ function RoutinePlaylist({T,posts,isDone,onDone,isSaved,onSave,onTool,txOf,onOpe
 
 /* My Routine sources: every item belongs to exactly one — YouTube, a social app, or Web (blogs, news, sites) */
 const YT_PL_MAX=50; // watch_videos takes up to 50 ids
-const SRC_DEF=[['youtube','YouTube'],['instagram','Instagram'],['x','X'],['telegram','Telegram'],['threads','Threads'],['reddit','Reddit'],['bluesky','Bluesky'],['mastodon','Mastodon'],['web','Web']];
+const SRC_DEF=[['youtube','YouTube'],['instagram','Instagram'],['x','X'],['telegram','Telegram'],['threads','Threads'],['reddit','Reddit'],['bluesky','Bluesky'],['mastodon','Mastodon'],['substack','Substack'],['web','Web']];
 const SRC_ICON={
   youtube:s=>Svg({size:s},h('rect',{x:3,y:6,width:18,height:12.5,rx:3.6,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.4 9.6v5.3l4.4-2.65-4.4-2.65Z',fill:'currentColor'})),
   instagram:s=>Svg({size:s},h('rect',{x:4,y:4,width:16,height:16,rx:4.6,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:12,cy:12,r:3.6,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:16.6,cy:7.4,r:1,fill:'currentColor'})),
@@ -5157,6 +5190,7 @@ const SRC_ICON={
   reddit:s=>Svg({size:s},h('ellipse',{cx:12,cy:14,rx:7.5,ry:5.2,stroke:'currentColor',strokeWidth:1.7}),h('circle',{cx:9.3,cy:13.6,r:1,fill:'currentColor'}),h('circle',{cx:14.7,cy:13.6,r:1,fill:'currentColor'}),P('M12 8.8l1.2-4.3 3.6.9'),h('circle',{cx:17.6,cy:5.6,r:1.2,stroke:'currentColor',strokeWidth:1.5})),
   bluesky:s=>Svg({size:s},P('M12 11.2C10.6 8.4 7.6 5.6 5.6 5.6c-1.6 0-1.6 2-1 4 .7 2.5 3.2 3 5 2.6-2.5.6-3.8 2.4-2 4.2 2 2 3.6-.6 4.4-2.4.8 1.8 2.4 4.4 4.4 2.4 1.8-1.8.5-3.6-2-4.2 1.8.4 4.3-.1 5-2.6.6-2 .6-4-1-4-2 0-5 2.8-6.4 5.6Z')),
   mastodon:s=>Svg({size:s},P('M19.5 13.6c-.3 1.5-2.4 3-4.8 3.3-1.3.2-2.5.3-3.8.2-2.1-.1-3.8-.5-3.8-.5v.6c.3 2.2 2.2 2.4 4 2.4 1.8.1 3.4-.4 3.4-.4l.1 1.6s-1.3.7-3.5.8c-1.2.1-2.8 0-4.6-.5-3.9-1-4.6-5-4.7-9.1V8.6c0-4.1 2.7-5.3 2.7-5.3 1.4-.6 3.7-.9 6.2-.9h.1c2.5 0 4.8.3 6.2.9 0 0 2.7 1.2 2.7 5.3 0 0 0 3-.3 5Z'),P('M8.4 13V8.9c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6v2.3-2.3c0-.9.7-1.6 1.6-1.6s1.6.7 1.6 1.6V13')),
+  substack:s=>Svg({size:s},P('M5.5 4.8h13M5.5 8.6h13'),P('M5.5 12.4h13v7.3l-6.5-3.7-6.5 3.7v-7.3Z')),
   web:s=>Icons.globe(s)
 };
 function srcOf(it){
@@ -5318,7 +5352,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         setSnapAt(snap.at||0);
         const left=[];
         for(const it of list){
-          const sp=feedSpec(it),e=sp&&snap.feeds[sp.url];
+          const sp=feedSpec(it),e=sp&&snap.feeds[sp.key||sp.url];
           const at=(e&&e.at)||snap.at||0;
           const have=feedsRef.current[it.id];
           let es=null;
@@ -5447,7 +5481,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   };
   const todayItems=tab=>tab==='all'?vis:groupItems(tab);
   /* Instagram / X / Threads accounts without a feed link: a live profile card at the end of the feed */
-  const profileCards=items=>items.filter(it=>it.platform&&it.kind==='link'&&SOCIAL[it.platform]).map(it=>({card:true,it,e:{url:it.url,title:it.name,publishedMs:0},isNew:false}));
+  const profileCards=items=>items.filter(it=>it.platform&&(it.kind==='link'||bridgedHandle(it))&&SOCIAL[it.platform]&&!((feeds[it.id]||{}).entries||[]).length).map(it=>({card:true,it,e:{url:it.url,title:it.name,publishedMs:0},isNew:false}));
   const todayPosts=tab=>{let p=recentPosts(todayItems(tab),todayStart);if(!p.length)p=recentPosts(todayItems(tab),Date.now()-2*86400000);return p.slice(0,100).concat(profileCards(todayItems(tab)))};
   const earlierPosts=d=>{
     if(!d||!d.entries)return[];const out=[];
@@ -5484,7 +5518,9 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     // Add/patch the item immediately — never block the sheet on the network.
     let itemId=f.id;
     if(f.id)onBrief(b=>{const cur=b.items.find(x=>x.id===f.id);if(!cur)return b;const r=platGroupFix(b,{...cur,...patch});return{...r.b,items:r.b.items.map(x=>x.id===f.id?r.it:x)}});
-    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>{const r=platGroupFix(b,ni);return{...r.b,items:r.b.items.concat([r.it])}})}
+    else{itemId=uid();const ni={id:itemId,groupId:f.groupId||null,addedAt:Date.now(),...patch};onBrief(b=>{const r=platGroupFix(b,ni);return{...r.b,items:r.b.items.concat([r.it])}});
+      /* a new Substack also goes to Blogs (the app shell owns the blog list) */
+      if(patch.platform==='substack'&&patch.feedUrl)window.dispatchEvent(new CustomEvent('insta-add-blogs',{detail:[{platform:'blog',feed:patch.feedUrl,site:patch.url,name:patch.socialHandle}]}))}
     setEdit(null);
     // Resolve a YouTube channel id (if needed) and fetch the first feed batch in
     // the background, patching the item once they arrive.
@@ -7847,8 +7883,9 @@ const isProfileLink=u=>/\/\/(www\.)?(instagram\.com|x\.com|twitter\.com|threads\
 const IS_IOS=(()=>{try{return/iP(hone|od|ad)/.test(navigator.userAgent)||(navigator.platform==='MacIntel'&&navigator.maxTouchPoints>1)}catch(e){return false}})();
 const RSSAPP_NEW='https://rss.app/new-rss-feed';
 
-/* ---------- Connect Instagram / X accounts to RSS.app ----------
-   One guided flow, opened from Settings → Social RSS feed and from My Routine. It walks the accounts one
+/* ---------- RSS.app backup for Instagram / X accounts ----------
+   The free bridges on GitHub come first; this is for accounts they can't reach. One guided flow, opened
+   from Settings → Social RSS feed and from My Routine. It walks the accounts one
    by one: open RSS.app (the profile link is already copied) → Generate → Copy → back here → Paste.
    It survives iPhone closing the app while you are in Safari: reopening the app reopens it where you were. */
 const FC_KEY='insta_feed_connect_v1';
@@ -7862,9 +7899,7 @@ const fcStore={
 };
 window.openFeedConnect=(ids,startId)=>fcStore.open(ids,startId);
 function useFeedConnect(){const [,f]=useState(0);useEffect(()=>{const g=()=>f(x=>x+1);fcStore.subs.add(g);return()=>fcStore.subs.delete(g)},[]);return fcStore.st}
-const PLAT_NAME={instagram:'Instagram',x:'X',threads:'Threads',telegram:'Telegram',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
-/* accounts that still need a link made on a feed service (Telegram, Bluesky … have free feeds) */
-const needsMadeFeed=a=>a.platform!=='telegram'&&!a.feed;
+const PLAT_NAME={instagram:'Instagram',x:'X',threads:'Threads',telegram:'Telegram',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit',substack:'Substack'};
 
 function FeedConnect({T,brief,update,toastFn}){
   const st=useFeedConnect();
@@ -7934,7 +7969,7 @@ function FeedConnect({T,brief,update,toastFn}){
   const stepS=(on,doneS)=>({display:'flex',gap:12,alignItems:'flex-start',padding:'10px 0',opacity:on?1:.45,transition:'opacity 220ms'});
   const num=(n,doneS)=>h('span',{style:{width:24,height:24,borderRadius:12,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',fontSize:12.5,fontWeight:700,
     background:doneS?'#2f9e44':T.fg,color:doneS?'#fff':T.bg,transition:'background 220ms'}},doneS?'✓':n);
-  const title=finished?'All set':'Connect '+(accts.length===1?(PLAT_NAME[accts[0].platform]||'account'):'accounts');
+  const title=finished?'All set':'RSS.app backup'+(accts.length>1?' · '+accts.length+' accounts':'');
   const body=finished?h('div',{style:{padding:'4px 20px 20px'}},
       h('div',{className:'fc-pop',style:{width:64,height:64,borderRadius:32,background:'#2f9e44',color:'#fff',display:'flex',alignItems:'center',justifyContent:'center',fontSize:32,margin:'8px auto 12px'}},'✓'),
       h('div',{style:{textAlign:'center',fontSize:17,fontWeight:700}},linkedN+' of '+accts.length+(accts.length===1?' account':' accounts')+' connected'),
@@ -7991,78 +8026,244 @@ function FeedConnect({T,brief,update,toastFn}){
   return h(Sheet,{T,onClose:close,title,z:160,maxH:'92%'},body);
 }
 
-/* Settings → Social RSS feed: the published links, add accounts, connect them, and the server sync */
-function SocialFeedBox({T,brief,update}){
+/* ---------- add many accounts at once ----------
+   Three ways in: paste a list (any mix of profile links and handles, one per line), pick a platform and
+   type handles, or import an OPML file from another reader. Each line's platform is detected, the list is
+   shown for a check (duplicates and unreadable lines are flagged), then everything goes in with one tap.
+   Substacks go to My Routine and Blogs; other websites go to Blogs. */
+const BULK_PLATS=[['instagram','Instagram'],['x','X'],['threads','Threads'],['telegram','Telegram'],['substack','Substack'],['bluesky','Bluesky'],['reddit','Reddit'],['mastodon','Mastodon']];
+const BULK_PREFIX={ig:'instagram',insta:'instagram',instagram:'instagram',x:'x',twitter:'x',tw:'x',threads:'threads',tg:'telegram',telegram:'telegram',
+  substack:'substack',ss:'substack',bsky:'bluesky',bluesky:'bluesky',reddit:'reddit',mastodon:'mastodon',masto:'mastodon',yt:'youtube',youtube:'youtube',blog:'blog',web:'blog',site:'blog'};
+const BULK_RESERVED=/^(p|reel|reels|tv|explore|stories|accounts|i|home|search|intent|share|hashtag|status|login|signup|about|privacy|settings)$/i;
+const BULK_TLD=/\.(com|org|net|io|co|in|blog|news|me|dev|app|xyz|uk|us|ai|substack\.com)(\/|$)/i;
+const PLAT_LABEL=p=>p==='youtube'?'YouTube':p==='blog'?'Website':(SOCIAL[p]&&SOCIAL[p].label)||PLAT_NAME[p]||p;
+function validHandle(p,hd){
+  if(!hd)return false;
+  if(p==='x')return/^\w{1,15}$/.test(hd);
+  if(p==='instagram'||p==='threads')return/^[\w.]{1,30}$/.test(hd)&&!BULK_RESERVED.test(hd);
+  if(p==='telegram')return/^\w{3,32}$/.test(hd);
+  if(p==='bluesky')return/^[\w-]+(\.[\w-]+)+$/.test(hd);
+  if(p==='mastodon')return/^[\w.]+@[\w-]+(\.[\w-]+)+$/.test(hd);
+  if(p==='reddit')return/^(r|u)\/[\w-]{2,}$/.test(hd);
+  if(p==='substack')return!!hd;
+  return false;
+}
+/* one pasted line / word → {platform, handle | site | raw, key, label} or {bad, raw, why} */
+function classifyAccount(raw0,def){
+  let raw=String(raw0||'').trim().replace(/^[<(\["'•\-*]+|[>)\]"',;]+$/g,'').trim();
+  if(!raw)return null;
+  let p='';const pm=/^([a-z]+)\s*:\s*(?!\/\/)(.+)$/i.exec(raw);
+  if(pm&&BULK_PREFIX[pm[1].toLowerCase()]){p=BULK_PREFIX[pm[1].toLowerCase()];raw=pm[2].trim()}
+  const bareDomain=!/^@/.test(raw)&&!/^[\w.]+@/.test(raw)&&(/^www\./i.test(raw)||(/^[\w-]+(\.[\w-]+)+(\/\S*)?$/.test(raw)&&(BULK_TLD.test(raw)||/\//.test(raw))));
+  const url=/^https?:\/\//i.test(raw)?raw:bareDomain&&p!=='bluesky'?'https://'+raw:'';
+  if(url){
+    let u;try{u=new URL(url)}catch(e){return{bad:true,raw:raw0,why:'Not a link'}}
+    const host=u.hostname.replace(/^(www|m|mobile)\./i,'').toLowerCase();
+    if(/(^|\.)instagram\.com$/.test(host))p='instagram';
+    else if(/^(x|twitter)\.com$/.test(host))p='x';
+    else if(/^threads\.(net|com)$/.test(host))p='threads';
+    else if(/^(t|telegram)\.me$/.test(host))p='telegram';
+    else if(/(^|\.)substack\.com$/.test(host))p='substack';
+    else if(host==='bsky.app')p='bluesky';
+    else if(/(^|\.)reddit\.com$/.test(host))p='reddit';
+    else if(/(^|\.)(youtube\.com|youtu\.be)$/.test(host))p='youtube';
+    else if(/^\/@[\w.]+\/?$/.test(u.pathname)&&p!=='substack')p='mastodon';
+    else if(p!=='substack')p='blog';
+  }else if(!p){
+    if(/^@?[\w.]+@[\w-]+(\.[\w-]+)+$/.test(raw))p='mastodon';
+    else if(/^\/?(r|u)\/[\w-]+$/i.test(raw))p='reddit';
+    else p=def||'instagram';
+  }
+  if(p==='youtube')return{platform:'youtube',raw:url||raw,key:'youtube:'+(url||raw).toLowerCase(),label:url?url.replace(/^https?:\/\/(www\.)?/,''):raw};
+  if(p==='blog'){
+    const site=normalizeUrl(url||raw);if(!site)return{bad:true,raw:raw0,why:'Not a link'};
+    return{platform:'blog',site,key:'blog:'+site.toLowerCase().replace(/\/+$/,''),label:site.replace(/^https?:\/\/(www\.)?/,'').replace(/\/+$/,'')};
+  }
+  let hd=p==='telegram'?tgHandle(url||raw):p==='substack'?substackHandle(url||raw):socialHandle(p,url||raw);
+  if(p==='bluesky'&&hd&&hd.indexOf('.')<0)hd+='.bsky.social';
+  if(p==='reddit'&&hd)hd=hd.replace(/^(r|u)\//i,(m,a)=>a.toLowerCase()+'/');
+  if(!validHandle(p,hd))return{bad:true,raw:raw0,why:'Not a valid '+PLAT_LABEL(p)+' handle or link'};
+  return{platform:p,handle:hd,key:p+':'+hd.toLowerCase(),label:p==='reddit'?hd:p==='substack'?substackSite(hd).replace(/^https:\/\//,''):'@'+hd};
+}
+/* a feed link from an OPML file → the same shape (YouTube, Substack, Bluesky, Reddit, Mastodon, Telegram, else a blog) */
+function classifyFeedUrl(feed,title,site){
+  const f=String(feed||'').trim();if(!/^https?:\/\//i.test(f))return null;
+  const name=String(title||'').trim().slice(0,120);let m;
+  if((m=/youtube\.com\/feeds\/videos\.xml\?channel_id=([\w-]+)/i.exec(f)))return{platform:'youtube',channelId:m[1],name,key:'youtube:'+m[1].toLowerCase(),label:name||m[1]};
+  if((m=/^https?:\/\/([\w-]+)\.substack\.com\/feed/i.exec(f))&&!/^(www|open)$/i.test(m[1]))return{platform:'substack',handle:m[1].toLowerCase(),name,key:'substack:'+m[1].toLowerCase(),label:name||m[1]+'.substack.com'};
+  if((m=/bsky\.app\/profile\/([^/]+)\/rss/i.exec(f)))return{platform:'bluesky',handle:m[1],name,key:'bluesky:'+m[1].toLowerCase(),label:name||'@'+m[1]};
+  if((m=/reddit\.com\/(r|u|user)\/([\w-]+)/i.exec(f))){const hd=(m[1].toLowerCase()==='r'?'r/':'u/')+m[2];return{platform:'reddit',handle:hd,name,key:'reddit:'+hd.toLowerCase(),label:name||hd}}
+  if((m=/^https?:\/\/([^/]+)\/@([\w.]+)\.rss/i.exec(f))){const hd=m[2]+'@'+m[1];return{platform:'mastodon',handle:hd,name,key:'mastodon:'+hd.toLowerCase(),label:name||'@'+hd}}
+  if((m=/t\.me\/s\/(\w+)/i.exec(f)))return{platform:'telegram',handle:m[1],name,key:'telegram:'+m[1].toLowerCase(),label:name||'@'+m[1]};
+  let origin='';try{origin=new URL(site||f).origin}catch(e){}
+  return{platform:'blog',feed:f,site:normalizeUrl(site)||origin||f,name,key:'blog:'+f.toLowerCase(),label:name||domainOf(f)||f};
+}
+function parseOpml(text){
+  const doc=new DOMParser().parseFromString(String(text||''),'text/xml');
+  return[].slice.call(doc.getElementsByTagName('outline')).filter(o=>o.getAttribute('xmlUrl'))
+    .map(o=>classifyFeedUrl(o.getAttribute('xmlUrl'),o.getAttribute('title')||o.getAttribute('text'),o.getAttribute('htmlUrl'))).filter(Boolean);
+}
+/* everything you already follow, in the same key format, so a list can't add something twice */
+function existingSourceKeys(brief,blogs){
+  const s=new Set();
+  ((brief&&brief.items)||[]).forEach(it=>{
+    if(it.kind==='youtube'&&it.channelId)s.add('youtube:'+it.channelId.toLowerCase());
+    if(it.kind==='telegram'&&it.handle)s.add('telegram:'+it.handle.toLowerCase());
+    if(it.platform&&(it.socialHandle||it.handle))s.add(it.platform+':'+String(it.socialHandle||it.handle).replace(/^@/,'').toLowerCase());
+  });
+  (blogs||[]).forEach(f=>{if(f.feedUrl)s.add('blog:'+f.feedUrl.toLowerCase());if(f.site)s.add('blog:'+String(normalizeUrl(f.site)||f.site).toLowerCase().replace(/\/+$/,''))});
+  return s;
+}
+/* add the checked rows: My Routine items (+ a Blogs entry for each Substack, a Blogs entry for each website) */
+function addBulkSources(update,rows,blogs){
+  const now=Date.now(),routine=[],newBlogs=[],ytRaw=[];
+  const haveB=new Set((blogs||[]).map(f=>String(f.feedUrl||f.site||'').toLowerCase()));
+  const pushBlog=b=>{const k=String(b.feedUrl||b.site).toLowerCase();if(haveB.has(k))return;haveB.add(k);newBlogs.push(b)};
+  rows.forEach(r=>{
+    const base={id:uid(),groupId:null,addedAt:now,channelId:'',feedUrl:'',handle:''};
+    if(r.platform==='youtube'){
+      if(r.channelId)routine.push({...base,kind:'youtube',channelId:r.channelId,url:'https://www.youtube.com/channel/'+r.channelId,name:r.name||'YouTube channel'});
+      else ytRaw.push(r.raw);return;
+    }
+    if(r.platform==='blog'){pushBlog({id:uid(),name:r.name||domainOf(r.site||r.feed)||'Blog',site:r.site||r.feed,feedUrl:r.feed||'',groupId:null});return}
+    const p=r.platform,P=SOCIAL[p],hd=r.handle;
+    if(p==='telegram'){routine.push({...base,kind:'telegram',handle:hd,url:'https://t.me/'+hd,name:r.name||'@'+hd});return}
+    const feed=P.feed?P.feed(hd):'';
+    routine.push({...base,kind:feed?'rss':'link',feedUrl:feed,url:P.profile(hd),platform:p,socialHandle:hd,handle:p==='reddit'?'':hd,
+      name:r.name||((p==='reddit'||p==='substack'?hd:'@'+hd)+' · '+P.label)});
+    if(p==='substack')pushBlog({id:uid(),name:r.name||hd,site:P.profile(hd),feedUrl:feed,groupId:null});
+  });
+  update(d=>{const seen={...(d.blogSeen||{})};newBlogs.forEach(b=>{seen[b.id]=now}); // a new blog's back catalog isn't "new"
+    return{...d,brief:{...d.brief,items:(d.brief.items||[]).concat(routine)},feeds:(d.feeds||[]).concat(newBlogs),blogSeen:seen}});
+  ytRaw.forEach(raw=>addBriefSourceViaUpdate(update,{kind:'youtube',raw}));
+  /* in the background: find each website's feed and fetch every new blog's first posts */
+  (async()=>{for(const b of newBlogs){
+    let feedUrl=b.feedUrl;
+    if(!feedUrl){try{feedUrl=await discoverFeed(b.site)}catch(e){feedUrl=''}if(feedUrl)update(d=>({...d,feeds:(d.feeds||[]).map(x=>x.id===b.id?{...x,feedUrl}:x)}))}
+    if(feedUrl){try{const es=await fetchRss(feedUrl);if(es&&es.length)update(d=>({...d,blogFeeds:{...(d.blogFeeds||{}),[b.id]:{fetchedAt:Date.now(),entries:es}}}))}catch(e){}}
+  }})();
+  return{routine:routine.length+ytRaw.length,blogs:newBlogs.length,bridged:routine.filter(x=>BRIDGED_PLATS[x.platform]).length};
+}
+
+function BulkAddBox({T,brief,blogs,update}){
+  const [mode,setMode]=useState('paste'),[def,setDef]=useState('instagram'),[txt,setTxt]=useState('');
+  const [rows,setRows]=useState(null),[sel,setSel]=useState(new Set()),[note,setNote]=useState(''),[opmlName,setOpmlName]=useState('');
+  const fileRef=useRef(null);
+  const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
+  const review=list=>{
+    const have=existingSourceKeys(brief,blogs),seenK=new Set();
+    const out=list.filter(Boolean).map(r=>{
+      if(r.bad)return r;
+      if(have.has(r.key))return{...r,dup:'already added'};
+      if(seenK.has(r.key))return{...r,dup:'listed twice'};
+      seenK.add(r.key);return r;
+    });
+    setRows(out);setSel(new Set(out.map((r,i)=>!r.bad&&!r.dup?i:-1).filter(i=>i>=0)));setNote('');
+  };
+  const check=()=>{
+    const t=txt.replace(/\b([a-z]+)\s*:\s+(?=\S)/gi,(m,k)=>BULK_PREFIX[k.toLowerCase()]?k+':':m); // "ig: natgeo" → "ig:natgeo"
+    review(t.split(/[\s,;]+/).map(w=>classifyAccount(w,def)));
+  };
+  const onFile=e=>{const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;setOpmlName(f.name);
+    f.text().then(t=>{const list=parseOpml(t);if(!list.length){setRows(null);setNote('No feeds found in that file. Export OPML from your reader (Feedly, Inoreader, NetNewsWire, Miniflux…) and try again.');return}review(list)},
+      ()=>setNote('Couldn’t read that file.'))};
+  const add=()=>{
+    const pick=(rows||[]).filter((r,i)=>sel.has(i));if(!pick.length)return;
+    const r=addBulkSources(update,pick,blogs);
+    setRows(null);setTxt('');setOpmlName('');
+    setNote('✓ Added '+[r.routine?r.routine+' to My Routine':'',r.blogs?r.blogs+' to Blogs':''].filter(Boolean).join(' and ')+'.'
+      +(r.bridged?' Instagram / X / Threads posts arrive after the next sync, a few minutes with a GitHub token (below).':''));
+    setTimeout(()=>setNote(''),9000);
+  };
+  const chip=(on,label,fn,key)=>h('button',{key,onClick:fn,className:'act95',style:{padding:'6px 12px',borderRadius:14,fontSize:13,fontWeight:600,flexShrink:0,background:on?T.fg:T.search,color:on?T.bg:T.fg}},label);
+  const dest=r=>r.platform==='substack'?'My Routine + Blogs':r.platform==='blog'?'Blogs':'My Routine';
+  const tabs=[['paste','Paste a list'],['handles','Platform + handles'],['opml','OPML file']];
+  const goodN=sel.size;
+  return h('div',{style:{marginTop:12,padding:12,borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
+    h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
+    h('div',{style:{display:'flex',gap:4,padding:3,borderRadius:10,background:T.search,marginBottom:10}},tabs.map(([k,l])=>h('button',{key:k,onClick:()=>{setMode(k);setRows(null);setNote('')},className:'act95',
+      style:{flex:1,padding:'7px 4px',borderRadius:8,fontSize:12.5,fontWeight:650,background:mode===k?T.bg:'transparent',color:T.fg,boxShadow:mode===k?'0 1px 3px rgba(0,0,0,.12)':'none'}},l))),
+    rows?h('div',null,
+      h('div',{style:{...small,marginBottom:6}},rows.length+(rows.length===1?' line':' lines')+' read. Untick anything you don’t want.'),
+      h('div',{style:{maxHeight:320,overflowY:'auto',borderTop:'1px solid '+T.hair}},rows.map((r,i)=>{
+        const on=sel.has(i),dis=!!(r.bad||r.dup);
+        return h('button',{key:i,disabled:dis,onClick:()=>setSel(s=>{const n=new Set(s);n.has(i)?n.delete(i):n.add(i);return n}),className:'act98',
+          style:{display:'flex',alignItems:'center',gap:10,width:'100%',textAlign:'left',padding:'9px 2px',borderBottom:'1px solid '+T.hair,opacity:dis?.55:1,color:T.fg}},
+          h('span',{style:{display:'flex',flexShrink:0,color:on?T.accent:T.sub}},Icons.checkCircle(19,on)),
+          h('div',{style:{flex:1,minWidth:0}},
+            h('div',{style:{fontSize:14,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},r.bad?String(r.raw):r.label),
+            h('div',{style:{fontSize:11.5,color:r.bad?'#c2410c':T.sub}},r.bad?r.why:PLAT_LABEL(r.platform)+' · '+(r.dup?r.dup:dest(r)))),
+          !r.bad?h('span',{style:{flexShrink:0,fontSize:10.5,fontWeight:700,color:'#fff',background:(SOCIAL[r.platform]&&SOCIAL[r.platform].c)||(r.platform==='youtube'?'#d4564a':r.platform==='telegram'?'#229ED9':'#e8801f'),borderRadius:5,padding:'2px 6px'}},PLAT_LABEL(r.platform)):null);
+      })),
+      h('div',{style:{display:'flex',gap:8,marginTop:10}},
+        h('button',{onClick:add,disabled:!goodN,className:'act95',style:{flex:1,padding:'10px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:goodN?1:.5}},'Add '+goodN+(goodN===1?' source':' sources')),
+        h('button',{onClick:()=>setRows(null),className:'act95',style:{padding:'10px 14px',borderRadius:9,background:T.search,color:T.fg,fontSize:14,fontWeight:600}},'Back')))
+    :mode==='opml'?h('div',null,
+      h('div',{style:{...small,marginBottom:8}},'Import every feed from another reader (Feedly, Inoreader, NetNewsWire, Miniflux, Substack…). YouTube channels, Substacks, Bluesky, Reddit and Telegram go to My Routine; other sites go to Blogs.'),
+      h('input',{ref:fileRef,type:'file',accept:'.opml,.xml,text/xml,application/xml,text/x-opml',onChange:onFile,style:{display:'none'}}),
+      h('button',{onClick:()=>fileRef.current&&fileRef.current.click(),className:'act95',style:{padding:'10px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650}},opmlName?'Choose another file':'Choose OPML file'))
+    :h('div',null,
+      mode==='paste'?h('div',{style:{...small,marginBottom:6}},'Paste links or handles, one per line, from any app: instagram.com/natgeo, x.com/nasa, t.me/durov, noahpinion.substack.com, name@mastodon.social, r/india… A prefix also works: ig: natgeo, x: nasa, substack: noahpinion.')
+        :h('div',{style:{...small,marginBottom:6}},'Pick the platform, then type or paste handles separated by spaces, commas or new lines.'),
+      h('div',{style:{display:'flex',alignItems:'center',gap:6,marginBottom:8,overflowX:'auto'},className:'sx'},
+        mode==='paste'?h('span',{style:{fontSize:12,color:T.sub,flexShrink:0}},'Plain handles are'):null,
+        BULK_PLATS.map(([k,l])=>chip(def===k,l,()=>setDef(k),k))),
+      h('textarea',{value:txt,onChange:e=>setTxt(e.target.value),rows:mode==='paste'?5:2,autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
+        placeholder:mode==='paste'?'https://www.instagram.com/natgeo/\nhttps://x.com/nasa\nnoahpinion.substack.com\nt.me/durov':def==='substack'?'noahpinion  astralcodexten  (or links)':def==='telegram'?'channel names, e.g. durov  telegram':'natgeo  nasa  (or profile links)',
+        style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:9,padding:'10px 11px',fontSize:16,resize:'vertical',fontFamily:'inherit'}}),
+      h('button',{onClick:check,disabled:!txt.trim(),className:'act95',style:{marginTop:8,padding:'9px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:txt.trim()?1:.5}},'Check list')),
+    note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null);
+}
+
+/* Settings → Social RSS feed: the published links, add accounts (many at once), each account's status, and the backups */
+function SocialFeedBox({T,brief,blogs,update}){
   const [ix,setIx]=useState(null),[err,setErr]=useState(false),[copied,setCopied]=useState('');
-  const [note,setNote]=useState('');
   const sync=useSourcesSync();
   useEffect(()=>{let alive=true;
     fetchWithTimeout(socialFeedIndexUrl(),{cache:'no-store'},9000).then(r=>r.ok?r.json():null).then(j=>{if(alive){if(j&&j.links)setIx(j);else setErr(true)}},()=>{if(alive)setErr(true)});
     return()=>{alive=false}},[sync.state==='live'?sync.liveAt:0]);
   const mine=socialAccountsOf(brief);
-  /* add accounts right here: pick a platform, type or paste handles (several at once) */
-  const [addP,setAddP]=useState('instagram'),[addTxt,setAddTxt]=useState('');
-  const addAccounts=()=>{
-    const have=new Set(mine.map(a=>a.platform+':'+(a.handle||'').toLowerCase()));
-    const raws=addTxt.split(/[\s,;\n]+/).map(x=>x.trim()).filter(Boolean);
-    const fresh=[];let skipped=0;
-    raws.forEach(r=>{
-      const hh=addP==='telegram'?tgHandle(r):socialHandle(addP,r);
-      if(!hh||!/^[\w.]{2,}$/.test(hh)){skipped++;return}
-      const k=addP+':'+hh.toLowerCase();if(have.has(k)){skipped++;return}have.add(k);
-      const base={id:uid(),groupId:null,addedAt:Date.now(),channelId:'',feedUrl:''};
-      fresh.push(addP==='telegram'
-        ?{...base,kind:'telegram',handle:hh,url:'https://t.me/'+hh,name:'@'+hh}
-        :{...base,kind:'link',handle:hh,url:SOCIAL[addP].profile(hh),platform:addP,socialHandle:hh,name:'@'+hh+' · '+SOCIAL[addP].label});
-    });
-    if(fresh.length){
-      update(d=>({...d,brief:{...d.brief,items:(d.brief.items||[]).concat(fresh)}}));setAddTxt('');
-      /* Instagram / X: go straight into connecting the new accounts */
-      if(addP!=='telegram')setTimeout(()=>fcStore.open(fresh.map(x=>x.id)),250);
-    }
-    setNote(fresh.length?'✓ Added '+fresh.length+(fresh.length===1?' account':' accounts')+(addP==='telegram'?'. Telegram needs no link.':'.')+(skipped?' ('+skipped+' skipped: duplicate or not a handle)':''):'Nothing added: type a handle like natgeo (or paste a profile link).');
-    setTimeout(()=>setNote(''),6000);
-  };
-  const NAMES={all:'All accounts',telegram:'Telegram',instagram:'Instagram',x:'X',threads:'Threads',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit'};
+  const NAMES={all:'All accounts',telegram:'Telegram',instagram:'Instagram',x:'X',threads:'Threads',bluesky:'Bluesky',mastodon:'Mastodon',reddit:'Reddit',substack:'Substack'};
   const copy=(k,u)=>{copyText(u);setCopied(k);setTimeout(()=>setCopied(''),2000)};
-  const noLink=mine.filter(needsMadeFeed);
-  const bad=ix?ix.accounts.filter(a=>a.status!=='ok'&&a.status!=='needs-feed-link'):[];
+  /* the server's word on each account (index.json), matched by platform + handle */
+  const stOf=a=>ix&&ix.accounts.find(s=>s.platform===a.platform&&String(s.handle||'').toLowerCase()===String(a.handle||'').toLowerCase());
+  const isBr=a=>!!BRIDGED_PLATS[a.platform];
+  const down=a=>{const s=stOf(a);return isBr(a)&&s&&s.status!=='ok'};
+  const needBackup=mine.filter(down);
+  const line=a=>{
+    const s=stOf(a);
+    if(!isBr(a))return{t:(PLAT_NAME[a.platform]||'')+' · free feed'+(s&&s.status==='ok'?' · '+s.posts+' posts':''),bad:false};
+    if(!s)return{t:(PLAT_NAME[a.platform]||'')+' · free feed after the next sync'+(a.feed?' · RSS.app backup set':''),bad:false};
+    if(s.status==='ok')return{t:(PLAT_NAME[a.platform]||'')+' · '+(s.backup?'via RSS.app backup':'free via '+(s.via||'bridge'))+' · '+s.posts+' posts',bad:false};
+    return{t:(PLAT_NAME[a.platform]||'')+' · free bridges blocked right now'+(s.stale?' (showing the last copy)':'')+(a.feed?' · backup not answering':' · add an RSS.app backup'),bad:true};
+  };
+  const okN=ix?ix.accounts.filter(a=>a.status==='ok').length:0;
   const small={fontSize:12.5,color:T.sub,lineHeight:1.5};
   return h('div',{style:{padding:'0 20px'}},
-    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram and X account in My Routine (plus one per platform), refreshed every 15 minutes. Paste a link into Feedly, Reeder, Inoreader or any RSS app.'),
-    noLink.length?h('button',{onClick:()=>fcStore.open(noLink.map(a=>a.id)),className:'act95',
-      style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'13px 14px',borderRadius:12,background:T.accent,color:'#fff',marginBottom:12}},
-      h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:15,fontWeight:700}},'Connect '+noLink.length+(noLink.length===1?' account':' accounts')),
-        h('span',{style:{display:'block',fontSize:12.5,opacity:.85,marginTop:2}},noLink.map(a=>'@'+a.handle).slice(0,4).join(', ')+(noLink.length>4?' +'+(noLink.length-4):'')+' · about 30 seconds each')),
-      h('span',{style:{fontSize:20}},'›')):null,
-    !mine.length?h('div',{style:small},'No Telegram, Instagram or X accounts yet. Add them below.')
+    h('div',{style:{...small,marginBottom:10}},'One RSS link with every Telegram, Instagram, X and Substack account in My Routine (plus one per platform), refreshed every 15 minutes, free. Instagram, X and Threads feeds come from free bridges (RSS-Bridge, RSSHub, Nitter) on your GitHub; an RSS.app link is only needed as a backup for an account they can’t reach.'),
+    needBackup.length?h('button',{onClick:()=>fcStore.open(needBackup.map(a=>a.id)),className:'act95',
+      style:{display:'flex',alignItems:'center',gap:12,width:'100%',textAlign:'left',padding:'12px 14px',borderRadius:12,background:T.card,border:'1px solid #c2410c',color:T.fg,marginBottom:12}},
+      h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:14.5,fontWeight:700}},needBackup.length+(needBackup.length===1?' account isn’t':' accounts aren’t')+' reachable for free right now'),
+        h('span',{style:{display:'block',fontSize:12.5,color:T.sub,marginTop:2}},needBackup.map(a=>'@'+a.handle).slice(0,4).join(', ')+(needBackup.length>4?' +'+(needBackup.length-4):'')+' · tap to add RSS.app backups (optional)')),
+      h('span',{style:{fontSize:20,color:T.sub}},'›')):null,
+    !mine.length?h('div',{style:small},'No social accounts yet. Add them below, one or many at once.')
     :ix?h('div',{style:{display:'flex',flexDirection:'column',gap:8}},
       Object.keys(ix.links).map(k=>h('div',{key:k,style:{display:'flex',alignItems:'center',gap:10,padding:'10px 12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
         h('div',{style:{flex:1,minWidth:0}},
           h('div',{style:{fontSize:14.5,fontWeight:600}},NAMES[k]||k),
           h('div',{style:{fontSize:11.5,color:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},ix.links[k])),
         h('button',{onClick:()=>copy(k,ix.links[k]),className:'act95',style:{padding:'7px 12px',borderRadius:8,background:T.fg,color:T.bg,fontSize:13,fontWeight:600,flexShrink:0}},copied===k?'Copied ✓':'Copy'))),
-      h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+ix.accounts.filter(a=>a.status==='ok').length+' of '+ix.accounts.length+' accounts working.'),
-      bad.length?h('div',{style:{...small,color:'#c2410c'}},'Not loading right now: '+bad.map(a=>a.name).join(', ')+'.'):null)
+      h('div',{style:small},'Updated '+fmtAgo(ix.builtAt)+' · '+okN+' of '+ix.accounts.length+' accounts working.'))
     :h('div',{style:small},err?'Not published yet. Send your sources to the server below; the feed appears within a few minutes.':'Loading…'),
-    h('div',{style:{marginTop:12,padding:'12px',borderRadius:10,background:T.card,border:'1px solid '+T.hair}},
-      h('div',{style:{fontSize:14,fontWeight:650,marginBottom:8}},'Add accounts'),
-      h('div',{style:{display:'flex',gap:6,marginBottom:8}},[['instagram','Instagram'],['x','X'],['telegram','Telegram']].map(([k,l])=>h('button',{key:k,onClick:()=>setAddP(k),className:'act95',
-        style:{padding:'6px 12px',borderRadius:14,fontSize:13,fontWeight:600,background:addP===k?T.fg:T.search,color:addP===k?T.bg:T.fg}},l))),
-      h('textarea',{value:addTxt,onChange:e=>setAddTxt(e.target.value),rows:2,autoCapitalize:'none',autoCorrect:'off',spellCheck:false,
-        placeholder:addP==='telegram'?'Channel names, e.g. telugutechnews (or t.me links)':'Handles, e.g. natgeo  nasa  (or profile links), one or many',
-        style:{width:'100%',boxSizing:'border-box',border:'1px solid '+T.hair,background:T.search,color:T.fg,borderRadius:9,padding:'10px 11px',fontSize:16,resize:'none',fontFamily:'inherit'}}),
-      h('button',{onClick:addAccounts,disabled:!addTxt.trim(),className:'act95',
-        style:{marginTop:8,padding:'9px 16px',borderRadius:9,background:T.accent,color:'#fff',fontSize:14,fontWeight:650,opacity:addTxt.trim()?1:.5}},addP==='telegram'?'Add':'Add & connect')),
+    h(BulkAddBox,{T,brief,blogs,update}),
     mine.length?h('div',{style:{marginTop:12}},
-      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 0 6px'}},'Your accounts'),
-      mine.map(a=>h('div',{key:a.id||a.platform+a.handle,style:{display:'flex',alignItems:'center',gap:10,padding:'9px 0',borderBottom:'1px solid '+T.hair}},
+      h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'4px 0 6px'}},'Your accounts · '+mine.length),
+      mine.map(a=>{const l=line(a);return h('div',{key:a.id||a.platform+a.handle,style:{display:'flex',alignItems:'center',gap:10,padding:'9px 0',borderBottom:'1px solid '+T.hair}},
         h('div',{style:{flex:1,minWidth:0}},
-          h('div',{style:{fontSize:14.5,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},'@'+(a.handle||'').replace(/^@/,'')),
-          h('div',{style:{fontSize:12,color:needsMadeFeed(a)?'#c2410c':T.sub}},(PLAT_NAME[a.platform]||'')+' · '+(a.platform==='telegram'?'free feed':a.feed?'connected':'needs a feed link'))),
-        a.platform!=='telegram'?h('button',{onClick:()=>fcStore.open(noLink.some(x=>x.id===a.id)?noLink.map(x=>x.id):[a.id],a.id),className:'act95',
-          style:{padding:'6px 12px',borderRadius:14,fontSize:12.5,fontWeight:600,background:a.feed?T.search:T.fg,color:a.feed?T.fg:T.bg,flexShrink:0}},a.feed?'Change':'Connect'):null))):null,
-    note?h('div',{style:{...small,marginTop:8,color:note[0]==='✓'?'#2f9e44':'#c2410c'}},note):null);
+          h('div',{style:{fontSize:14.5,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},a.platform==='substack'?substackSite(a.handle).replace(/^https:\/\//,''):a.platform==='reddit'?a.handle:'@'+(a.handle||'').replace(/^@/,'')),
+          h('div',{style:{fontSize:12,color:l.bad?'#c2410c':T.sub}},l.t)),
+        isBr(a)?h('button',{onClick:()=>fcStore.open(down(a)?needBackup.map(x=>x.id):[a.id],a.id),className:'act95',
+          style:{padding:'6px 12px',borderRadius:14,fontSize:12.5,fontWeight:600,background:down(a)&&!a.feed?T.fg:T.search,color:down(a)&&!a.feed?T.bg:T.fg,flexShrink:0}},a.feed?'Backup ✓':'Backup'):null)})):null);
 }
 /* Settings: how sources reach the server. With a token: automatic, with a status line. Without: the GitHub issue page. */
 function SourcesSyncBox({T,S,brief,set,toastFn}){
@@ -8426,7 +8627,7 @@ function SettingsSheet({T,S,data,voices,update,usageKB,storeQuota,initialPage,on
     content=h(Fragment,null,
       h('div',{style:{padding:'4px 20px 8px'}},h('button',{onClick:()=>{onClose();window.dispatchEvent(new Event('insta-social-open'))},className:'act95',
         style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650}},'Read my social feed in the app')),
-      h(SocialFeedBox,{T,brief:data.brief,update}),
+      h(SocialFeedBox,{T,brief:data.brief,blogs:data.feeds||[],update}),
       head('Send to the server'),
       h(SourcesSyncBox,{T,S,brief:data.brief,set,toastFn:toastFn||(()=>{})}));
   }else if(page==='sites'){
@@ -9069,6 +9270,10 @@ function App(){
   },[]);
 
   useEffect(()=>{const f=()=>setSocialO(true);window.addEventListener('insta-social-open',f);return()=>window.removeEventListener('insta-social-open',f)},[]);
+  /* My Routine adds a Substack → put it in Blogs too */
+  const blogsRef=useRef([]);blogsRef.current=data.feeds||[];
+  useEffect(()=>{const f=e=>{const rows=Array.isArray(e.detail)?e.detail:[];if(rows.length)addBulkSources(update,rows,blogsRef.current)};
+    window.addEventListener('insta-add-blogs',f);return()=>window.removeEventListener('insta-add-blogs',f)},[]);
   useEffect(()=>{ // scan / knowledge-base entry points raised from anywhere (Photos, sidebar, Books)
     const o=e=>setOcrO((e&&e.detail)||{});const s=()=>setScansO(true);
     window.addEventListener('insta-ocr-open',o);window.addEventListener('insta-scans-open',s);

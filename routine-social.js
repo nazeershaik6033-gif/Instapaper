@@ -11,7 +11,8 @@ const {Fragment,useState,useEffect,useRef,useMemo}=React;
 
 const PLAT={
   instagram:{label:'Instagram',c:'#d6249f'},x:{label:'X',c:'#111'},threads:{label:'Threads',c:'#101010'},bluesky:{label:'Bluesky',c:'#1185fe'},
-  mastodon:{label:'Mastodon',c:'#6364ff'},reddit:{label:'Reddit',c:'#ff4500'},telegram:{label:'Telegram',c:'#229ED9'}
+  mastodon:{label:'Mastodon',c:'#6364ff'},reddit:{label:'Reddit',c:'#ff4500'},telegram:{label:'Telegram',c:'#229ED9'},
+  substack:{label:'Substack',c:'#ff6719'}
 };
 /* overlays render on <body>: My Routine's full-screen layer is its own stacking context, under the bottom bar */
 const toBody=el=>window.ReactDOM&&ReactDOM.createPortal?ReactDOM.createPortal(el,document.body):el;
@@ -25,6 +26,7 @@ function platformOf(it){
   if(/threads\.net|\/threads\//i.test(u))return'threads';
   if(/bsky\.app/i.test(u))return'bluesky';
   if(/reddit\.com/i.test(u))return'reddit';
+  if(/substack\.com/i.test(u))return'substack';
   if(/(^|\/\/)(t|telegram)\.me\//i.test(u))return'telegram';
   if(/\/@[\w.]+(\.rss)?\b/.test(u)&&!/youtube/i.test(u))return'mastodon';
   return null;
@@ -50,7 +52,7 @@ const ago=ms=>{if(!ms)return'';const d=Date.now()-ms;if(d<60000)return'now';if(d
 const captionOf=e=>{const c=String(e.caption||'').trim(),x=String(e.excerpt||'').trim(),t=String(e.title||'').trim();
   const best=[c,x,t].sort((a,b)=>b.length-a.length)[0]||'';return best.replace(/^📷 Media post$/,'')};
 const handleOf=it=>{const h0=it.socialHandle||it.handle||'';return h0?(/^r\//.test(h0)?h0:'@'+String(h0).replace(/^@/,'')):''};
-const displayName=it=>String(it.name||handleOf(it)||'Account').replace(/\s·\s(Instagram|X|Threads|Bluesky|Mastodon|Reddit|Telegram)$/,'');
+const displayName=it=>String(it.name||handleOf(it)||'Account').replace(/\s·\s(Instagram|X|Threads|Bluesky|Mastodon|Reddit|Telegram|Substack)$/,'');
 
 const SI={ /* outline icons in Instagram's spirit */
   comment:s=>Svg({size:s},P('M20.5 11.6a8.4 8.4 0 0 1-12.3 7.4L3.5 20.5l1.6-4.5A8.4 8.4 0 1 1 20.5 11.6Z')),
@@ -162,29 +164,31 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
       h('span',{style:{fontSize:12.5,opacity:.75}},(idx+1)+' / '+posts.length)));
 }
 
-/* ---------- feed links: free feeds turn on with one tap; Instagram / X / Threads need a feed service ---------- */
-const FREE_FEED={telegram:1,reddit:1,bluesky:1,mastodon:1};
+/* ---------- feed links: free feeds turn on with one tap; Instagram / X / Threads get a free bridge feed from
+   the GitHub feed job, with an RSS.app link as the backup for accounts the bridges can't reach ---------- */
+const FREE_FEED={telegram:1,reddit:1,bluesky:1,mastodon:1,substack:1};
 function FeedSetup({T,platform,accounts,onAutoFeed,onSetFeed,onProfile,onClose,toastFn}){
   const pl=PLAT[platform]||{label:'this app'};const free=!!FREE_FEED[platform];
   const [busy,setBusy]=useState(null);
   const auto=async a=>{setBusy(a.it.id);await onAutoFeed(a.it);setBusy(null)};
-  const waiting=accounts.filter(a=>!a.feed);
-  const connect=a=>{if(!window.openFeedConnect)return;const ids=(a?(a.feed?[a]:waiting):waiting).map(x=>x.it.id);window.openFeedConnect(ids,a&&a.it.id);onClose&&onClose()};
+  /* free platforms: accounts with no feed yet; bridged ones: accounts the free bridge isn't bringing posts for */
+  const waiting=accounts.filter(a=>free?!a.feed:!a.entries);
+  const connect=a=>{if(!window.openFeedConnect)return;const ids=(a?(waiting.some(x=>x.it.id===a.it.id)?waiting:[a]):waiting).map(x=>x.it.id);window.openFeedConnect(ids,a&&a.it.id);onClose&&onClose()};
   const pill=(label,fn,primary,key)=>h('button',{key,onClick:fn,className:'act95',style:{padding:'8px 12px',borderRadius:16,fontSize:13,fontWeight:650,background:primary?T.fg:T.card,color:primary?T.bg:T.fg}},label);
   return h(Sheet,{T,onClose,title:'New posts from '+pl.label,z:74,maxH:'88%'},
     h('div',{style:{padding:'0 18px 18px'}},
       h('div',{style:{fontSize:13,color:T.sub,lineHeight:1.5,marginBottom:10}},free?pl.label+' has free public feeds — turn one on per account to get New counts and posts here.':
-        pl.label+' has no free public feed, so each account gets one from RSS.app (free). The app walks you through it, about 30 seconds per account. Without one, the account still opens as a live profile.'),
-      !free&&waiting.length>1?h('button',{onClick:()=>connect(null),className:'act95',style:{width:'100%',padding:'12px',borderRadius:12,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:650,marginBottom:6}},'Connect all '+waiting.length+' accounts'):null,
+        pl.label+' has no public feed, so your GitHub feed job makes one for each account for free (RSS-Bridge, RSSHub, Nitter), every 15 minutes, once your sources are synced. If '+pl.label+' blocks it for an account, add an RSS.app link as a backup. Without posts, the account still opens as a live profile.'),
+      !free&&waiting.length>1?h('button',{onClick:()=>connect(null),className:'act95',style:{width:'100%',padding:'12px',borderRadius:12,background:T.fg,color:T.bg,fontSize:14.5,fontWeight:650,marginBottom:6}},'Add RSS.app backup for '+waiting.length+' accounts'):null,
       accounts.map(a=>h('div',{key:a.it.id,style:{padding:'12px 0',borderTop:'1px solid '+T.hair}},
         h('div',{style:{display:'flex',alignItems:'center',gap:10}},h(Avatar,{it:a.it,size:30}),
           h('div',{style:{flex:1,minWidth:0}},h('div',{style:{fontSize:14.5,fontWeight:650,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},displayName(a.it)),
-            h('div',{style:{fontSize:12,color:a.feed&&!a.entries?T.danger:T.sub}},a.feed?(a.entries?a.entries+' posts in its feed':'Feed linked but not returning posts'):'No feed yet')),
+            h('div',{style:{fontSize:12,color:a.feed&&!a.entries?T.danger:T.sub}},a.feed?(a.entries?a.entries+' posts in its feed'+(!free&&a.it.feedUrl?' · RSS.app backup set':''):free?'Feed linked but not returning posts':'Free feed not reachable yet'+(a.it.feedUrl?' · RSS.app backup set':'')):'No feed yet')),
           busy===a.it.id?h(Spinner,{T,size:16}):null),
         h('div',{style:{display:'flex',gap:8,flexWrap:'wrap',marginTop:10}},
           free?pill(a.feed?'Reconnect feed':'Turn on feed',()=>auto(a),true,'f')
             /* the same guided RSS.app flow as Settings → Social RSS feed */
-            :pill(a.feed?'Change feed link':'Connect with RSS.app',()=>connect(a),!a.feed,'c'),
+            :pill(a.it.feedUrl?'Change RSS.app backup':'Add RSS.app backup',()=>connect(a),!a.entries,'c'),
           pill('Live profile',()=>onProfile(a.it),false,'v')))),
       !accounts.length?h('div',{style:{fontSize:13,color:T.sub}},'All accounts here are connected.'):null));
 }

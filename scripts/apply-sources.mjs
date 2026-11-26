@@ -6,7 +6,7 @@
 import fs from 'node:fs';
 
 const [,, bodyPath, outPath = 'routine-sources.json'] = process.argv;
-const PLATFORMS = new Set(['telegram', 'instagram', 'x', 'threads', 'bluesky', 'mastodon', 'reddit']);
+const PLATFORMS = new Set(['telegram', 'instagram', 'x', 'threads', 'bluesky', 'mastodon', 'reddit', 'substack']);
 const fail = msg => { console.error('rejected: ' + msg); process.exit(1); };
 
 const raw = fs.readFileSync(bodyPath, 'utf8');

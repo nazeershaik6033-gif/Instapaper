@@ -5,7 +5,13 @@ name: Refresh feeds (every 15 min)
 # feeds.json every 15 minutes, then starts the next run of itself (a workflow_dispatch made with
 # the job's own token is allowed to start a run). Free on a public repo.
 # Each pass first applies any "sources" issue the app opened for you (one tap in the app), then
-# refreshes, and builds your social RSS feed (scripts/build-social-feed.mjs) on the `social-feed` branch.
+# refreshes, gets Instagram / X / Threads posts from free bridges (scripts/bridge-social.mjs, with
+# RSS.app links only as a backup), and builds your social RSS feed (scripts/build-social-feed.mjs)
+# on the `social-feed` branch.
+# Free bridges: RSS-Bridge and RSSHub run as containers inside this job (nothing to host). Optional
+# repository secrets make them more reliable: IG_SESSION_ID + IG_DS_USER_ID (Instagram cookies) and
+# TWITTER_AUTH_TOKEN (X cookie, for RSSHub). Optional MINIFLUX_URL + MINIFLUX_TOKEN: every source is
+# also added to your Miniflux (see miniflux/README.md).
 #   Start it:  Actions -> "Refresh feeds (every 15 min)" -> Run workflow (it also starts when this file changes on main)
 #   Stop it:   cancel the running job, or Actions -> this workflow -> ... -> Disable workflow
 # The app's sources sync (Settings -> Social RSS feed, with a GitHub token) starts a run with the
@@ -51,6 +57,28 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: 20
+      - name: Start the free feed bridges (RSS-Bridge, RSSHub)
+        # never blocks the feed: if an image can't be pulled, that bridge is skipped
+        continue-on-error: true
+        env:
+          IG_SESSION_ID: ${{ secrets.IG_SESSION_ID }}
+          IG_DS_USER_ID: ${{ secrets.IG_DS_USER_ID }}
+          TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
+        run: |
+          docker run -d --name rssbridge -p 3000:80 \
+            -e RSSBRIDGE_system_enabled_bridges='*' \
+            -e RSSBRIDGE_InstagramBridge_session_id="$IG_SESSION_ID" \
+            -e RSSBRIDGE_InstagramBridge_ds_user_id="$IG_DS_USER_ID" \
+            rssbridge/rss-bridge:latest || echo "::warning::RSS-Bridge did not start"
+          docker run -d --name rsshub -p 1200:1200 -e CACHE_EXPIRE=600 \
+            -e TWITTER_AUTH_TOKEN="$TWITTER_AUTH_TOKEN" \
+            diygod/rsshub:latest || echo "::warning::RSSHub did not start"
+          for i in $(seq 1 45); do
+            curl -s -o /dev/null http://localhost:3000/ && curl -s -o /dev/null http://localhost:1200/ && break
+            sleep 2
+          done
+          curl -s -o /dev/null -w 'RSS-Bridge: %{http_code}\n' http://localhost:3000/ || true
+          curl -s -o /dev/null -w 'RSSHub: %{http_code}\n' http://localhost:1200/ || true
       - name: Apply sources sent by the app
         if: ${{ inputs.sources != '' }}
         env:
@@ -79,6 +107,11 @@ jobs:
         timeout-minutes: 340
         env:
           GH_TOKEN: ${{ github.token }}
+          RSSBRIDGE_URL: http://localhost:3000
+          RSSHUB_URL: http://localhost:1200
+          TWITTER_AUTH_TOKEN: ${{ secrets.TWITTER_AUTH_TOKEN }}
+          MINIFLUX_URL: ${{ secrets.MINIFLUX_URL }}
+          MINIFLUX_TOKEN: ${{ secrets.MINIFLUX_TOKEN }}
         run: |
           # publish <folder> <branch>: the folder's files become a one-commit branch
           publish() {
@@ -117,9 +150,14 @@ jobs:
             apply_issues || true
             pub="$RUNNER_TEMP/pub"; rm -rf "$pub"; mkdir -p "$pub/feeds" "$pub/social"
             if [ -f routine-sources.json ] && node scripts/refresh-feeds.mjs routine-sources.json "$pub/feeds/feeds.json"; then
+              # Instagram / X / Threads from free bridges (RSS.app link last), into the same feeds.json
+              node scripts/bridge-social.mjs routine-sources.json "$pub/feeds/feeds.json" || echo "bridging failed $(date -u +%T)"
               publish "$pub/feeds" feeds-data && echo "feeds published $(date -u +%T)" || echo "feeds publish failed $(date -u +%T)"
               if node scripts/build-social-feed.mjs routine-sources.json "$pub/feeds/feeds.json" "$pub/social"; then
                 publish "$pub/social" social-feed && echo "social feed published" || echo "social feed publish failed"
+                if [ -n "$MINIFLUX_URL" ] && [ -n "$MINIFLUX_TOKEN" ]; then
+                  node scripts/miniflux-sync.mjs routine-sources.json "$pub/social/index.json" || echo "miniflux sync failed"
+                fi
               fi
             else
               echo "refresh failed $(date -u +%T)"

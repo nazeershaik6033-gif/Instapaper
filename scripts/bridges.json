@@ -1,0 +1,20 @@
+{
+  "_about": "Free feed sources tried, in order, for accounts that have no public feed (scripts/bridge-social.mjs). {handle} is the account handle; {RSSBRIDGE} and {RSSHUB} are the bridges the feed job starts next to itself (skipped when one is not running). An account's own RSS.app link, if it has one, is always tried last, as the backup. Add or reorder entries freely; a Nitter mirror that dies just gets skipped.",
+  "instagram": [
+    { "via": "RSS-Bridge", "url": "{RSSBRIDGE}/?action=display&bridge=Instagram&context=Username&u={handle}&media_type=all&format=Atom" },
+    { "via": "RSS-Bridge · Picuki", "url": "{RSSBRIDGE}/?action=display&bridge=Picuki&context=Username&u={handle}&format=Atom" },
+    { "via": "RSSHub · Picnob", "url": "{RSSHUB}/picnob/user/{handle}" }
+  ],
+  "x": [
+    { "via": "Nitter (nitter.net)", "url": "https://nitter.net/{handle}/rss" },
+    { "via": "Nitter (xcancel.com)", "url": "https://xcancel.com/{handle}/rss" },
+    { "via": "Nitter (nitter.poast.org)", "url": "https://nitter.poast.org/{handle}/rss" },
+    { "via": "Nitter (nitter.privacydev.net)", "url": "https://nitter.privacydev.net/{handle}/rss" },
+    { "via": "RSS-Bridge", "url": "{RSSBRIDGE}/?action=display&bridge=Twitter&context=By+username&u={handle}&format=Atom" },
+    { "via": "RSSHub", "url": "{RSSHUB}/twitter/user/{handle}", "needs": "TWITTER_AUTH_TOKEN" }
+  ],
+  "threads": [
+    { "via": "RSS-Bridge", "url": "{RSSBRIDGE}/?action=display&bridge=Threads&context=By+username&u={handle}&format=Atom" },
+    { "via": "RSSHub", "url": "{RSSHUB}/threads/{handle}" }
+  ]
+}

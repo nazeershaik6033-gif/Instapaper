@@ -1,0 +1,52 @@
+# Miniflux (feed reader) + PostgreSQL + RSS-Bridge, for when you want your own reader server.
+# The app does NOT need this: the GitHub job already makes your feeds for free. See miniflux/README.md.
+#   cp .env.example .env   (then set the passwords)
+#   docker compose up -d   → Miniflux on http://<this machine>:8080, RSS-Bridge on :3000
+services:
+  miniflux:
+    image: miniflux/miniflux:latest
+    restart: unless-stopped
+    ports:
+      - "8080:8080"
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      DATABASE_URL: postgres://miniflux:${POSTGRES_PASSWORD}@db/miniflux?sslmode=disable
+      RUN_MIGRATIONS: "1"
+      CREATE_ADMIN: "1"
+      ADMIN_USERNAME: ${MINIFLUX_ADMIN:-admin}
+      ADMIN_PASSWORD: ${MINIFLUX_PASSWORD}
+      BASE_URL: ${MINIFLUX_BASE_URL:-http://localhost:8080}
+      POLLING_FREQUENCY: "15"   # minutes, same as the GitHub job
+      BATCH_SIZE: "200"
+    healthcheck:
+      test: ["CMD", "/usr/bin/miniflux", "-healthcheck", "auto"]
+      interval: 30s
+  db:
+    image: postgres:18
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: miniflux
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: miniflux
+    volumes:
+      - miniflux-db:/var/lib/postgresql
+    healthcheck:
+      test: ["CMD", "pg_isready", "-U", "miniflux"]
+      interval: 10s
+      start_period: 30s
+  # Free Instagram / X / Threads feeds from this machine's own internet connection. A home connection
+  # is blocked far less often than GitHub's servers. In Miniflux: Settings → Integrations → RSS-Bridge,
+  # URL http://rssbridge, then add an instagram.com / x.com profile link as a new feed.
+  rssbridge:
+    image: rssbridge/rss-bridge:latest
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    environment:
+      RSSBRIDGE_system_enabled_bridges: "*"
+      RSSBRIDGE_InstagramBridge_session_id: ${IG_SESSION_ID:-}
+      RSSBRIDGE_InstagramBridge_ds_user_id: ${IG_DS_USER_ID:-}
+volumes:
+  miniflux-db:

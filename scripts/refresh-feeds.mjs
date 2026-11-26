@@ -12,12 +12,12 @@ const src = JSON.parse(fs.readFileSync(srcPath, 'utf8'));
 const urls = [...new Set((src.urls || []).filter(u => /^https?:\/\//i.test(u)))];
 
 // previous snapshot (so one failed fetch does not blank a source)
-let old = {};
+let old = {}, oldBridges = {};
 const repo = process.env.GITHUB_REPOSITORY;
 if (repo && !process.env.NO_OLD) {
   try {
     const r = await fetch(`https://raw.githubusercontent.com/${repo}/feeds-data/feeds.json`, { signal: AbortSignal.timeout(10000) });
-    if (r.ok) old = (await r.json()).feeds || {};
+    if (r.ok) { const j = await r.json(); old = j.feeds || {}; oldBridges = j.bridges || {}; }
   } catch { /* first run */ }
 }
 
@@ -49,7 +49,10 @@ async function worker() {
   }
 }
 await Promise.all(Array.from({ length: 6 }, worker));
+// Instagram / X / Threads posts come from bridge-social.mjs, which runs after this in the 15-minute job.
+// Carry the last copies over so a run of this script alone (the half-hourly job) doesn't drop them.
+for (const [k, v] of Object.entries(old)) if (k.startsWith('social:') && v && Date.now() - (v.at || 0) < KEEP_OLD_MS) feeds[k] = v;
 
 fs.mkdirSync(path.dirname(outPath), { recursive: true });
-fs.writeFileSync(outPath, JSON.stringify({ fetchedAt: Date.now(), feeds }));
+fs.writeFileSync(outPath, JSON.stringify({ fetchedAt: Date.now(), feeds, bridges: oldBridges }));
 console.log(`feeds: ${ok} fetched, ${kept} kept from last run, ${failed} failed, of ${urls.length}`);
