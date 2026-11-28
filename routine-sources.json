@@ -17,68 +17,141 @@
   "https://www.youtube.com/feeds/videos.xml?channel_id=UCF_kWxafJ5Nr0OLd9aoCHsQ",
   "https://www.youtube.com/feeds/videos.xml?channel_id=UC5fcjujOsqD-126Chn_BAuA",
   "https://www.youtube.com/feeds/videos.xml?channel_id=UC-CBQChrXvLzYc9oxpMfFPg",
-  "https://www.youtube.com/feeds/videos.xml?channel_id=UCKAB3SSR5WnYA_VuDCX5AVQ"
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UCKAB3SSR5WnYA_VuDCX5AVQ",
+  "https://www.youtube.com/feeds/videos.xml?channel_id=UChjRM_qQAaOAiLNbOGbYcRA"
  ],
  "accounts": [
-  {
-   "platform": "instagram",
-   "handle": "theindianidiot",
-   "name": "@theindianidiot · Instagram",
-   "profile": "https://www.instagram.com/theindianidiot/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "thekitiki",
-   "name": "@thekitiki · Instagram",
-   "profile": "https://www.instagram.com/thekitiki/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "kalyan_battersetty",
-   "name": "@kalyan_battersetty · Instagram",
-   "profile": "https://www.instagram.com/kalyan_battersetty/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "appledsign",
-   "name": "@appledsign · Instagram",
-   "profile": "https://www.instagram.com/appledsign/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "drvikranta",
-   "name": "@drvikranta · Instagram",
-   "profile": "https://www.instagram.com/drvikranta/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "fit.khurana",
-   "name": "@fit.khurana · Instagram",
-   "profile": "https://www.instagram.com/fit.khurana/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "prasadtechinteluguofficial",
-   "name": "@prasadtechinteluguofficial · Instagram",
-   "profile": "https://www.instagram.com/prasadtechinteluguofficial/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "rajshamani",
-   "name": "@rajshamani · Instagram",
-   "profile": "https://www.instagram.com/rajshamani/"
-  },
-  {
-   "platform": "instagram",
-   "handle": "dr.pal.manickam",
-   "name": "@dr.pal.manickam · Instagram",
-   "profile": "https://www.instagram.com/dr.pal.manickam/"
-  },
   {
    "platform": "x",
    "handle": "learningeleven",
    "name": "@learningeleven · X",
    "profile": "https://x.com/learningeleven"
+  },
+  {
+   "platform": "instagram",
+   "handle": "onlywhatsneeded",
+   "name": "Only What’s Needed",
+   "profile": "https://www.instagram.com/onlywhatsneeded/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "foodpharmer",
+   "name": "Food Pharmer",
+   "profile": "https://www.instagram.com/foodpharmer/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "kalyan_battersetty",
+   "name": "Kalyan Battersetty",
+   "profile": "https://www.instagram.com/kalyan_battersetty/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "demicstory",
+   "name": "Demic Story",
+   "profile": "https://www.instagram.com/demicstory/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "fit.khurana",
+   "name": "Fit Khurana",
+   "profile": "https://www.instagram.com/fit.khurana/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "katyliftz",
+   "name": "Katy Liftz",
+   "profile": "https://www.instagram.com/katyliftz/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "vishwa.trufit",
+   "name": "Vishwa Trufit",
+   "profile": "https://www.instagram.com/vishwa.trufit/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "drvikranta",
+   "name": "Dr Vikranta",
+   "profile": "https://www.instagram.com/drvikranta/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "dr.rebeccapinto",
+   "name": "Dr Rebecca Pinto",
+   "profile": "https://www.instagram.com/dr.rebeccapinto/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "dr.pal.manickam",
+   "name": "Dr Pal",
+   "profile": "https://www.instagram.com/dr.pal.manickam/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "monitormunchies",
+   "name": "Monitor Munchies",
+   "profile": "https://www.instagram.com/monitormunchies/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "prasadtechinteluguofficial",
+   "name": "Prasadtechintelugu",
+   "profile": "https://www.instagram.com/prasadtechinteluguofficial/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "beebomco",
+   "name": "Beebom",
+   "profile": "https://www.instagram.com/beebomco/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "akhil.ds.tech",
+   "name": "Akhil Tech",
+   "profile": "https://www.instagram.com/akhil.ds.tech/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "besttechintelugu",
+   "name": "Kanth Anna tech",
+   "profile": "https://www.instagram.com/besttechintelugu/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "anushkarathod98",
+   "name": "Anuskha Rathod",
+   "profile": "https://www.instagram.com/anushkarathod98/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "moneypurseadv",
+   "name": "Money Purse",
+   "profile": "https://www.instagram.com/moneypurseadv/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "_soniashenoy",
+   "name": "Sonia Shenoy",
+   "profile": "https://www.instagram.com/_soniashenoy/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "intrinsiccompounding",
+   "name": "SOIC",
+   "profile": "https://www.instagram.com/intrinsiccompounding/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "zero1byzerodha",
+   "name": "Zero1 by Zerodha",
+   "profile": "https://www.instagram.com/zero1byzerodha/"
+  },
+  {
+   "platform": "instagram",
+   "handle": "finshots.in",
+   "name": "Fin shots",
+   "profile": "https://www.instagram.com/finshots.in/"
   }
  ]
 }
