@@ -35,6 +35,7 @@ const isSocial=it=>!!platformOf(it);
 function isVideoPost(p){
   const e=p&&p.e;if(!e)return false;
   if(e.video)return true;
+  if(/(youtube\.com\/(watch|shorts)|youtu\.be\/)/i.test(e.url||''))return true; // YouTube in the feed layout
   if(/instagram\.com\/(?:[\w.]+\/)?(reel|reels|tv)\//i.test(e.url||''))return true;
   if(/video_thumb|amplify_video|ext_tw_video/i.test(e.thumb||''))return true;
   return false;
@@ -42,6 +43,7 @@ function isVideoPost(p){
 /* an embeddable player for the post, where the platform offers one */
 function embedOf(p){
   const u=(p&&p.e&&p.e.url)||'';let m;
+  if((m=/(?:youtube\.com\/(?:watch\?v=|shorts\/)|youtu\.be\/)([\w-]{11})/i.exec(u)))return'https://www.youtube.com/embed/'+m[1]+'?playsinline=1&autoplay=1&rel=0';
   if((m=/instagram\.com\/(?:[\w.]+\/)?(p|reel|reels|tv)\/([\w-]+)/i.exec(u)))return'https://www.instagram.com/'+(m[1]==='p'?'p':'reel')+'/'+m[2]+'/embed/';
   if((m=/(?:x|twitter)\.com\/[\w]+\/status\/(\d+)/i.exec(u)))return'https://platform.twitter.com/embed/Tweet.html?id='+m[1]+'&theme=dark&dnt=true';
   if((m=/t\.me\/([\w]+)\/(\d+)/i.exec(u)))return'https://t.me/'+m[1]+'/'+m[2]+'?embed=1&mode=tme&dark=1';
@@ -172,7 +174,7 @@ function Reels({T,posts,start,isDone,onDone,onAction,onClose}){
       })),
     h('div',{style:{position:'absolute',left:0,right:0,top:0,padding:'calc(8px + env(safe-area-inset-top)) 10px 8px',display:'flex',alignItems:'center',gap:8,background:'linear-gradient(to bottom,rgba(0,0,0,.6),transparent)',zIndex:3}},
       h('button',{onClick:onClose,'aria-label':'Close reels',className:'act90',style:{width:40,height:40,display:'flex',alignItems:'center',justifyContent:'center',color:'#fff'}},Icons.back(24)),
-      h('div',{style:{fontSize:17,fontWeight:750}},'Reels'),h('div',{style:{flex:1}}),
+      h('div',{style:{fontSize:17,fontWeight:750}},posts[0]&&/youtu/.test(posts[0].e.url||'')?'Videos':'Reels'),h('div',{style:{flex:1}}),
       h('span',{style:{fontSize:12.5,opacity:.75}},(idx+1)+' / '+posts.length)));
 }
 
@@ -262,7 +264,7 @@ function SocialFeed({T,S,posts:allPosts,accounts,platform,isDone,onDone,isSaved,
           needFeed.length+' of '+accounts.length+' account'+(accounts.length>1?'s':'')+' show'+(needFeed.length===1?'s':'')+' only a live profile · ',h('span',{style:{color:'#fff',fontWeight:650,textDecoration:'underline'}},'Get new posts')):null,
         videos.length?h('button',{onClick:()=>setReels(0),className:'act98',style:{display:'flex',alignItems:'center',gap:10,margin:'2px 12px 16px',padding:'10px 14px',borderRadius:14,background:'#141417',color:'#fff',width:'calc(100% - 24px)',textAlign:'left'}},
           h('span',{style:{display:'flex',width:34,height:34,borderRadius:10,background:IG_RING,alignItems:'center',justifyContent:'center'}},SI.reel(19)),
-          h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:14.5,fontWeight:700}},'Reels'),h('span',{style:{display:'block',fontSize:12,color:'rgba(255,255,255,.55)'}},videos.length+' video'+(videos.length>1?'s':'')+' · swipe through full screen')),
+          h('span',{style:{flex:1}},h('span',{style:{display:'block',fontSize:14.5,fontWeight:700}},platform==='youtube'?'Videos':'Reels'),h('span',{style:{display:'block',fontSize:12,color:'rgba(255,255,255,.55)'}},videos.length+' video'+(videos.length>1?'s':'')+' · swipe through full screen')),
           Icons.chevR?Icons.chevR(16):null):null,
         posts.map(card),
         !posts.length?h('div',{style:{textAlign:'center',padding:accounts.length?'36px 30px':'60px 30px',color:'rgba(255,255,255,.6)',fontSize:14,lineHeight:1.55}},

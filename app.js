@@ -1288,7 +1288,12 @@ async function aiResolveSource(S,text){
   if(!obj.query||!['youtube','telegram','rss','link'].includes(obj.kind))throw new Error('Could not understand that — try rephrasing');
   return obj;
 }
-const BRIEF_SLOTS0=[{id:'m',name:'Morning',time:'08:00'},{id:'a',name:'Afternoon',time:'14:00'},{id:'n',name:'Night',time:'20:00'}];
+/* Two periods, From → To: 12 AM – 12 PM and 12 PM – 12 AM. Each slot stores its From; its To is the next one's From,
+   and the name is that range (kept in sync by periodName when times change). */
+const BRIEF_SLOTS0=[{id:'p1',name:'12 AM – 12 PM',time:'00:00'},{id:'p2',name:'12 PM – 12 AM',time:'12:00'}];
+const shortClock=t=>fmtClock(t).replace(':00 ',' ');
+const periodName=(slots,s)=>{const ss=slots.slice().sort((a,b)=>tmin(a.time)-tmin(b.time));const i=ss.findIndex(x=>x.id===s.id);const nx=ss[(i+1)%ss.length]||s;return shortClock(s.time)+' – '+shortClock(nx.time)};
+const renamePeriods=slots=>slots.map(s=>({...s,name:periodName(slots,s)}));
 const BRIEF0={groups:[],items:[],slots:BRIEF_SLOTS0.map(s=>({...s})),done:{key:'',ids:[]},feeds:{},yt:{},seen:{}};
 function extractFirstUrl(text){const m=String(text||'').match(/https?:\/\/[^\s"'<>]+/);return m?m[0]:''}
 function htmlToText(html){const d=document.createElement('div');d.innerHTML=html;return(d.textContent||'').replace(/\s+/g,' ').trim()}
@@ -2209,6 +2214,8 @@ function loadStore(){
   }
   d.brief.seeded=true;
   if(!Array.isArray(d.brief.slots)||!d.brief.slots.length)d.brief.slots=BRIEF_SLOTS0.map(s=>({...s}));
+  /* once: Morning / Afternoon / Night become two periods, 12 AM – 12 PM and 12 PM – 12 AM */
+  if(!d.brief.periodsV1){d.brief.slots=BRIEF_SLOTS0.map(s=>({...s}));d.brief.periodsV1=true}
   d.brief.done=normalizeDone(d.brief.done);
   if(!d.brief.yt||typeof d.brief.yt!=='object')d.brief.yt={};
   if(!d.brief.feeds||typeof d.brief.feeds!=='object')d.brief.feeds={};
@@ -5426,7 +5433,8 @@ const SRC_ICON={
    Chosen per app with the button next to 🕘 (or ⋯ → Layout) and kept in settings.socialLayout. */
 const LAYOUT_ICON={
   feed:s=>Svg({size:s},h('rect',{x:4.5,y:3.5,width:15,height:9,rx:2.2,stroke:'currentColor',strokeWidth:1.7}),P('M4.5 16.2h15M4.5 20h10')),
-  shorts:s=>Svg({size:s},h('rect',{x:6.5,y:2.8,width:11,height:18.4,rx:2.8,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.6 9.4v5.2l4.2-2.6-4.2-2.6Z',fill:'currentColor'}))
+  shorts:s=>Svg({size:s},h('rect',{x:6.5,y:2.8,width:11,height:18.4,rx:2.8,stroke:'currentColor',strokeWidth:1.7}),h('path',{d:'M10.6 9.4v5.2l4.2-2.6-4.2-2.6Z',fill:'currentColor'})),
+  list:s=>Svg({size:s},P('M9 6.5h11M9 12h11M9 17.5h11'),h('circle',{cx:4.6,cy:6.5,r:1.3,fill:'currentColor'}),h('circle',{cx:4.6,cy:12,r:1.3,fill:'currentColor'}),h('circle',{cx:4.6,cy:17.5,r:1.3,fill:'currentColor'}))
 };
 function srcOf(it){
   if(!it)return'web';
@@ -5504,6 +5512,18 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const [sel,setSel]=useState(null); // slot id being viewed (null = current/active)
   const win=briefWindow(slots,sel,now)||{activeSlotId:'',sel:'',start:0,end:0,key:'',future:null};
   const curSlot=slots.find(s=>s.id===win.sel)||slots[0]||{name:'Routine',time:'00:00'};
+  /* One switch beside the period label, for every app (YouTube too) and for past days:
+     Feed = Instagram-style cards · Shorts = full screen, swipe up · List = channels and groups (manage) */
+  const rView=(S&&S.routineView)||'';
+  const layoutOf=k=>rView==='feed'||rView==='shorts'?rView:(k!=='youtube'&&((S&&S.socialLayout)||{})[k]!=='shorts'?'feed':'shorts');
+  const setRView=v=>{onSetting&&onSetting({routineView:v});vibrate(6);setView(v==='list'?'manage':'today')};
+  const viewSwitch=dark=>{const cur=view==='manage'?'list':layoutOf(appK);
+    const b=(k,icon,label)=>h('button',{key:k,onClick:()=>setRView(k),'aria-label':label+' view','aria-pressed':cur===k,title:label,className:'act95',
+      style:{width:34,height:28,borderRadius:14,display:'flex',alignItems:'center',justifyContent:'center',transition:'background 160ms',
+        background:cur===k?(dark?'#fff':T.fg):'transparent',color:cur===k?(dark?'#000':T.bg):(dark?'#fff':T.fg)}},icon);
+    return h('div',{role:'group','aria-label':'View',style:Object.assign({display:'flex',gap:2,padding:3,borderRadius:17,flexShrink:0,pointerEvents:'auto'},
+        dark?{background:'rgba(0,0,0,.45)',border:'1px solid rgba(255,255,255,.25)',backdropFilter:'blur(12px)',WebkitBackdropFilter:'blur(12px)'}:{background:T.card})},
+      b('feed',LAYOUT_ICON.feed(16),'Feed'),b('shorts',LAYOUT_ICON.shorts(16),'Shorts'),b('list',LAYOUT_ICON.list(16),'List'))};
   const doneIds=briefDoneIds(brief.done,win.key);
   const [act,setAct]=useState(null);
   const [moveIt,setMoveIt]=useState(null);
@@ -5755,7 +5775,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       style:{display:'flex',alignItems:'center',gap:4,flexShrink:0,padding:'5px 10px',borderRadius:14,background:n?T.accent:hexA(T.accent,.12),color:n?'#fff':T.accent,fontSize:12,fontWeight:700,whiteSpace:'nowrap'}},Icons.play(11,true),n?'Shorts · '+n+' new':'Shorts')};
   const removeItem=id=>onBrief(b=>{const fd=Object.assign({},b.feeds);delete fd[id];return{...b,items:b.items.filter(x=>x.id!==id),feeds:fd}});
   const setItemGroup=(id,groupId)=>onBrief(b=>({...b,items:b.items.map(x=>x.id===id?{...x,groupId}:x)}));
-  const setSlot=(id,patch)=>onBrief(b=>({...b,slots:(b.slots||[]).map(s=>s.id===id?{...s,...patch}:s)}));
+  const setSlot=(id,patch)=>onBrief(b=>({...b,slots:renamePeriods((b.slots||[]).map(s=>s.id===id?{...s,...patch}:s))}));
   const moveGroup=(id,dir,within)=>onBrief(b=>{const gs=[...(b.groups||[])];const ids=within.map(g=>g.id);const k=ids.indexOf(id),nb=ids[k+dir];if(k<0||!nb)return b;
     const i=gs.findIndex(g=>g.id===id),j=gs.findIndex(g=>g.id===nb);if(i<0||j<0)return b;[gs[i],gs[j]]=[gs[j],gs[i]];return{...b,groups:gs}});
   const saveItem=f=>{
@@ -6061,7 +6081,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
   const refreshBar=h('div',{style:{display:'flex',alignItems:'center',gap:8,padding:'2px 16px 8px'}},
     h('span',{style:{flex:1,minWidth:0,fontSize:12,color:(failN||proxyDown)&&!refreshing?T.danger:T.sub,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},
       statusText,
-      nextSlot&&!refreshing&&!failN&&!proxyDown?h('span',{style:{opacity:.8}},' · Next: '+nextSlot.name+' '+fmtClock(nextSlot.time)):null),
+      nextSlot&&!refreshing&&!failN&&!proxyDown?h('span',{style:{opacity:.8}},' · Next period at '+fmtClock(nextSlot.time)):null),
     h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,className:'act90','aria-label':'Refresh',
       style:{display:'flex',alignItems:'center',gap:5,flexShrink:0,padding:'4px 2px 4px 8px',color:T.accent,fontSize:12.5,fontWeight:600,opacity:refreshing?.5:1}},
       h('span',{style:{display:'flex',animation:refreshing?'spk 900ms linear infinite':'none'}},Icons.refresh(14)),'Refresh'));
@@ -6268,21 +6288,27 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       icon,
       x.badge?h('span',{style:{position:'absolute',top:1,right:0,minWidth:16,height:16,padding:'0 4px',borderRadius:8,background:T.accent,color:'#fff',fontSize:9.5,fontWeight:700,display:'flex',alignItems:'center',justifyContent:'center',pointerEvents:'none',border:'1.5px solid '+T.bg}},x.badge):null)};
   const moreAct=fn=>()=>{setMoreOpen(false);fn()};
-  const slotSheetEl=()=>h(Sheet,{portal:true,T,title:'Routine windows',maxH:'90%',onClose:()=>setSlotSheet(false)},
+  const slotSheetEl=()=>h(Sheet,{portal:true,T,title:'Periods',maxH:'90%',onClose:()=>setSlotSheet(false)},
       h('div',{style:{padding:'0 16px calc(18px + '+SAFE_B+')'}},
-        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 10px',lineHeight:1.45}},'Each window shows everything new since the previous one. The routine screen follows the current window unless you pick another one here.'),
+        h('div',{style:{fontSize:12.5,color:T.sub,margin:'2px 2px 10px',lineHeight:1.45}},'Each period shows what came in during it. My Routine follows the current period unless you pick another one here.'),
         h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'0 0 14px'}},
           h('button',{onClick:()=>setSel(null),className:'act95',style:{flexShrink:0,padding:'7px 14px',borderRadius:16,fontSize:13,fontWeight:600,border:'1px solid '+(sel?T.hair:T.fg),background:sel?'transparent':T.fg,color:sel?T.sub:T.bg}},'Now'),
           slots.map(s=>h('button',{key:s.id,onClick:()=>setSel(s.id),className:'act95',style:{flexShrink:0,padding:'7px 14px',borderRadius:16,fontSize:13,fontWeight:600,whiteSpace:'nowrap',border:'1px solid '+(sel===s.id?T.fg:T.hair),background:sel===s.id?T.fg:'transparent',color:sel===s.id?T.bg:T.sub}},
             s.name+(s.id===win.activeSlotId?' •':'')))),
-        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,margin:'0 2px 10px'}},'Times'),
-        slots.map(s=>h('div',{key:s.id,style:{display:'flex',alignItems:'center',gap:8,marginBottom:10}},
-          h('input',{value:s.name,onChange:e=>setSlot(s.id,{name:e.target.value}),placeholder:'Name',
-            style:{flex:1,minWidth:0,border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 12px',fontSize:14.5}}),
-          h('input',{type:'time',value:s.time,onChange:e=>setSlot(s.id,{time:e.target.value||s.time}),
-            style:{border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 10px',fontSize:14.5,colorScheme:(T.id==='dark'||T.id==='black')?'dark':'light'}}),
-          (brief.slots||[]).length>1?h('button',{onClick:()=>{if(sel===s.id)setSel(null);onBrief(b=>({...b,slots:(b.slots||[]).filter(x=>x.id!==s.id)}))},className:'act90',style:{display:'flex',color:T.danger,padding:5}},Icons.trash(18)):null)),
-        h('button',{onClick:()=>onBrief(b=>({...b,slots:(b.slots||[]).concat([{id:uid(),name:'Routine',time:'12:00'}])})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a routine')));
+        h('div',{style:{fontSize:11.5,fontWeight:700,letterSpacing:'.05em',textTransform:'uppercase',color:T.sub,margin:'0 2px 10px'}},'Periods · From → To'),
+        slots.map((s0,i)=>{const nx=slots[(i+1)%slots.length];const inp={border:'1px solid '+T.hair,background:T.card,color:T.fg,borderRadius:10,padding:'10px 8px',fontSize:14.5,colorScheme:(T.id==='dark'||T.id==='black')?'dark':'light',minWidth:0,flex:1};
+          return h('div',{key:s0.id,style:{marginBottom:12,padding:'10px 12px',borderRadius:12,background:hexA(T.fg,.04)}},
+            h('div',{style:{display:'flex',alignItems:'center',justifyContent:'space-between',marginBottom:8}},
+              h('span',{style:{fontSize:14,fontWeight:700}},'Period '+(i+1)+(s0.id===win.activeSlotId?' · now':'')),
+              slots.length>1?h('button',{onClick:()=>{if(sel===s0.id)setSel(null);onBrief(b=>({...b,slots:renamePeriods((b.slots||[]).filter(x=>x.id!==s0.id))}))},className:'act90','aria-label':'Remove period',style:{display:'flex',color:T.danger,padding:4}},Icons.trash(17)):null),
+            h('div',{style:{display:'flex',alignItems:'center',gap:8}},
+              h('span',{style:{fontSize:12.5,color:T.sub}},'From'),
+              h('input',{type:'time',value:s0.time,onChange:e=>setSlot(s0.id,{time:e.target.value||s0.time}),style:inp}),
+              h('span',{style:{fontSize:12.5,color:T.sub}},'To'),
+              h('input',{type:'time',value:nx.time,disabled:nx.id===s0.id,onChange:e=>setSlot(nx.id,{time:e.target.value||nx.time}),style:inp})));
+        }),
+        h('div',{style:{fontSize:12,color:T.sub,margin:'0 2px 10px',lineHeight:1.45}},'A period ends where the next one starts, so changing a To time also moves the next period’s From.'),
+        h('button',{onClick:()=>onBrief(b=>({...b,slots:renamePeriods((b.slots||[]).concat([{id:uid(),name:'',time:'18:00'}]))})),className:'act98',style:{display:'flex',alignItems:'center',gap:8,marginTop:6,padding:'11px 14px',borderRadius:11,border:'1px dashed '+T.hair,color:T.fg,fontSize:14,fontWeight:500}},Icons.plus(18),'Add a period')));
   const playlistEl=playlist?h(RoutinePlaylist,{T,posts:playlist,hidden:!!overlayOpen,toastFn,
     isDone:p=>!!seenMap[p.e.url],onDone:p=>doneEarlier(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),
     onTool:vtool,txOf,onOpen:p=>openEntry(p.e),onClose:()=>setPlaylist(null),onPaper:onMakePaper?()=>onMakePaper(playlist):null}):null;
@@ -6290,6 +6316,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     /* One row of source chips (only sources you follow, each with its New count) · ☰ group & day filter · ⋯ */
     const presentSrcs=appList;
     const srcK=appK;
+    const socLayout=layoutOf(srcK);
     const grp='all'; // Today filters by account (circles), not by group
     const acct=todayAcct&&visAll.some(it=>it.id===todayAcct&&srcOf(it)===srcK)?todayAcct:null;
     const dayObj=pday?(catchDays.find(d=>d.key===pday)||null):null;
@@ -6299,9 +6326,11 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       .map((p,i)=>[p,i]).sort((a,b)=>(isShortEntry(a[0].e)-isShortEntry(b[0].e))||(a[1]-b[1])).map(x=>x[0]);
     const srcNew=k=>todayAll.filter(p=>p.isNew&&srcOf(p.it)===k).length;
     const isSocSrc=!['youtube','web'].includes(srcK);
-    const accounts=isSocSrc?visAll.filter(it=>srcOf(it)===srcK&&inGrp(it)).map(it=>{
+    const accounts=(isSocSrc||socLayout==='feed')?visAll.filter(it=>srcOf(it)===srcK&&inGrp(it)).map(it=>{
       const c=feeds[it.id];const n=(c&&c.entries||[]).length;
-      return{it,feed:hasFeed(it),posts:posts.filter(p=>p.it.id===it.id).length,newN:posts.filter(p=>p.it.id===it.id&&p.isNew).length,entries:n}}):[];
+      return{it,feed:hasFeed(it),posts:posts.filter(p=>p.it.id===it.id).length,newN:posts.filter(p=>p.it.id===it.id&&p.isNew).length,entries:n}})
+      /* YouTube in the feed: a circle only for channels with videos in this period (or the day you picked) */
+      .filter(a=>isSocSrc||a.posts>0):[];
     const plN=playlistPosts().length;
     const glass={background:'rgba(0,0,0,.58)',backdropFilter:'blur(14px)',WebkitBackdropFilter:'blur(14px)',color:'#fff',border:'1px solid rgba(255,255,255,.28)',touchAction:'manipulation'};
     /* YouTube, Instagram and Web carry their name; the rest are known by their icon */
@@ -6313,8 +6342,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
        tap one to see only that channel, tap it again (or All) for everything. Social apps show their own. */
     const inDay=dayObj?earlierPosts(dayObj):todayAll;
     const chNew=id=>inDay.filter(p=>p.isNew&&p.it.id===id).length;
-    const channels=!isSocSrc?visAll.filter(it=>srcOf(it)===srcK).map(it=>({it,n:chNew(it.id)}))
+    /* only channels with new videos get a circle; "All" at the end opens the full list */
+    const channels=!isSocSrc&&socLayout!=='feed'?visAll.filter(it=>srcOf(it)===srcK).map(it=>({it,n:chNew(it.id)})).filter(c=>c.n>0||c.it.id===acct)
       .sort((a,b)=>(b.n-a.n)||String(a.it.name||'').localeCompare(String(b.it.name||''))):[];
+    const quietN=!isSocSrc?visAll.filter(it=>srcOf(it)===srcK).length-channels.length:0;
     const IG_RING='conic-gradient(from 210deg,#feda75,#fa7e1e,#d62976,#962fbf,#4f5bd5,#feda75)';
     const circ=(key,label,inner,bg,ring,on,fn)=>h('button',{key,onClick:fn,'aria-pressed':on,'aria-label':label,className:'act95',style:{flexShrink:0,width:66,display:'flex',flexDirection:'column',alignItems:'center',gap:5,color:'#fff'}},
       h('span',{style:{display:'block',width:58,height:58,borderRadius:29,padding:2.5,background:ring?IG_RING:'rgba(255,255,255,.26)',boxShadow:on?'0 0 0 2px #fff':'none',transition:'box-shadow 160ms'}},
@@ -6323,7 +6354,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     const chName=it=>String(it.name||'Channel').replace(/\s*·\s*YouTube$/i,'');
     const circlesRow=channels.length?h('div',{className:'sx',style:{display:'flex',gap:6,overflowX:'auto',padding:'10px 10px 0',pointerEvents:'auto'}},
       circ('_all','All',Icons.play(20,true),'#1c1c1f',!acct&&channels.some(c=>c.n),!acct,()=>setTodayAcct(null)),
-      channels.map(({it,n})=>circ(it.id,chName(it),chName(it).charAt(0).toUpperCase(),groupColor(it.id),n>0,acct===it.id,()=>setTodayAcct(acct===it.id?null:it.id)))):null;
+      channels.map(({it,n})=>circ(it.id,chName(it),chName(it).charAt(0).toUpperCase(),groupColor(it.id),n>0,acct===it.id,()=>setTodayAcct(acct===it.id?null:it.id))),
+      quietN?circ('_list','All channels',LAYOUT_ICON.list(20),'#1c1c1f',false,false,()=>setRView('list')):null):null;
     const totalNew=todayAll.filter(p=>p.isNew).length;
     const bad=(failN||proxyDown)&&!refreshing;
     const statusLow=statusText.charAt(0).toLowerCase()+statusText.slice(1);
@@ -6337,9 +6369,6 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       const P=SOCIAL[p];const f=P&&P.feed&&hh?P.feed(hh):'';if(!f){toastFn('This account needs a feed link');return}
       return linkFeed(it,{kind:'rss',feedUrl:f,platform:p,socialHandle:hh})};
     const padTop=circlesRow?176:92;
-    const socLayout=((S&&S.socialLayout)||{})[srcK]==='shorts'?'shorts':'feed';
-    const setSocLayout=v=>{onSetting&&onSetting({socialLayout:Object.assign({},(S&&S.socialLayout)||{},{[srcK]:v})});vibrate(6);
-      toastFn((SRC_DEF.find(x=>x[0]===srcK)||[0,''])[1]+': '+(v==='shorts'?'Shorts layout (full screen, swipe up)':'Feed layout (scroll like Instagram)'))};
     /* swipe left anywhere — or right from the left edge, like iPhone back — returns to the My Routine list */
     const swipeBack={
       onTouchStart:e=>{if(e.touches.length!==1){todaySwipe.current.on=false;return}const t=e.touches[0];const inRow=!!(e.target&&e.target.closest&&e.target.closest('.sx,input,textarea'));
@@ -6348,7 +6377,7 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         const dx=t.clientX-s.x,dy=t.clientY-s.y;if(Math.abs(dx)<70||Math.abs(dx)<Math.abs(dy)*1.6)return;
         if(dx<0||s.edge){vibrate(6);setView('manage')}}};
     const layer=h('div',Object.assign({'data-noswipe':'1',style:{position:'fixed',inset:0,zIndex:30,background:'#000',fontFamily:UIF,display:overlayOpen?'none':'block'}},swipeBack),
-      isSocSrc&&SOC&&socLayout==='feed'?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc(12px + env(safe-area-inset-bottom))',
+      SOC&&socLayout==='feed'?h(SOC.SocialFeed,{key:'soc-'+srcK+grp+(dayObj?dayObj.key:''),T,S,posts,accounts,toastFn,hidden:!!overlayOpen,padTop,padBottom:'calc(12px + env(safe-area-inset-bottom))',
         platform:srcK,isDone:p=>!!seenMap[p.e.url],onDone:p=>p.earlier?doneEarlier(p):shortsDone(p),isSaved:e=>!!(isSaved&&isSaved(e.url)),onSave:p=>onSaveEntry&&onSaveEntry(p.e,p.it.name),onOpen:p=>openEntry(p.e),
         onProfile:it=>openExternalUrl(it.url),onSetFeed:(it,url)=>linkFeed(it,{kind:'rss',feedUrl:url}),onAutoFeed:autoFeed,
         notesOf:url=>(brief.notes||{})[url]||'',onNote:(url,t)=>onBrief(b=>{const n=Object.assign({},b.notes||{});if(t)n[url]=t;else delete n[url];return{...b,notes:n}}),
@@ -6360,7 +6389,8 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
       h('div',{style:{position:'absolute',left:0,right:0,top:0,zIndex:4,padding:'calc(10px + '+SAFE_T+') 0 16px',background:'linear-gradient(to bottom,rgba(0,0,0,.8),rgba(0,0,0,.45) 70%,rgba(0,0,0,0))',pointerEvents:'none'}},
         /* status line: routine window (tap to switch) · total new · last update (tap to refresh) · ⋯ */
         h('div',{style:{display:'flex',alignItems:'center',gap:0,height:26,padding:'0 6px 0 16px',marginBottom:6,color:'#fff',fontSize:14,pointerEvents:'auto',whiteSpace:'nowrap'}},
-          h('button',{onClick:()=>setSlotSheet(true),'aria-label':'Routine window: '+curSlot.name,className:'act95',style:{color:'#fff',fontSize:14.5,fontWeight:700,flexShrink:0}},curSlot.name),
+          h('button',{onClick:()=>setSlotSheet(true),'aria-label':'Period: '+curSlot.name,className:'act95',style:{color:'#fff',fontSize:14.5,fontWeight:700,flexShrink:0}},curSlot.name),
+          h('span',{style:{width:8,flexShrink:0}}),viewSwitch(true),h('span',{style:{width:6,flexShrink:0}}),
           h('span',{style:{color:'rgba(255,255,255,.62)',flexShrink:0}},'\u00a0· '+totalNew+' new ·\u00a0'),
           h('button',{onClick:()=>refreshFeeds(true),disabled:refreshing,'aria-label':'Refresh',className:'act95',style:{minWidth:0,overflow:'hidden',textOverflow:'ellipsis',color:bad?'#ffb4a8':'rgba(255,255,255,.62)',fontSize:14,textAlign:'left'}},statusLow),
           bad&&!snapAt?h('button',{onClick:()=>setupServerRefresh(brief,toastFn),style:{color:'#fff',fontWeight:700,marginLeft:6,fontSize:13,textDecoration:'underline',flexShrink:0}},'Fix'):null,
@@ -6370,8 +6400,6 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
         h('div',{style:{display:'flex',alignItems:'center',gap:7,padding:'0 12px',pointerEvents:'auto'}},
           h('div',{className:'sx',style:{flex:1,minWidth:0,display:'flex',gap:7,overflowX:'auto'}},
             presentSrcs.length?presentSrcs.map(srcChip):h('span',{style:{color:'#fff',fontSize:14,fontWeight:600,padding:'8px 4px'}},'My Routine')),
-          isSocSrc?h('button',{onClick:()=>setSocLayout(socLayout==='shorts'?'feed':'shorts'),'aria-label':socLayout==='shorts'?'Layout: Shorts. Switch to feed':'Layout: feed. Switch to Shorts',title:'Feed or Shorts layout',className:'act95',
-            style:Object.assign({},glass,{flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',width:34,height:34,borderRadius:17})},LAYOUT_ICON[socLayout==='shorts'?'feed':'shorts'](17)):null,
           h('button',{onClick:()=>setFilterOpen(true),'aria-label':dayObj?'Day: '+dayObj.label:'Past days',className:'act95',style:Object.assign({},glass,{position:'relative',flexShrink:0,display:'flex',alignItems:'center',gap:6,height:34,padding:dayObj?'0 12px 0 10px':'0 9px',borderRadius:17,fontSize:13,fontWeight:650},
             dayObj?{background:'#fff',color:'#000',border:'1px solid #fff'}:{})},Icons.clock(16),dayObj?dayObj.label:null,
             !dayObj&&missedTotal?h('span',{style:{position:'absolute',top:-5,right:-5,minWidth:18,height:18,padding:'0 5px',borderRadius:9,background:'#d62976',color:'#fff',fontSize:10.5,fontWeight:800,display:'flex',alignItems:'center',justifyContent:'center'}},missedTotal>99?'99+':missedTotal):null)),
@@ -6424,14 +6452,10 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
           h('button',{onClick:make,disabled:!n,className:'act95',style:{width:'100%',padding:'13px',borderRadius:12,background:T.fg,color:T.bg,fontSize:15,fontWeight:650,opacity:n?1:.4}},n?'Make playlist link · '+n+' video'+(n===1?'':'s'):'Tick at least one video')));
     })():null;
     const menuEl=todayMenu?h(Sheet,{portal:true,T,onClose:()=>setTodayMenu(false),z:80},
-      h('div',{style:{padding:'4px 20px 10px',fontSize:13,color:T.sub}},curSlot.name+' · '+statusText+(nextSlot&&!refreshing?' · Next: '+nextSlot.name+' '+fmtClock(nextSlot.time):'')),
+      h('div',{style:{padding:'4px 20px 10px',fontSize:13,color:T.sub}},curSlot.name+' · '+statusText+(nextSlot&&!refreshing?' · Next period at '+fmtClock(nextSlot.time):'')),
       srcK==='youtube'&&plN?h(ARow,{T,icon:Icons.play(21,true),label:'Play today’s videos',sub:plN+' unwatched, back to back',onClick:()=>{setTodayMenu(false);setPlaylist(playlistPosts())}}):null,
       srcK==='youtube'&&ytCands.length?h(ARow,{T,icon:Icons.playlist(21),label:'Make a YouTube playlist',sub:'Tick videos, get one link that plays them all',onClick:()=>{setTodayMenu(false);setYtPl({sel:ytCands.filter(p=>!seenMap[p.e.url]).slice(0,YT_PL_MAX).map(p=>p.e.url),link:''})}}):null,
       srcK==='youtube'&&onMakePaper&&paperPosts().length?h(ARow,{T,icon:Icons.newspaper(21),label:'Make today’s paper',sub:'A newspaper from today’s videos',onClick:()=>{setTodayMenu(false);onMakePaper(paperPosts())}}):null,
-      isSocSrc?h(ARow,{T,icon:LAYOUT_ICON[socLayout==='shorts'?'feed':'shorts'](21),label:socLayout==='shorts'?'Switch to feed layout':'Switch to Shorts layout',
-        sub:socLayout==='shorts'?'Scroll posts like Instagram':'Full screen, swipe up like YouTube Shorts',onClick:()=>{setTodayMenu(false);setSocLayout(socLayout==='shorts'?'feed':'shorts')}}):null,
-      srcK==='youtube'?h(ARow,{T,icon:Icons.newspaper(21),label:'Auto-paper'+((brief.autoGroups||[]).length?' · '+(brief.autoGroups||[]).length+' group'+((brief.autoGroups||[]).length>1?'s':''):''),
-        sub:'Transcribe new videos from chosen groups by themselves',onClick:()=>{setTodayMenu(false);setAutoSheet(true)}}):null,
       h(ARow,{T,icon:Icons.refresh(21),label:refreshing?'Refreshing…':'Refresh now',sub:'Fetch the latest from every source',onClick:()=>{setTodayMenu(false);refreshFeeds(true)}}),
       h(ARow,{T,icon:Icons.calendar(21),label:'Routine window · '+curSlot.name,sub:'Morning, afternoon, night',onClick:()=>{setTodayMenu(false);setSlotSheet(true)}}),
       h(ARow,{T,icon:Icons.pencil(21),label:'Manage sources & groups',sub:'Add, edit, group and reorder',onClick:()=>{setTodayMenu(false);setView('manage')}}),
@@ -6451,12 +6475,12 @@ function BriefView({T,S,brief,onBrief,toastFn,onSetting,onAskClaude,isSaved,onSa
     playlistEl,
     shorts&&shorts.max?shortsEl(shorts.gid):null,
     h('div',{style:{display:'flex',alignItems:'center',gap:4,padding:'8px 10px 4px 14px'}},
-      h('button',{onClick:()=>setView('today'),className:'act95','aria-label':'Back to Today',style:{flexShrink:0,display:'flex',alignItems:'center',gap:4,height:36,padding:'0 12px 0 8px',borderRadius:18,background:T.fg,color:T.bg,fontSize:13.5,fontWeight:650,marginRight:4}},Icons.back(15),'Today'),
-      /* The routine window is a labelled pill: the screen shows "now" unless you deliberately change it. */
+      /* The period is a labelled pill (the screen shows "now" unless you pick another); the view switch sits beside it */
       h('button',{onClick:()=>setSlotSheet(true),className:'act98','aria-label':'Routine windows',
         style:{flexShrink:0,display:'flex',alignItems:'center',gap:7,height:36,padding:'0 12px',borderRadius:18,background:sel?hexA(T.accent,.16):T.card,color:sel?T.accent:T.fg,fontSize:13.5,fontWeight:600}},
         Icons.calendar(15),curSlot.name,
         win.sel===win.activeSlotId?h('span',{style:{fontSize:10.5,fontWeight:600,color:T.accent}},'now'):h('span',{style:{fontSize:10.5,fontWeight:600,color:T.sub}},fmtClock(curSlot.time))),
+      h('span',{style:{width:6,flexShrink:0}}),viewSwitch(false),
       h('div',{style:{flex:1}}),
       iconBtn(Icons.search(19),toggleSearch,'Search',{active:searchOpen}),
       iconBtn(aiBusy?h(Spinner,{T,size:16}):Icons.ai(19),runDigest,'Summarize what’s new',{badge:newCount>0?(newCount>99?'99+':String(newCount)):'',disabled:aiBusy}),
@@ -6832,14 +6856,19 @@ function TranscriptSheet({T,S,a,patch,update,toastFn,onClose,onMaximize,onNewspa
       tool(Icons.download(20),'Paste',doPaste),
       tool(Icons.copy(20),'Copy',()=>{copyText(shown);toastFn('Copied')},!shown.trim()),
       tool(Icons.share(20),'Share',()=>shareText(a.title+(tab?' — '+tab:'')+' — transcript',shown,a.url),!shown.trim()),
-      tool(Icons.globe(20),'Translate',()=>setShowLangs(v=>!v),!has),
+      tool(Icons.globe(20),'2nd language',()=>setShowLangs(v=>!v),!has),
       tool(Icons.trash(20),'Clear',doClear,!has)),
     showLangs?(()=>{
       const from=scriptLang(draft);
       const eng=translateEngine(S);
       const big=l=>h('button',{key:l,onClick:()=>doTranslate(l),className:'act95 trc',style:{flex:1,padding:'12px 0',borderRadius:11,fontSize:14.5,fontWeight:600,background:T.fg,color:T.bg}},(trs[l]?'✓ ':'')+l);
       const main=TX_MAIN_LANGS.filter(l=>l!==from);
+      const E=window.InstaEdition;
       return h('div',{style:{marginTop:12,padding:'12px',borderRadius:12,background:T.card}},
+        /* your own second transcript (paste or upload); English stays the default */
+        E&&E.SecondTranscriptForm?h(E.SecondTranscriptForm,{C:{fg:T.fg,bg:T.bg,card:T.bg,hair:T.hair,accent:T.accent},have:Object.keys(trs).filter(k=>String(trs[k]||'').trim()),
+          onSave:(n,t)=>{patch(x=>({transcriptTr:Object.assign({},x.transcriptTr||{},{[n]:t})}));setTab(n);toastFn(n+' transcript added · it’s a tab here and 文A in the newspaper')}}):null,
+        h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',color:T.sub,margin:'18px 0 8px'}},'Or translate with AI (optional)'),
         h('div',{style:{fontSize:12,color:T.sub,marginBottom:10,lineHeight:1.45}},
           (from?'Transcript is in '+from+'. ':'')+'Translate with online AI ('+(eng?aiModelLabel(eng):'needs a Gemini or OpenRouter key')+'); each language is saved as a tab.'),
         h('div',{style:{display:'flex',gap:8}},main.map(big)),

@@ -153,6 +153,40 @@ function printHtml(html){
 /* Safari can't read results back from another app, so: send a part to Google Translate (the text is
    also copied), copy the translation there, come back and tap “Paste translation”. */
 const GT_LANGS=[['Telugu','te'],['Hindi','hi'],['English','en'],['Tamil','ta'],['Kannada','kn'],['Malayalam','ml'],['Marathi','mr'],['Bengali','bn'],['Gujarati','gu'],['Urdu','ur'],['Arabic','ar'],['Spanish','es'],['French','fr'],['German','de']];
+/* Your own second transcript: English stays the default, and you can add the same video's transcript in one more
+   language (paste it, or upload a .txt / .srt / .vtt file — subtitle numbers and timings are stripped). It's
+   saved as that language's edition; the reader's 文A button then switches between them with one tap. */
+function cleanSubtitleText(t){
+  return String(t||'').replace(/^﻿/,'').replace(/^WEBVTT.*$/m,'').split(/\r?\n/)
+    .filter(l=>!/^\s*\d+\s*$/.test(l)&&!/-->/.test(l)&&!/^(NOTE|STYLE|Kind:|Language:)/.test(l))
+    .map(l=>l.replace(/<[^>]+>/g,'').trim()).join('\n').replace(/\n{3,}/g,'\n\n').trim();
+}
+function SecondTranscriptForm({C,have,onSave,onCancel}){
+  /* C: colours {fg,bg,card,hair,accent} */
+  const [lang,setLang]=useState('');const [text,setText]=useState('');const [msg,setMsg]=useState('');const fileRef=useRef(null);
+  const opts=GT_LANGS.filter(([n])=>n!=='English'&&!(have||[]).includes(n));
+  const chip=(on,label,fn,key)=>h('button',{key,onClick:fn,className:'act95',style:{padding:'7px 12px',borderRadius:15,fontSize:13.5,fontWeight:650,border:'1px solid '+(on?C.fg:C.hair),background:on?C.fg:'transparent',color:on?C.bg:C.fg}},label);
+  const paste=async()=>{try{const t=await navigator.clipboard.readText();if(t&&t.trim()){setText(cleanSubtitleText(t));setMsg('')}else setMsg('The clipboard is empty.')}catch(e){setMsg('Couldn’t read the clipboard. Paste into the box instead.')}};
+  const upload=e=>{const f=e.target.files&&e.target.files[0];e.target.value='';if(!f)return;
+    if(f.size>3e6){setMsg('That file is too big for a transcript.');return}
+    f.text().then(t=>{setText(cleanSubtitleText(t));setMsg('Loaded '+f.name)},()=>setMsg('Couldn’t read that file.'))};
+  const ok=lang&&text.trim().length>40;
+  return h('div',{style:{padding:'4px 0'}},
+    h('div',{style:{fontSize:13,opacity:.75,lineHeight:1.5,marginBottom:10}},'English is the default. Add this video’s transcript in one more language yourself: paste it, or upload a .txt, .srt or .vtt file.'),
+    h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',opacity:.6,marginBottom:6}},'1 · Language'),
+    h('div',{style:{display:'flex',flexWrap:'wrap',gap:7,marginBottom:12}},opts.map(([n])=>chip(lang===n,n,()=>setLang(n),n))),
+    h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.06em',textTransform:'uppercase',opacity:.6,marginBottom:6}},'2 · Transcript'),
+    h('div',{style:{display:'flex',gap:8,marginBottom:8}},
+      h('button',{onClick:paste,className:'act95',style:{flex:1,padding:'10px',borderRadius:11,background:C.card,color:C.fg,fontWeight:650,fontSize:14,border:'1px solid '+C.hair}},'Paste'),
+      h('button',{onClick:()=>fileRef.current&&fileRef.current.click(),className:'act95',style:{flex:1,padding:'10px',borderRadius:11,background:C.card,color:C.fg,fontWeight:650,fontSize:14,border:'1px solid '+C.hair}},'Upload file'),
+      h('input',{ref:fileRef,type:'file',accept:'.txt,.srt,.vtt,text/plain,text/vtt',onChange:upload,style:{display:'none'}})),
+    h('textarea',{value:text,onChange:e=>setText(e.target.value),rows:5,placeholder:'…or paste or type it here',
+      style:{width:'100%',boxSizing:'border-box',padding:'10px 12px',borderRadius:10,border:'1px solid '+C.hair,background:C.card,color:C.fg,fontSize:15,lineHeight:1.5,resize:'vertical',fontFamily:'inherit'}}),
+    msg?h('div',{style:{fontSize:12.5,opacity:.75,marginTop:6}},msg):null,
+    h('div',{style:{display:'flex',gap:8,marginTop:10}},
+      h('button',{disabled:!ok,onClick:()=>onSave(lang,cleanSubtitleText(text)),className:'act95',style:{flex:1,padding:'12px',borderRadius:12,background:C.accent,color:'#fff',fontWeight:700,fontSize:15,opacity:ok?1:.45}},ok?'Save '+lang+' transcript':lang?'Add the transcript':'Pick a language'),
+      onCancel?h('button',{onClick:onCancel,className:'act95',style:{padding:'12px 16px',borderRadius:12,background:C.card,color:C.fg,fontWeight:650,fontSize:15,border:'1px solid '+C.hair}},'Cancel'):null));
+}
 const GT_MAX=4500; /* Google Translate takes up to 5,000 characters at a time */
 function gtParts(paras){const out=[];let cur='';for(const p of paras){if(cur&&cur.length+p.length+2>GT_MAX){out.push(cur);cur=''}
   if(p.length>GT_MAX){for(let i=0;i<p.length;i+=GT_MAX)out.push(p.slice(i,i+GT_MAX));continue}cur+=(cur?'\n\n':'')+p}if(cur)out.push(cur);return out}
@@ -246,6 +280,9 @@ const EdIcons={
 function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,onOpenVideo,initialPanel,onFinished}){
   const tr=a.transcriptTr||{};
   const langs=['orig'].concat(Object.keys(tr).filter(k=>String(tr[k]||'').trim()));
+  const codeOf=n=>((GT_LANGS.find(x=>x[0]===n)||[n,String(n).slice(0,2)])[1]).toUpperCase();
+  const origName=({te:'Telugu',hi:'Hindi',en:'English'})[scriptOf(String(a.transcript||'').slice(0,3000))]||'English';
+  const origCode=codeOf(origName);
   const [lang,setLang]=useState(initialLang&&langs.includes(initialLang)?initialLang:'orig');
   const [prefs,setPrefs]=useState(loadPrefs);
   const [panel,setPanel]=useState(initialPanel==='translate'?'lang':initialPanel==='notes'?null:(initialPanel||null));
@@ -407,8 +444,11 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
     /* toolbar */
     h('div',{style:{flexShrink:0,display:'flex',alignItems:'center',gap:2,padding:'calc(4px + env(safe-area-inset-top)) 6px 4px',borderBottom:'1px solid '+rule,fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
       tbtn(Icons.x(21),'Close',onClose),
-      h('button',{onClick:()=>setPanel('lang'),'aria-label':'Language & translate',className:'act95',style:{display:'flex',alignItems:'center',gap:5,height:32,padding:'0 9px',borderRadius:16,border:'1px solid '+rule,color:ink,flexShrink:0}},
-        EdIcons.lang(18),h('span',{style:{fontSize:12.5,fontWeight:700}},lang==='orig'?'Original':((GT_LANGS.find(x=>x[0]===lang)||[lang,lang.slice(0,2)])[1]).toUpperCase())),
+      /* 文A: with English and one more transcript it switches between them in one tap; otherwise it opens Languages */
+      h('button',{onClick:()=>{if(langs.length===2){setLang(lang==='orig'?langs[1]:'orig')}else setPanel('lang')},'aria-label':langs.length===2?'Switch language':'Languages',className:'act95',style:{display:'flex',alignItems:'center',gap:5,height:32,padding:'0 9px',borderRadius:16,border:'1px solid '+rule,color:ink,flexShrink:0}},
+        EdIcons.lang(18),langs.length===2?h('span',{style:{fontSize:12.5,fontWeight:700,display:'flex',gap:4}},
+          h('span',{style:{opacity:lang==='orig'?1:.4}},origCode),h('span',{style:{opacity:.4}},'·'),h('span',{style:{opacity:lang!=='orig'?1:.4}},codeOf(langs[1])))
+          :h('span',{style:{fontSize:12.5,fontWeight:700}},lang==='orig'?origCode:codeOf(lang))),
       h('div',{style:{flex:1}}),
       tbtn(EdIcons.find(19),'Find in edition',()=>setFind(f=>f?null:{q:'',idx:0})),
       tbtn(EdIcons.marker(20),'Notes & highlights',()=>setNh(hls.length&&!note.trim()?'hl':'notes')),
@@ -499,13 +539,15 @@ function EditionReader({T,S,a,patch,toastFn,onClose,onSaveToLibrary,initialLang,
     panel==='more'?sheet('Edition',h(Fragment,null,
       row(view.plain?'Lay out with AI':'Lay out again with AI','New headline, sections and pull quotes',()=>{setPanel(null);build(true)},Icons.ai(19)),
       row('Notes & highlights','Your notepad and every highlight',()=>{setPanel(null);setNh('notes')},Icons.notes?Icons.notes(19):null),
+      row('Languages',langs.length>1?langs.map(k=>k==='orig'?origName:k).join(' · '):'Add a transcript in another language',()=>setPanel('lang'),EdIcons.lang(19)),
       row('Copy transcript',lang==='orig'?'The original text':lang+' text',()=>{copyText(text);toastFn('Transcript copied');setPanel(null)},Icons.copy(19)),
       a.url?row('Share the video',null,()=>{shareText(view.headline||a.title,'',a.url);setPanel(null)},Icons.share(19)):null)):null,
     panel==='lang'?sheet('Language',h(Fragment,null,
-      langs.map(k=>row(k==='orig'?'Original':k+' edition',k===lang?'Reading now':null,()=>{setLang(k);setPanel(null)},k===lang?Icons.check(18):h('span',{style:{width:18}}))),
-      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'16px 0 4px'}},'Translate with Google Translate'),
-      h('div',{style:{display:'flex',flexWrap:'wrap',gap:7,padding:'6px 0'}},GT_LANGS.filter(([n])=>!langs.includes(n)).map(([n,c])=>chip(false,n,()=>startGt(n,c),c))),
-      h('div',{style:{fontSize:12,opacity:.65,marginTop:8,lineHeight:1.5}},'Opens the Google Translate app with the text (it’s also copied). Copy the translation there, come back and tap “Paste translation”. Each language becomes its own edition.'))):null,
+      langs.map(k=>row(k==='orig'?origName+' (default)':k,k===lang?'Reading now':null,()=>{setLang(k);setPanel(null)},k===lang?Icons.check(18):h('span',{style:{width:18}}))),
+      langs.length>1?h('div',{style:{fontSize:12,opacity:.6,margin:'4px 0 0'}},'Tip: with two languages, tap 文A at the top to switch in one tap.'):null,
+      h('div',{style:{fontSize:12,fontWeight:700,letterSpacing:'.08em',textTransform:'uppercase',opacity:.6,margin:'18px 0 8px'}},'Add a transcript in another language'),
+      h(SecondTranscriptForm,{C:{fg:ink,bg,card:'rgba(127,127,127,.12)',hair:rule,accent},have:langs.filter(k=>k!=='orig'),
+        onSave:(n,t)=>{patch(x=>({transcriptTr:Object.assign({},x.transcriptTr||{},{[n]:t})}));setLang(n);setPanel(null);toastFn(n+' transcript added · 文A switches')}}))):null,
     gt?h('div',{style:{position:'absolute',inset:0,zIndex:6,background:bg,color:ink,display:'flex',flexDirection:'column',fontFamily:"'Inter',-apple-system,system-ui,sans-serif"}},
       h('div',{style:{display:'flex',alignItems:'center',gap:6,padding:'calc(6px + env(safe-area-inset-top)) 8px 8px',borderBottom:'1px solid '+rule}},
         tbtn(Icons.back(21),'Back',()=>setGt(null)),h('div',{style:{flex:1,fontSize:16.5,fontWeight:700}},'Translate to '+gt.lang),
@@ -632,11 +674,16 @@ function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
   const kind=period;
   /* every section of the chosen view, before the read filter */
   const groups={};const add=(k,at,it)=>{const g=groups[k]=groups[k]||{k,at:0,items:[]};g.at=Math.max(g.at,at);g.items.push(it)};
-  ps.forEach(p=>{if(p.kind===kind)add(String(p.period),p.at,{type:'paper',p,at:p.at});
+  /* a day / week / month with a paper shows just the paper; its stories sit inside it ("N stories ▾"),
+     so nothing appears twice */
+  const host={};
+  ps.forEach(p=>{if(p.kind===kind){const it={type:'paper',p,at:p.at,kids:[]};host[String(p.period)]=it;add(String(p.period),p.at,it)}
     else if(period==='day'&&p.kind==='custom')add(String(dayKey(p.at)),p.at,{type:'paper',p,at:p.at})});
   eds.forEach(x=>{const k=String(keyFn(x.at));
-    if(period!=='day'&&ps.some(p=>p.kind===kind&&String(p.period)===k))return; // shown inside its digest
+    if(host[k]){host[k].kids.push({type:'ed',x,at:x.at});return}
     add(k,x.at,{type:'ed',x,at:x.at})});
+  const [openK,setOpenK]=useState(()=>new Set());
+  const toggleK=k=>setOpenK(s0=>{const n=new Set(s0);n.has(k)?n.delete(k):n.add(k);return n});
   const isRead=it=>it.type==='paper'?M.isPaperRead(it.p):M.isEdRead(it.x.a);
   const textOf=it=>it.type==='paper'?(it.p.label||'')+' '+it.p.stories.map(x=>x.headline).join(' '):((it.x.ed&&it.x.ed.headline)||'')+' '+it.x.a.title+' '+(it.x.a.author||'');
   const allItems=Object.values(groups).flatMap(g=>g.items);
@@ -658,8 +705,9 @@ function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
   const row=it=>{const on=!!(sel&&sel.has(keyOf(it))),read=isRead(it);
     const P=it.type==='paper'?it.p:null,a=P?null:it.x.a,ed=P?null:it.x.ed;
     const vid=P?(P.stories.find(x=>x.videoId)||{}).videoId:a.videoId;
-    const title=P?(P.kind==='custom'?(P.label||'Your paper'):P.stories.map(x=>x.headline).slice(0,2).join(' · ')):((ed&&ed.headline)||a.title);
-    const meta=P?paperMast(P)+' · '+P.stories.length+' stories'+(P.kind==='custom'?' · combined':''):(a.author||'')+(ed?'':' · not laid out yet');
+    const title=P?(P.label||'Your paper'):((ed&&ed.headline)||a.title);
+    const meta=P?paperMast(P)+(P.kind==='custom'?' · '+P.stories.length+' stories · combined':''):(a.author||'')+(ed?'':' · not laid out yet');
+    const kids=it.kids||[],isOpen=openK.has(keyOf(it));
     const tap=()=>sel?flip(it):P?onOpenPaper(P.id):onOpen(a.id);
     return h('div',{key:keyOf(it),role:'button',onClick:tap,className:'act98',style:{display:'flex',alignItems:'center',gap:12,padding:'10px 4px',borderBottom:'1px solid '+T.hair,cursor:'pointer',background:on?hexA(T.accent,.08):'transparent'}},
       sel?h('span',{style:{width:22,height:22,borderRadius:11,flexShrink:0,display:'flex',alignItems:'center',justifyContent:'center',border:'2px solid '+(on?T.accent:T.hair),background:on?T.accent:'transparent',color:'#fff'}},on?Icons.check(13):null):null,
@@ -670,8 +718,11 @@ function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
       h('div',{style:{flex:1,minWidth:0}},
         h('div',{style:{fontSize:14.5,fontWeight:read?500:650,lineHeight:1.3,display:'-webkit-box',WebkitLineClamp:2,WebkitBoxOrient:'vertical',overflow:'hidden',color:read?T.meta:T.fg}},title),
         h('div',{style:{fontSize:12,color:T.sub,marginTop:3,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(read?'✓ Read · ':'')+meta)),
+      kids.length?h('button',{onClick:e=>{e.stopPropagation();toggleK(keyOf(it))},'aria-expanded':isOpen,className:'act95',style:{fontSize:12.5,fontWeight:700,color:T.accent,whiteSpace:'nowrap',padding:'6px 4px',flexShrink:0}},kids.length+(kids.length===1?' story ':' stories ')+(isOpen?'▴':'▾')):null,
       sel?null:h('button',{onClick:e=>{e.stopPropagation();M.onMenu(P?{type:'paper',id:P.id}:{type:'ed',id:a.id})},'aria-label':'More',className:'act90',style:{display:'flex',color:T.sub,padding:6,flexShrink:0}},Icons.dots(18)));
   };
+  const rowTree=it=>h(Fragment,{key:keyOf(it)},row(it),
+    it.kids&&it.kids.length&&openK.has(keyOf(it))?h('div',{style:{marginLeft:20,paddingLeft:8,borderLeft:'2px solid '+T.hair}},it.kids.map(row)):null);
   const seg=(items,cur,set,big)=>h('div',{style:{display:'flex',gap:4,margin:big?'2px 16px 8px':'0 16px 8px',padding:3,borderRadius:11,background:T.card}},items.map(([k,l])=>
     h('button',{key:k,onClick:()=>set(k),className:'act95','aria-pressed':cur===k,style:{flex:1,padding:big?'9px 4px':'7px 4px',borderRadius:9,fontSize:big?14.5:13,fontWeight:big?700:600,background:cur===k?(big?T.fg:T.bg):'transparent',color:cur===k&&big?T.bg:T.fg,boxShadow:cur===k&&!big?'0 1px 3px rgba(0,0,0,.12)':'none'}},l)));
   const bar=(label,fn,danger,dis)=>h('button',{onClick:fn,disabled:dis,className:'act95',style:{flex:1,minWidth:0,padding:'10px 4px',borderRadius:11,fontSize:13,fontWeight:650,background:T.card,color:danger?T.danger:T.fg,opacity:dis?.4:1}},label);
@@ -688,7 +739,7 @@ function EditionsPage({T,articles,papers,M,onOpen,onOpenPaper,onClose}){
       sections.length?sections.map(g=>h('div',{key:g.k},
         h('div',{style:{position:'sticky',top:0,zIndex:1,background:T.bg,display:'flex',alignItems:'baseline',gap:8,fontSize:12,fontWeight:700,letterSpacing:'.07em',textTransform:'uppercase',color:T.sub,padding:'16px 4px 6px'}},
           h('span',{style:{flex:1}},secTitle(g)),h('span',{style:{fontWeight:600,letterSpacing:0,textTransform:'none'}},g.items.length+(g.items.length===1?' item':' items'))),
-        g.items.map(row)))
+        g.items.map(rowTree)))
       :h('div',{style:{padding:'50px 20px',textAlign:'center',color:T.sub,fontSize:14.5,lineHeight:1.6}},empty)),
     sel?h('div',{style:{display:'flex',gap:6,padding:'8px 12px calc(8px + env(safe-area-inset-bottom))',borderTop:'1px solid '+T.hair,background:T.bg}},
       bar('Read',()=>{M.markEd(chosenEd,true);M.markPaper(chosenP,true);done()},false,!chosen.length),
@@ -973,5 +1024,5 @@ function PapersShelfCards({T,papers,onOpen}){
     h('div',{style:{fontFamily:"'Inter',system-ui",fontSize:10.5,fontWeight:700,letterSpacing:'.1em',textTransform:'uppercase',color:T.accent,overflow:'hidden',textOverflow:'ellipsis',whiteSpace:'nowrap'}},(p.label||new Date(p.at).toLocaleDateString([],{weekday:'short',day:'numeric',month:'short'}))+' · '+p.stories.length+' stories'),
     h('div',{style:{fontFamily:SERIF,fontWeight:800,fontSize:14.5,lineHeight:1.2,marginTop:5,display:'-webkit-box',WebkitLineClamp:3,WebkitBoxOrient:'vertical',overflow:'hidden'}},(p.stories[0]||{}).headline||'')));
 }
-window.InstaEdition={paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml,paperStoriesHtml,papersFromEditions,CombinePicker,storyFromArticle,EditionsPage,EditionMenu};
+window.InstaEdition={SecondTranscriptForm,cleanSubtitleText,paragraphsOf,cleanTranscript,buildEdition,plainEdition,editionHtml,EditionReader,EditionsShelf,PaperBuilder,PaperReader,buildStory,paperHtml,paperStoriesHtml,papersFromEditions,CombinePicker,storyFromArticle,EditionsPage,EditionMenu};
 })();
